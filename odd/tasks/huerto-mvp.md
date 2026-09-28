@@ -48,6 +48,23 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [ ] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
 
+## Polish bar (must all hold before the MVP is called done)
+Visual
+- P1 Palette: tokenized, ≤ ~10 colors — bark, soil strata, leaf ramp (fresh green → gold → rust), orange fruit, blossom, warm sky gradient. Same tokens in 3D and UI.
+- P2 Style: consistent stylized low-poly flat shading; hemisphere + directional sun with soft shadows; contact shadow under the floating island; light fog for depth.
+- P3 Silhouette: from the default camera it reads as a tree at first glance — tapered trunk, crown mass, every limb/twig attached, no parts intersecting the trunk or floating.
+- P4 Motion: subtle idle wind sway, eased camera transitions, eased growth; respects `prefers-reduced-motion`; ~60fps on a mid laptop.
+- P5 UI craft: one display + one UI font, type scale, 4/8px spacing grid, one consistent panel style; no layout shift; mobile-first layouts.
+Product
+- P6 States designed: loading (seed sprouting), error, not found, rate-limited, token-required, empty/tiny repo.
+- P7 Interaction: hover highlight + pointer cursor + tooltip, click → detail panel, camera focuses selection, Esc closes, keyboard navigation, touch works.
+- P8 Truth: every visible element maps to real data; dates/numbers formatted; each detail links to GitHub.
+- P9 Legibility: a legend explaining the mapping (leaf = commit, fruit = merged PR, flower = release, bud = open PR, limb = era).
+- P10 Share: `/owner/repo` URLs, OG/meta tags, a "copy link" and "save image" action.
+- P11 A11y: UI contrast AA, aria labels, focus rings, a text alternative (era/PR list) for the 3D view.
+- P12 Perf & robustness: instanced leaves/fruit, low draw calls, lazy-loaded 3D chunk, handles tiny repos and 1000+ PR repos gracefully, no console errors.
+Verification of the bar: headless screenshots (desktop + mobile) reviewed each visual iteration; a final independent design/product review against P1–P12.
+
 ## Acceptance criteria
 - `/facebook/react`-style URL renders a believable tree from real data (or fixture offline).
 - Every twig/leaf/flower is clickable and shows real PR/commit/release info with a GitHub link.
