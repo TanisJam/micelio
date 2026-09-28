@@ -13,9 +13,11 @@ import type { PickTarget } from '../picking/pickingGrid'
  * touch, not a data claim).
  */
 
-const BASE_SCALE = 0.16
+const BASE_SCALE = 0.42
 const HEIGHT_JITTER = 0.05
 const MIN_HEIGHT_MULTIPLIER = 0.9
+/** Small seeded per-mushroom vertical offset (P1's mushroom brief: "a subtle vertical stagger") -- purely a render-time read cue so a cluster of same-height caps doesn't read as one flat row/line of dots; never a data claim (the underlying `Mushroom.position.y` -- the real release-anchored lift -- is untouched). */
+const VERTICAL_STAGGER = 0.045
 
 export interface MushroomInstancesResult {
   matrices: THREE.Matrix4[]
@@ -32,11 +34,12 @@ export function buildMushroomInstances(mushrooms: Mushroom[]): MushroomInstances
     const prng = createPrng(mushroom.id)
     const rotationY = randRange(prng, 0, Math.PI * 2)
     const heightMultiplier = MIN_HEIGHT_MULTIPLIER + randRange(prng, 0, HEIGHT_JITTER)
-    const scale = BASE_SCALE * Math.max(0.6, mushroom.scale)
+    const scale = BASE_SCALE * Math.max(0.75, mushroom.scale)
+    const verticalStagger = randRange(prng, 0, VERTICAL_STAGGER)
 
     const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0))
     const matrix = new THREE.Matrix4().compose(
-      new THREE.Vector3(mushroom.position.x, mushroom.position.y, mushroom.position.z),
+      new THREE.Vector3(mushroom.position.x, mushroom.position.y + verticalStagger, mushroom.position.z),
       quaternion,
       new THREE.Vector3(scale, scale * heightMultiplier, scale),
     )

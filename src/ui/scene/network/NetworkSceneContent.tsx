@@ -14,7 +14,7 @@ import { MushroomsMesh } from './MushroomsMesh'
 import { PointGlowInstances } from './PointGlowInstances'
 import { SoilDisc } from './SoilDisc'
 import { SporeMesh } from './SporeMesh'
-import type { NetworkModel } from '../../../domain/network'
+import { discRadius, type NetworkModel } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
 
 export interface NetworkSceneContentProps {
@@ -31,6 +31,8 @@ export interface NetworkSceneContentProps {
 const GROUND_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 const FUSION_RADIUS = 0.03
 const TIP_RADIUS = 0.05
+/** Soft additive glow behind each mushroom cap (P1's mushroom brief: "soft point glow") -- larger than the cap itself so it reads as an ambient halo, not a second solid shape. */
+const MUSHROOM_GLOW_RADIUS = 0.16
 
 /**
  * The full mycelium colony scene: soil disc, spore, batched hyphae/hair
@@ -56,6 +58,14 @@ export function NetworkSceneContent({
   const hyphae = useMemo(() => buildHyphaeGeometry(model), [model])
   const filaments = useMemo(() => buildFilamentsGeometry(model, hyphae.hyphaIndexById), [model, hyphae])
   const mushroomInstances = useMemo(() => buildMushroomInstances(model.mushrooms), [model])
+  const mushroomGlowInstances = useMemo(
+    () =>
+      buildPointInstances(
+        model.mushrooms.map((mushroom) => ({ id: mushroom.id, time: mushroom.time, position: mushroom.position })),
+        MUSHROOM_GLOW_RADIUS,
+      ),
+    [model],
+  )
   const tipInstances = useMemo(
     () => buildPointInstances(model.tips.map((tip) => ({ id: tip.id, time: tip.time, position: tip.position })), TIP_RADIUS),
     [model],
@@ -101,6 +111,13 @@ export function NetworkSceneContent({
   }, [hyphae, filaments, mushroomInstances, tipInstances, model.bounds.radius])
 
   const pickTolerance = Math.max(0.06, model.bounds.radius * 0.016)
+
+  /** Selecting a mushroom reveals its own release ring as a faint hairline (reusing the soil shader's existing ring-uniform machinery, otherwise always empty) -- P-brief item 3: "otherwise no rings". `null` for every other selection kind. */
+  const selectedMushroomRingRadius = useMemo(() => {
+    if (!selectedId) return null
+    const mushroom = model.mushrooms.find((candidate) => candidate.id === selectedId)
+    return mushroom ? discRadius(mushroom.position) : null
+  }, [model.mushrooms, selectedId])
 
   /** A hypha id maps to itself; a node/tip id maps to the hypha index it belongs to, so selecting/hovering a commit or a growing tip highlights its whole hypha too (P7: "Selection highlights the whole hypha"). */
   const elementIdToHyphaIndex = useMemo(() => {
@@ -175,13 +192,34 @@ export function NetworkSceneContent({
       <CameraRig radius={soilRadiusFor(model)} />
       <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
-      <SoilDisc model={model} />
+      <SoilDisc model={model} ringRadius={selectedMushroomRingRadius} />
       <SporeMesh reducedMotion={reducedMotion} />
 
       <mesh ref={hyphaeMeshRef} geometry={hyphae.geometry} material={filamentMaterial} />
       <lineSegments geometry={filaments.geometry} material={filamentMaterial} />
 
+      {/* Mushroom-only lighting (see `MushroomsMesh`'s doc): every other
+          material in the scene is unlit, so these lights have no visible
+          effect on anything but the mushrooms' `MeshStandardMaterial`. A
+          strong key light + a deliberately DIM ambient fill (round-2 visual
+          finding: a hemisphere light close in intensity to the key light
+          washed the tiny cap back out into flat gray -- real light/shadow
+          contrast is what makes a form this small still read as 3D) plus a
+          low warm rim light from the opposite side for a lit edge against
+          the dark soil. */}
+      <directionalLight position={[1.6, 3.2, 2.4]} intensity={3.2} color={mycelium.mushroomCap} />
+      <directionalLight position={[-2, 0.6, -1.4]} intensity={0.6} color={mycelium.mushroomRim} />
+      <hemisphereLight args={[mycelium.mushroomRim, mycelium.soilNear, 0.16]} />
+
       <MushroomsMesh matrices={mushroomInstances.matrices} birthTimes={mushroomInstances.birthTimes} getCurrentTime={getCurrentTime} />
+      <PointGlowInstances
+        matrices={mushroomGlowInstances.matrices}
+        birthTimes={mushroomGlowInstances.birthTimes}
+        color={mycelium.mushroomRim}
+        radius={MUSHROOM_GLOW_RADIUS}
+        getCurrentTime={getCurrentTime}
+        opacity={0.3}
+      />
       <PointGlowInstances
         matrices={fusionInstances.matrices}
         birthTimes={fusionInstances.birthTimes}

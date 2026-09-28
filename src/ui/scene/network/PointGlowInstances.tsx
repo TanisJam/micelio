@@ -13,6 +13,8 @@ export interface PointGlowInstancesProps {
   /** Idle glow "breathing" (P4) -- a whole-mesh scale pulse, disabled under `prefers-reduced-motion`. */
   breathe?: boolean
   reducedMotion?: boolean
+  /** Default 0.95 (a near-solid point, right for fusion knots/tips). A soft ambient halo (e.g. a mushroom's own glow, see `NetworkSceneContent`) wants a much lower value so it reads as a diffuse aura, not a second solid shape sitting on top of the lit cap. */
+  opacity?: number
 }
 
 /**
@@ -29,12 +31,13 @@ export function PointGlowInstances({
   getCurrentTime,
   breathe = false,
   reducedMotion = false,
+  opacity = 0.95,
 }: PointGlowInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const geometry = useMemo(() => new THREE.SphereGeometry(radius, 10, 10), [radius])
   const material = useMemo(
-    () => new THREE.MeshBasicMaterial({ color, toneMapped: false, transparent: true, opacity: 0.95 }),
-    [color],
+    () => new THREE.MeshBasicMaterial({ color, toneMapped: false, transparent: true, opacity }),
+    [color, opacity],
   )
 
   useEffect(() => {

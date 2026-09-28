@@ -8,9 +8,13 @@ export interface CameraRigProps {
 }
 
 // Breathing room beyond a tight bounding-circle fit, and framing at a 3/4
-// top-down angle (P1's visual direction: ~50-60 deg from horizontal).
+// top-down angle. Lowered from 55deg (M3's original pitch, orbiting closer
+// to fully overhead) to 45deg per the M3b visual review: mushroom caps need
+// enough angle-to-horizontal for their own silhouette/underside-rim shading
+// to actually be visible against the soil, which a near-overhead camera
+// hides almost entirely.
 const FRAME_MARGIN = 1.28
-const PITCH_RADIANS = (55 * Math.PI) / 180
+const PITCH_RADIANS = (45 * Math.PI) / 180
 
 /**
  * Positions the perspective camera to frame the whole colony disc on load

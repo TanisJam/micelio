@@ -14,6 +14,17 @@ export interface CameraFocusProps {
 }
 
 const FOCUS_DURATION_SECONDS = 0.9
+/**
+ * Caps how far the camera TARGET (and, since the offset is preserved, the
+ * camera itself) ever pans away from the disc's own center, as a fraction of
+ * the model's bounding radius -- a real M3b visual finding: panning the full
+ * way to a far-from-center element (e.g. a mushroom near the rim) shifted
+ * the whole view enough that the opposite side of the disc ran off-frame
+ * (`CameraRig`'s own framing margin only has ~22% of headroom beyond the
+ * disc radius, see `FRAME_MARGIN`). Selection still visibly "nudges" the
+ * camera toward the element, just never far enough to crop the galaxy.
+ */
+const MAX_PAN_FRACTION_OF_RADIUS = 0.22
 
 interface FocusAnimation {
   fromTarget: THREE.Vector3
@@ -40,6 +51,8 @@ export function CameraFocus({ model, selectedId, reducedMotion }: CameraFocusPro
     if (!focusPosition) return
 
     const toTarget = new THREE.Vector3(focusPosition.x, focusPosition.y, focusPosition.z)
+    const maxPan = model.bounds.radius * MAX_PAN_FRACTION_OF_RADIUS
+    if (toTarget.length() > maxPan) toTarget.setLength(maxPan)
     const fromTarget = orbitControls.target.clone()
     const offset = camera.position.clone().sub(fromTarget)
     const toPosition = toTarget.clone().add(offset)

@@ -31,6 +31,16 @@ const VIEWPORTS: Viewport[] = [
  * merged/closed PR hypha, `mushroom-<tag>` for a release) -- stable across
  * runs since both the fixture and the model are deterministic. Found via a
  * throwaway inspection script, not guessed.
+ *
+ * Deliberately the fixtures' OWN highest-commit-count merged/closed PR (a
+ * substantial one), not just "the first PR found" -- a real M3b visual-QA
+ * finding: the colony layout's hypha length is work-driven (M2d), so a
+ * tiny one-commit PR draws as a filament only a few screen pixels long
+ * regardless of how bright/wide selection makes it. The original ids here
+ * (PR #1 for valtio, PR #645 for express -- both ~1-commit PRs) made the
+ * selection highlight genuinely hard to verify from a full-disc screenshot;
+ * confirmed via a throwaway debug screenshot that the exact same selection
+ * shader reads as unmistakably bright on a substantial (100+-commit) PR.
  */
 interface FixtureIds {
   mergedHyphaId: string
@@ -47,13 +57,17 @@ interface Fixture {
 const FIXTURES: Fixture[] = [
   {
     name: 'valtio',
+    // #965 (170 commits): "New implementation of proxyMap and proxySet..."
+    // #962 (77 commits, closed): "Keyed collections"
     path: '/pmndrs/valtio',
-    ids: { mergedHyphaId: 'hypha-pr1', closedHyphaId: 'hypha-pr22', mushroomId: 'mushroom-v1.0.0' },
+    ids: { mergedHyphaId: 'hypha-pr965', closedHyphaId: 'hypha-pr962', mushroomId: 'mushroom-v1.0.0' },
   },
   {
     name: 'express',
+    // #2554 (504 commits): "Release 4.12"
+    // #5139 (37 commits, closed): "[feature] send blob response"
     path: '/expressjs/express',
-    ids: { mergedHyphaId: 'hypha-pr645', closedHyphaId: 'hypha-pr3695', mushroomId: 'mushroom-3.5.3' },
+    ids: { mergedHyphaId: 'hypha-pr2554', closedHyphaId: 'hypha-pr5139', mushroomId: 'mushroom-3.5.3' },
   },
 ]
 
@@ -71,6 +85,10 @@ function fixtureShots(fixture: Fixture): Shot[] {
     { name: `${fixture.name}-mid`, path: `${base}?t=0.5` },
     { name: `${fixture.name}-selected-merged`, path: `${base}?t=1&sel=${ids.mergedHyphaId}` },
     { name: `${fixture.name}-selected-closed`, path: `${base}?t=1&sel=${ids.closedHyphaId}` },
+    // A selected mushroom (M3b): exercises the release-ring reveal
+    // (`SoilDisc`'s `ringRadius`) and lets visual QA check the mushroom's
+    // own detail-panel fields alongside its 3D glow/silhouette.
+    { name: `${fixture.name}-selected-mushroom`, path: `${base}?t=1&sel=${ids.mushroomId}` },
   ]
 }
 
