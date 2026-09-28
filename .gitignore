@@ -1,0 +1,27 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# vitest / coverage
+coverage
+
+# huerto on-disk snapshot cache (dev only)
+.huerto-cache
+
+# codegraph index
+.codegraph
