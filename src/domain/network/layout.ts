@@ -24,10 +24,22 @@ import type { Hair, Hypha, HyphaPoint, NetworkNode, NetworkRef, Spore, Tip } fro
 export interface LayoutOptions {
   /** Rendered commit/merge-point nodes kept per hypha, most representative subset; default 60. */
   maxNodesPerHypha: number
+  /**
+   * Colony layout only (ignored by spiral): total extra rotation (radians)
+   * applied at the disc's outer rim, tapering to 0 at the spore -- bends the
+   * colony's radial growth into galaxy-like spiral arms (product direction:
+   * "luminous spiral galaxy made of mycelium"). `0` disables it entirely.
+   * See `colonyLayout.ts`'s `applySwirl`.
+   */
+  swirl: number
+  /** Colony layout only: how fast the swirl ramps up with radius -- `(r/R)^swirlPower`. Higher = swirl stays near 0 longer near the spore, then sweeps harder near the rim. */
+  swirlPower: number
 }
 
 export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
   maxNodesPerHypha: 60,
+  swirl: 1.6,
+  swirlPower: 1.4,
 }
 
 // --- Disc / spiral tuning -----------------------------------------------

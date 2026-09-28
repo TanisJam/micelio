@@ -2,7 +2,7 @@ import type { ReleaseInfo } from '../repo'
 import { clamp, easeInOutCubic, lerp, logScale } from '../math'
 import { createPrng, randJitter, randRange, type Prng } from '../tree/prng'
 import type { TimeBounds } from '../tree/types'
-import { polarToVec3, subVec3, vec3, type Vec3 } from '../tree/vector'
+import { addVec3, normalizeVec3, polarToVec3, scaleVec3, subVec3, vec3, vec3Length, type Vec3 } from '../tree/vector'
 import {
   capEvenly,
   DEFAULT_LAYOUT_OPTIONS,
@@ -628,6 +628,82 @@ export interface ColonyLayoutResult {
   nodesOmittedByHypha: Record<string, number>
 }
 
+// --- Galaxy swirl ----------------------------------------------------------
+// Product direction: bend the colony's radial growth into spiral-galaxy arms
+// (bright filaments radiating from the spore, curving as they reach out) --
+// a purely cosmetic rotation, applied as the very last step so it never
+// touches the growth algorithm's own invariants (gap-filling, fork
+// continuity, length bounds): every spatial element gets rotated around Y by
+// the SAME radius-dependent angle, so two elements that were exactly
+// coincident (or at the same disc radius) before swirl stay exactly
+// coincident (or at the same relative angle) after it. Disc radius itself --
+// the real time/work encoding -- is preserved exactly for every point.
+
+/** Extra rotation (radians) at disc radius `radius`, ramping from 0 at the spore to `swirl` at the outer rim (`DISC_MAX_RADIUS`). */
+export function swirlAngleForRadius(radius: number, swirl: number, power: number): number {
+  if (swirl === 0 || radius <= 0) return 0
+  const frac = clamp(radius / DISC_MAX_RADIUS, 0, 1)
+  return swirl * frac ** power
+}
+
+/** Rotates `position` around Y by `swirlAngleForRadius(discRadius(position), ...)`. A no-op at the spore (radius 0 has no defined angle) or when `swirl` is 0. */
+export function applySwirlToPosition(position: Vec3, swirl: number, power: number): Vec3 {
+  const radius = discRadius(position)
+  if (radius < 1e-9 || swirl === 0) return position
+  const angle = Math.atan2(position.z, position.x) + swirlAngleForRadius(radius, swirl, power)
+  return { x: Math.cos(angle) * radius, y: position.y, z: Math.sin(angle) * radius }
+}
+
+/** Inverse of `applySwirlToPosition` -- recovers the pre-swirl position. Used by tests to check the underlying growth algorithm's own geometric invariants independent of the swirl cosmetic layer. */
+export function unswirlPosition(position: Vec3, swirl: number, power: number): Vec3 {
+  const radius = discRadius(position)
+  if (radius < 1e-9 || swirl === 0) return position
+  const angle = Math.atan2(position.z, position.x) - swirlAngleForRadius(radius, swirl, power)
+  return { x: Math.cos(angle) * radius, y: position.y, z: Math.sin(angle) * radius }
+}
+
+/**
+ * Applies the swirl to every spatial element of a colony result, uniformly
+ * (P7: picking and rendering both read this one already-swirled model, so
+ * they can never disagree). A hair's direction/length are recomputed from
+ * its independently-swirled base and tip -- its two ends can sit at
+ * slightly different disc radii, so they rotate by slightly different
+ * amounts, an honest consequence of swirling a real 3D segment rather than
+ * an approximation.
+ */
+export function applySwirl(result: ColonyLayoutResult, swirl: number, power: number): ColonyLayoutResult {
+  if (swirl === 0) return result
+  const at = (p: Vec3): Vec3 => applySwirlToPosition(p, swirl, power)
+
+  const hyphae = result.hyphae.map((hypha) => ({
+    ...hypha,
+    points: hypha.points.map((point) => ({ ...point, position: at(point.position) })),
+  }))
+  const nodes = result.nodes.map((node) => ({ ...node, position: at(node.position) }))
+  const tips = result.tips.map((tip) => ({ ...tip, position: at(tip.position) }))
+  const mushrooms = result.mushrooms.map((mushroom) => ({ ...mushroom, position: at(mushroom.position) }))
+  const fusions = result.fusions.map((fusion) => ({ ...fusion, position: at(fusion.position), bridgeTo: at(fusion.bridgeTo) }))
+  const hairs = result.hairs.map((hair) => {
+    const base = at(hair.position)
+    const tip = at(addVec3(hair.position, scaleVec3(hair.direction, hair.length)))
+    const delta = subVec3(tip, base)
+    const length = vec3Length(delta)
+    const direction = normalizeVec3(delta, hair.direction)
+    return { ...hair, position: base, direction, length }
+  })
+
+  return {
+    ...result,
+    spore: { ...result.spore, position: at(result.spore.position) },
+    hyphae,
+    nodes,
+    tips,
+    mushrooms,
+    fusions,
+    hairs,
+  }
+}
+
 /**
  * Builds the colony layout from the shared topology (`topology.ts`'s
  * `HyphaDraft`s), processing hyphae in split-time order (item 2) so every
@@ -821,7 +897,7 @@ export function layoutNetworkColony(
 
   const mushrooms = buildMushroomsOnRings(releases, radiusForTime, placedHyphae, seed)
 
-  return {
+  const built: ColonyLayoutResult = {
     spore,
     hyphae: [mainHypha, ...placedHyphae],
     nodes,
@@ -832,4 +908,8 @@ export function layoutNetworkColony(
     mushrooms,
     nodesOmittedByHypha,
   }
+  // The galaxy swirl is the very last step (see its own doc above) -- every
+  // invariant above this line (gap-filling, fork continuity, work-based
+  // length, real data links) is established on the pre-swirl geometry.
+  return applySwirl(built, resolved.swirl, resolved.swirlPower)
 }

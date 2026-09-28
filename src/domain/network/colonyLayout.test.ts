@@ -6,8 +6,18 @@ import { computeTimeBounds } from '../tree/timeBounds'
 import { subVec3, vec3Length } from '../tree/vector'
 import { makeSnapshot } from '../tree/testHelpers'
 import { buildNetwork } from './buildNetwork'
-import { COLONY_CLOSED_LENGTH_MULTIPLIER, COLONY_LENGTH_MAX, COLONY_LENGTH_MIN, computeWorkLength, layoutNetworkColony } from './colonyLayout'
-import { discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius } from './layout'
+import {
+  applySwirl,
+  applySwirlToPosition,
+  COLONY_CLOSED_LENGTH_MULTIPLIER,
+  COLONY_LENGTH_MAX,
+  COLONY_LENGTH_MIN,
+  computeWorkLength,
+  layoutNetworkColony,
+  swirlAngleForRadius,
+  unswirlPosition,
+} from './colonyLayout'
+import { DEFAULT_LAYOUT_OPTIONS, discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius } from './layout'
 import { buildHyphaTopology } from './topology'
 
 const FIXTURES: [string, RepoSnapshot][] = [
@@ -70,13 +80,19 @@ describe('layoutNetworkColony', () => {
     // across the disc (measured up to 9.4 world units on a real fixture).
     // `growHyphaPoints` now derives its own starting angle strictly from
     // `startPosition`, which is exact by construction, so this can't recur.
+    // Measured on UN-swirled coordinates (see `unswirlPosition`'s doc): the
+    // cosmetic galaxy swirl (M3) adds a small extra tangential displacement
+    // between adjacent samples proportional to the local swirl gradient, on
+    // top of this bound -- an honest property of swirling an already-sampled
+    // curve, not a growth-algorithm regression, so it's the pre-swirl
+    // geometry (this invariant's actual subject) that must hold the bound.
     const snapshot = makeSnapshot()
     const { colony } = buildColonyModel(snapshot)
     for (const hypha of colony.hyphae) {
       if (hypha.kind === 'main') continue
       for (let i = 1; i < hypha.points.length; i++) {
-        const a = hypha.points[i - 1]!.position
-        const b = hypha.points[i]!.position
+        const a = unswirlPosition(hypha.points[i - 1]!.position, DEFAULT_LAYOUT_OPTIONS.swirl, DEFAULT_LAYOUT_OPTIONS.swirlPower)
+        const b = unswirlPosition(hypha.points[i]!.position, DEFAULT_LAYOUT_OPTIONS.swirl, DEFAULT_LAYOUT_OPTIONS.swirlPower)
         expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeLessThanOrEqual(0.3)
       }
     }
@@ -133,13 +149,22 @@ describe('layoutNetworkColony', () => {
   })
 
   it('keeps every hypha\'s post-fork angular drift within the documented bound (no arcs)', () => {
+    // Measured relative to the swirl field, i.e. on UN-swirled coordinates
+    // (`unswirlPosition`): this invariant is about the growth algorithm's
+    // own organic wiggle, not about the cosmetic galaxy swirl (M3) layered
+    // on top of it, which adds a large, intentional, radius-dependent
+    // rotation that has nothing to do with "drift."
     const snapshot = makeSnapshot()
     const { colony } = buildColonyModel(snapshot)
     for (const hypha of colony.hyphae) {
       if (hypha.kind === 'main' || hypha.points.length < 6) continue
+      const unswirled = hypha.points.map((p) => ({
+        ...p,
+        position: unswirlPosition(p.position, DEFAULT_LAYOUT_OPTIONS.swirl, DEFAULT_LAYOUT_OPTIONS.swirlPower),
+      }))
       // Safely past the fork (<= 0.25) + drift ramp (0.15) = 0.4 of the path.
-      const postForkStart = Math.ceil(hypha.points.length * 0.45)
-      const postFork = hypha.points.slice(postForkStart)
+      const postForkStart = Math.ceil(unswirled.length * 0.45)
+      const postFork = unswirled.slice(postForkStart)
       if (postFork.length < 2) continue
       const angles = postFork.map((p) => angleOf(p.position))
       const reference = angles[0]!
@@ -193,6 +218,100 @@ describe('layoutNetworkColony', () => {
     expect(colony.hairs.length).toBe(colony.nodes.length)
     const nodeIds = new Set(colony.nodes.map((n) => n.id))
     for (const hair of colony.hairs) expect(nodeIds.has(hair.nodeId)).toBe(true)
+  })
+
+  describe('galaxy swirl', () => {
+    const SWIRL = 1.6
+    const POWER = 1.4
+
+    it('swirlAngleForRadius is 0 at the spore, ramps monotonically to `swirl` at the rim, and is 0 when swirl is 0', () => {
+      expect(swirlAngleForRadius(0, SWIRL, POWER)).toBe(0)
+      expect(swirlAngleForRadius(DISC_MAX_RADIUS, SWIRL, POWER)).toBeCloseTo(SWIRL, 9)
+      expect(swirlAngleForRadius(5, 0, POWER)).toBe(0)
+      const half = swirlAngleForRadius(DISC_MAX_RADIUS / 2, SWIRL, POWER)
+      const full = swirlAngleForRadius(DISC_MAX_RADIUS, SWIRL, POWER)
+      expect(half).toBeGreaterThan(0)
+      expect(half).toBeLessThan(full)
+    })
+
+    it('applySwirlToPosition preserves disc radius exactly (time honesty) and is a no-op at the origin', () => {
+      const point = { x: 3, y: 0.01, z: 4 } // radius 5
+      const swirled = applySwirlToPosition(point, SWIRL, POWER)
+      expect(discRadius(swirled)).toBeCloseTo(discRadius(point), 9)
+      expect(swirled.y).toBe(point.y)
+      expect(applySwirlToPosition({ x: 0, y: 0, z: 0 }, SWIRL, POWER)).toEqual({ x: 0, y: 0, z: 0 })
+    })
+
+    it('unswirlPosition exactly inverts applySwirlToPosition', () => {
+      const point = { x: 1.2, y: 0, z: -2.7 }
+      const swirled = applySwirlToPosition(point, SWIRL, POWER)
+      const restored = unswirlPosition(swirled, SWIRL, POWER)
+      expect(restored.x).toBeCloseTo(point.x, 9)
+      expect(restored.z).toBeCloseTo(point.z, 9)
+    })
+
+    it('is deterministic with swirl enabled: identical input always produces an identical (swirled) layout', () => {
+      const snapshot = makeSnapshot()
+      const bounds = computeTimeBounds(snapshot)
+      const topology = buildHyphaTopology(snapshot, bounds)
+      const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+      const options = { swirl: SWIRL, swirlPower: POWER }
+      const a = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, options)
+      const b = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, options)
+      expect(a).toEqual(b)
+    })
+
+    it('rotates every element kind (hyphae, nodes, tips, mushrooms, fusions, hairs) by the exact same radius-dependent angle', () => {
+      // Build the SAME snapshot with swirl off and swirl on, then verify
+      // every corresponding spatial value keeps its disc radius exactly and
+      // shifts by exactly `swirlAngleForRadius(radius)` -- proof that the
+      // transform is applied uniformly, not per-kind.
+      const snapshot = makeSnapshot()
+      const bounds = computeTimeBounds(snapshot)
+      const topology = buildHyphaTopology(snapshot, bounds)
+      const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+      const plain = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, { swirl: 0 })
+      const swirled = applySwirl(plain, SWIRL, POWER)
+
+      function assertConsistentSwirl(before: { x: number; y: number; z: number }, after: { x: number; y: number; z: number }) {
+        const radius = discRadius(before)
+        expect(discRadius(after)).toBeCloseTo(radius, 7)
+        if (radius < 1e-6) return // spore/origin: angle undefined, no-op
+        const expectedAngle = Math.atan2(before.z, before.x) + swirlAngleForRadius(radius, SWIRL, POWER)
+        const actualAngle = Math.atan2(after.z, after.x)
+        expect(Math.abs(shortestAngleDelta(expectedAngle, actualAngle))).toBeLessThan(1e-6)
+      }
+
+      for (let h = 0; h < plain.hyphae.length; h++) {
+        for (let p = 0; p < plain.hyphae[h]!.points.length; p++) {
+          assertConsistentSwirl(plain.hyphae[h]!.points[p]!.position, swirled.hyphae[h]!.points[p]!.position)
+        }
+      }
+      for (let i = 0; i < plain.nodes.length; i++) assertConsistentSwirl(plain.nodes[i]!.position, swirled.nodes[i]!.position)
+      for (let i = 0; i < plain.tips.length; i++) assertConsistentSwirl(plain.tips[i]!.position, swirled.tips[i]!.position)
+      for (let i = 0; i < plain.mushrooms.length; i++) assertConsistentSwirl(plain.mushrooms[i]!.position, swirled.mushrooms[i]!.position)
+      for (let i = 0; i < plain.fusions.length; i++) {
+        assertConsistentSwirl(plain.fusions[i]!.position, swirled.fusions[i]!.position)
+        assertConsistentSwirl(plain.fusions[i]!.bridgeTo, swirled.fusions[i]!.bridgeTo)
+      }
+      // A hair's base follows the same rule; its recomputed tip (base + direction*length) does too.
+      for (let i = 0; i < plain.hairs.length; i++) {
+        assertConsistentSwirl(plain.hairs[i]!.position, swirled.hairs[i]!.position)
+        const plainTip = { x: plain.hairs[i]!.position.x + plain.hairs[i]!.direction.x * plain.hairs[i]!.length, y: 0, z: plain.hairs[i]!.position.z + plain.hairs[i]!.direction.z * plain.hairs[i]!.length }
+        const swirledTip = { x: swirled.hairs[i]!.position.x + swirled.hairs[i]!.direction.x * swirled.hairs[i]!.length, y: 0, z: swirled.hairs[i]!.position.z + swirled.hairs[i]!.direction.z * swirled.hairs[i]!.length }
+        assertConsistentSwirl(plainTip, swirledTip)
+      }
+      expect(plain.hyphae.length).toBeGreaterThan(0)
+    })
+
+    it('leaves the layout unchanged when swirl is 0 (opt-out)', () => {
+      const snapshot = makeSnapshot()
+      const { bounds, topology } = buildColonyModel(snapshot)
+      const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+      const noSwirl = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, { swirl: 0 })
+      const alsoNoSwirl = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, { swirl: 0, swirlPower: 3 })
+      expect(noSwirl).toEqual(alsoNoSwirl)
+    })
   })
 
   it('never produces a NaN/non-finite number anywhere in the layout', () => {
