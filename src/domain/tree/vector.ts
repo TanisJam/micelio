@@ -20,6 +20,14 @@ export function scaleVec3(a: Vec3, scalar: number): Vec3 {
   return { x: a.x * scalar, y: a.y * scalar, z: a.z * scalar }
 }
 
+export function subVec3(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }
+}
+
+export function vec3Length(a: Vec3): number {
+  return Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
+}
+
 /** Point at horizontal `radius` and `height`, at `azimuth` radians around the Y axis. */
 export function polarToVec3(azimuth: number, radius: number, height: number): Vec3 {
   return { x: Math.cos(azimuth) * radius, y: height, z: Math.sin(azimuth) * radius }

@@ -25,3 +25,6 @@ coverage
 
 # codegraph index
 .codegraph
+
+# visual QA screenshots (scripts/shot.ts)
+.shots

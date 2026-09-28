@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "fixture": "tsx scripts/fixture.ts"
+    "fixture": "tsx scripts/fixture.ts",
+    "shot": "tsx scripts/shot.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",
@@ -34,9 +35,10 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.12.0",
+    "playwright": "^1.63.0",
     "prettier": "^3.9.9",
-    "typescript": "~5.9.3",
     "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"

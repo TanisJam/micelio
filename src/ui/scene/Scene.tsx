@@ -1,19 +1,48 @@
-import { OrbitControls } from '@react-three/drei'
+import { useMemo } from 'react'
+import { Canvas } from '@react-three/fiber'
+import * as THREE from 'three'
+import { computeModelBounds, type TreeModel } from '../../domain/tree'
+import { buildSkyTexture } from './geometry/skyTexture'
+import { palette } from '../theme/tokens'
+import { TreeScene } from './tree/TreeScene'
+
+export interface SceneProps {
+  model: TreeModel
+  getCurrentTime: () => number
+  reducedMotion: boolean
+  onElementHover?: (id: string | null) => void
+  onElementSelect?: (id: string) => void
+}
 
 /**
- * Placeholder scene. The real diorama (soil island, trunk, limbs, twigs,
- * leaves, flowers, fruit, buds) is built from a `TreeModel` in later tasks.
+ * The lazy-loaded 3D chunk: owns the R3F `Canvas` (shadows, tone mapping,
+ * color management, fog) and renders the tree diorama inside it. Exported
+ * as the default so `App.tsx` can `React.lazy(() => import('./scene/Scene'))`
+ * and keep the initial bundle light (P12).
  */
-export function Scene() {
+export default function Scene({ model, getCurrentTime, reducedMotion, onElementHover, onElementSelect }: SceneProps) {
+  const bounds = useMemo(() => computeModelBounds(model), [model])
+
   return (
-    <>
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[5, 8, 5]} intensity={1.2} />
-      <mesh rotation={[0.4, 0.4, 0]}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#5b8c5a" />
-      </mesh>
-      <OrbitControls enablePan={false} />
-    </>
+    <Canvas
+      shadows="variance"
+      camera={{ fov: 42, near: 0.1, far: 500 }}
+      gl={{ antialias: true }}
+      onCreated={({ gl, scene }) => {
+        gl.toneMapping = THREE.ACESFilmicToneMapping
+        gl.toneMappingExposure = 1.05
+        gl.outputColorSpace = THREE.SRGBColorSpace
+        scene.fog = new THREE.Fog(new THREE.Color(palette.fog), bounds.radius * 1.6, bounds.radius * 6.5)
+        scene.background = buildSkyTexture(palette.skyTop, palette.skyHorizon)
+      }}
+    >
+      <TreeScene
+        model={model}
+        getCurrentTime={getCurrentTime}
+        reducedMotion={reducedMotion}
+        onElementHover={onElementHover}
+        onElementSelect={onElementSelect}
+      />
+    </Canvas>
   )
 }

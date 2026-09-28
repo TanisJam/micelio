@@ -100,6 +100,8 @@ export interface Leaf extends TreeElementBase {
   age: number
   /** The twig this leaf clusters around, or null for overflow (limb-level) leaves. */
   twigId: string | null
+  /** The limb this leaf belongs to (directly, or via its twig). Lets the UI gate a leaf's growth pop-in on its supporting branch, not just its own commit time. */
+  limbId: string
 }
 
 export interface Flower extends TreeElementBase {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clamp, lerp, logScale } from './math.ts'
+import { clamp, easeInOutCubic, easeOutCubic, lerp, logScale } from './math.ts'
 
 describe('clamp', () => {
   it('keeps values inside the range unchanged', () => {
@@ -44,5 +44,48 @@ describe('logScale', () => {
     const a = logScale(10, 1, 1000)
     const b = logScale(500, 1, 1000)
     expect(b).toBeGreaterThan(a)
+  })
+})
+
+describe('easeOutCubic', () => {
+  it('is 0 at t=0 and 1 at t=1', () => {
+    expect(easeOutCubic(0)).toBe(0)
+    expect(easeOutCubic(1)).toBe(1)
+  })
+
+  it('clamps outside [0, 1]', () => {
+    expect(easeOutCubic(-1)).toBe(0)
+    expect(easeOutCubic(2)).toBe(1)
+  })
+
+  it('is monotonic non-decreasing', () => {
+    let previous = 0
+    for (let t = 0; t <= 1; t += 0.1) {
+      const value = easeOutCubic(t)
+      expect(value).toBeGreaterThanOrEqual(previous)
+      previous = value
+    }
+  })
+})
+
+describe('easeInOutCubic', () => {
+  it('is 0 at t=0, 0.5 at t=0.5 and 1 at t=1', () => {
+    expect(easeInOutCubic(0)).toBe(0)
+    expect(easeInOutCubic(0.5)).toBeCloseTo(0.5)
+    expect(easeInOutCubic(1)).toBe(1)
+  })
+
+  it('clamps outside [0, 1]', () => {
+    expect(easeInOutCubic(-1)).toBe(0)
+    expect(easeInOutCubic(2)).toBe(1)
+  })
+
+  it('is monotonic non-decreasing', () => {
+    let previous = 0
+    for (let t = 0; t <= 1; t += 0.1) {
+      const value = easeInOutCubic(t)
+      expect(value).toBeGreaterThanOrEqual(previous)
+      previous = value
+    }
   })
 })

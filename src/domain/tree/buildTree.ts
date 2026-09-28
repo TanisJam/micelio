@@ -285,6 +285,7 @@ function buildTwig(
       scale: randRange(prng, LEAF_MIN_SCALE, LEAF_MAX_SCALE),
       age: computeAge(commitTime, bounds),
       twigId: twig.id,
+      limbId: limb.id,
     })
   })
 
@@ -321,6 +322,7 @@ function buildOverflowLeaves(
       scale: randRange(prng, LEAF_MIN_SCALE, LEAF_MAX_SCALE) * 0.8,
       age: computeAge(time, bounds),
       twigId: null,
+      limbId: limb.id,
     })
   }
   return leaves

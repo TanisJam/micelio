@@ -41,3 +41,15 @@ export function logScale(value: number, min: number, max: number): number {
     1,
   )
 }
+
+/** Cubic ease-out: fast start, gentle stop. `t` is clamped to [0, 1]. */
+export function easeOutCubic(t: number): number {
+  const clamped = clamp(t, 0, 1)
+  return 1 - (1 - clamped) ** 3
+}
+
+/** Cubic ease-in-out: gentle start and stop. `t` is clamped to [0, 1]. */
+export function easeInOutCubic(t: number): number {
+  const clamped = clamp(t, 0, 1)
+  return clamped < 0.5 ? 4 * clamped ** 3 : 1 - (-2 * clamped + 2) ** 3 / 2
+}
