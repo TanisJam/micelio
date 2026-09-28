@@ -1,10 +1,10 @@
-# Huerto MVP — a git repository grown as a 3D tree
+# Huerto MVP — a git repository grown as a living mycelium network
 
 Locator: `odd/tasks/huerto-mvp.md` · Engram mirror: `odd/huerto-mvp/tasks`
 
 ## Objective
-A shareable web app: enter `owner/repo`, watch the repository grow as a stylized low-poly 3D tree
-on a floating soil island, then navigate limbs, twigs and leaves to inspect real GitHub data.
+A shareable web app: enter `owner/repo`, watch the repository's history grow as a bioluminescent
+mycelium network in a patch of dark soil, then navigate hyphae, nodes and mushrooms to inspect real GitHub data.
 
 ## Problem / why
 Existing repo visualizers are either analytic (Git Truck, CodeCharta), directory-based (Gource,
@@ -12,16 +12,24 @@ GitCoral) or non-botanical (Skyline, Git City). None renders repository *history
 navigable tree. Literal branch topology looks bad (few long-lived branches), so structure is
 imposed by grouping history into eras.
 
-## Mapping (decided)
-- Trunk = time (height ∝ repo age). Lower = older.
-- Main limbs = eras between releases (fallback: quarters when no releases). Limb emerges at the era's height; length/density ∝ activity.
-- Twigs = merged PRs within the era. Fruit at twig tip = merged.
-- Leaves = commits of each PR. Color by age (fresh green → autumn; oldest eras sparse).
-- Flower at limb base = release/tag.
-- Buds at crown = currently open PRs / live branches.
-- Soil island cross-section strata = languages. Roots: out of MVP.
-- Style: stylized low-poly diorama. Deterministic shape seeded by `owner/repo`.
-- Data drives parameters; the growth algorithm drives shape. Cap twigs per limb; overflow becomes leaf density.
+## Pivot (2026-09-28)
+User questioned the tree metaphor: trees split but never fuse, git branches split AND merge.
+Decision (user-approved): mycelium — hyphae branch and fuse (anastomosis), so git's DAG maps ~1:1
+without inventing eras. Tree rendering (T3–T5 tree geometry, V1) is superseded; data, API, panel,
+routing, states, a11y list (T2, T6, T7) are reused. Tree code is removed in M4 once the network ships.
+
+## Mapping (decided — mycelium)
+- Spore at the center = first commit. Radius ≈ time (log/eased so recent years don't crush early ones).
+- Main hypha = default branch. Grows outward as a spiral from the spore (a fairy-ring-like sweep), angle advancing with time, so the whole history fills a disc.
+- Merged PR = a side hypha that splits off the parent hypha at its first commit time and FUSES back at mergedAt (a loop). If its base is another branch (not default), it splits from / fuses into that branch's hypha (branches from branches).
+- Commit = a node along its hypha (PR commits on the side hypha; direct commits and merge points on the main hypha).
+- Closed-unmerged PR = dead-end hypha that dries out (desaturated, thinner, no fusion).
+- Open PR / live branch = growing tip with an animated pulse.
+- Release/tag = a mushroom fruiting on the soil surface above its point on the main hypha (cluster if several are close).
+- Contributors = a subtle per-author hue on nodes/pulses (optional, never dominant).
+- Soil: dark loam disc (petri-dish / forest-floor patch) seen at a 3/4 top-down angle; languages as faint strata on the disc's cut edge.
+- Data truth: every filament, node and mushroom maps to real data. Topology is fixed by git; only curvature/wiggle is procedural (seeded by `owner/repo`, deterministic).
+- Scale: concurrent PRs take lanes perpendicular to the parent hypha (interval scheduling) so loops don't overlap; cap rendered PRs (~1000) and aggregate overflow honestly.
 
 ## Scope (authorized)
 Standalone app in this repo. Local work-unit commits on `feat/mvp`. Remote repo creation, push, deploy: user decision (not authorized yet).
@@ -47,27 +55,32 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
 - [x] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
+- [ ] M1 Data for topology: extend adapter/snapshot with PR `baseRefName`/`headRefName`, first-commit time, closed-unmerged PRs (capped), default-branch merge commits if cheap; regenerate fixture(s). Route: delegated.
+- [ ] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
+- [ ] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
+- [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
+(T8 polish now applies to the mycelium build.)
 
 ## Polish bar (must all hold before the MVP is called done)
-Visual
-- P1 Palette: tokenized, ≤ ~10 colors — bark, soil strata, leaf ramp (fresh green → gold → rust), orange fruit, blossom, warm sky gradient. Same tokens in 3D and UI.
-- P2 Style: consistent stylized low-poly flat shading; hemisphere + directional sun with soft shadows; contact shadow under the floating island; light fog for depth.
-- P3 Silhouette: from the default camera it reads as a tree at first glance — tapered trunk, crown mass, every limb/twig attached, no parts intersecting the trunk or floating.
-- P4 Motion: subtle idle wind sway, eased camera transitions, eased growth; respects `prefers-reduced-motion`; ~60fps on a mid laptop.
-- P5 UI craft: one display + one UI font, type scale, 4/8px spacing grid, one consistent panel style; no layout shift; mobile-first layouts.
+Visual (mycelium)
+- P1 Palette: tokenized — near-black loam bg (#05070a–#0a0e12), main hypha luminous white-mint (#e8fff2→#7ff5c4), side hyphae cool cyan (#4fa8c9/#6ee7ff), fusion flash warm (#ffe9a8), dead hyphae dry brown (#5a4a3a/#8a6b4f), mushrooms white with cyan rim (#b9f5ff). Same tokens in 3D and UI (UI may be dark to match).
+- P2 Light & glow: SELECTIVE bloom only on nodes, tips, fusion points and mushrooms — never whole-scene haze. Subtle fog/depth; soft vignette. Filaments translucent/additive where they overlap.
+- P3 Organic form: filaments taper and vary in thickness (main thickest, thicker with age), gentle curl-noise wiggle that decays to zero at split/fuse points; tangent-continuous fusions (no kinks); no constant-width pipes; no floating or disconnected filaments.
+- P4 Motion: eased growth replay; slow flow pulses along active/open hyphae; gentle idle breathing of glow; eased camera; respects `prefers-reduced-motion`; ~60fps on a mid laptop.
+- P5 UI craft: Fraunces + Inter, type scale, 4/8px grid, one panel style harmonized with the dark palette; no layout shift; mobile-first.
 Product
-- P6 States designed: loading (seed sprouting), error, not found, rate-limited, token-required, empty/tiny repo.
-- P7 Interaction: hover highlight + pointer cursor + tooltip, click → detail panel, camera focuses selection, Esc closes, keyboard navigation, touch works.
+- P6 States designed: loading (spore germinating), error, not found, rate-limited, token-required, empty/tiny repo (a lone spore with a short hypha still looks intentional).
+- P7 Interaction: hover highlight + pointer + tooltip, click → detail panel, camera focuses selection, Esc closes, keyboard nav, touch works. Selection highlights the whole PR loop; rest dims WITHOUT going muddy (mind ACES tonemapping — dim via emissive/opacity, not color multipliers).
 - P8 Truth: every visible element maps to real data; dates/numbers formatted; each detail links to GitHub.
-- P9 Legibility: a legend explaining the mapping (leaf = commit, fruit = merged PR, flower = release, bud = open PR, limb = era).
-- P10 Share: `/owner/repo` URLs, OG/meta tags, a "copy link" and "save image" action.
-- P11 A11y: UI contrast AA, aria labels, focus rings, a text alternative (era/PR list) for the 3D view.
-- P12 Perf & robustness: instanced leaves/fruit, low draw calls, lazy-loaded 3D chunk, handles tiny repos and 1000+ PR repos gracefully, no console errors.
-Verification of the bar: headless screenshots (desktop + mobile) reviewed each visual iteration; a final independent design/product review against P1–P12.
+- P9 Legibility: legend — spore = first commit, main hypha = default branch, loop = merged PR, dead end = closed PR, glowing tip = open PR, node = commit, mushroom = release, distance from center = time.
+- P10 Share: `/owner/repo` URLs, OG/meta from a real render, copy link, save image.
+- P11 A11y: UI contrast AA, aria labels, focus rings, text alternative list.
+- P12 Perf & robustness: batched geometry (few draw calls), GPU-friendly picking, lazy 3D chunk, handles tiny repos and 1000+ PR repos, no console errors.
+Verification: headless screenshots (desktop + mobile, end / mid-growth / selected) reviewed each iteration; final independent design/product review against P1–P12.
 
 ## Acceptance criteria
-- `/facebook/react`-style URL renders a believable tree from real data (or fixture offline).
-- Every twig/leaf/flower is clickable and shows real PR/commit/release info with a GitHub link.
+- `/owner/repo` URL renders a believable, beautiful mycelium network from real data (or fixture offline).
+- Every hypha/node/mushroom is clickable and shows real PR/commit/release info with a GitHub link.
 - Growth replay runs from first commit to today; scrubber moves through time.
 - All checks green: typecheck, lint, test, build.
 
@@ -668,16 +681,4 @@ end-to-end (clipboard permissions and file-save dialogs aren't
 exercisable from a headless screenshot script).
 
 ## Next step
-T8 (perf on a 1000+-PR repo and a genuinely tiny/empty repo, mobile
-touch-device check, a11y contrast audit, `prefers-reduced-motion` fps
-check) — but **the mycelium metaphor redesign should come first**: a new
-domain model (`src/domain/tree/` or its replacement) that represents
-branch/merge topology (hyphae fusing back, not just spoke-shaped limbs),
-new rendering geometry/materials for it, and a re-run of the full visual
-polish pass (palette, selection highlight/dim — reusing the ACES
-tonemap-toe finding above — silhouette, motion) against the new shape.
-T7's product shell (routing, states, header, share actions, meta/OG,
-README skeleton) was built metaphor-agnostic on purpose and shouldn't
-need structural changes for the redesign, only the `README.md` mapping
-TODO and the landing hero/OG image placeholders swapped for the real
-thing once the new scene exists.
+M1 (data for topology), then M2–M4, then T8 polish and the final independent review.
