@@ -43,6 +43,17 @@ export interface PullRequestCommitEntry {
   elementId: string | null
 }
 
+/**
+ * Honest wording for where a PR's hypha visually sprouts from -- only ever
+ * populated by the network model (M3), `undefined` for the tree. `'colony'`
+ * means the split point is a visual sprout point, not a claimed data
+ * relationship (see `Hypha.attachment` in `network/types.ts`); `'branch'`
+ * mirrors a real base-branch-of-another-PR relationship.
+ */
+export type PullRequestOrigin =
+  | { kind: 'colony' }
+  | { kind: 'branch'; parentTitle: string; parentNumber: number; parentElementId: string }
+
 export interface PullRequestDetail {
   kind: 'pull_request'
   id: string
@@ -59,6 +70,8 @@ export interface PullRequestDetail {
   labels: string[]
   commitCount: number | null
   commits: PullRequestCommitEntry[]
+  /** Only ever set by the network model (M3); `undefined` for the tree. */
+  origin?: PullRequestOrigin
 }
 
 export interface CommitDetail {

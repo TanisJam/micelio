@@ -11,12 +11,13 @@ import type {
   ElementDetail,
   PullRequestDetail,
   PullRequestCommitEntry,
+  PullRequestOrigin,
   ReleaseDetail,
   RepoOverviewDetail,
 } from '../elementDetail'
 import type { ClosedPullRequest, CommitAuthor, MergedPullRequest, OpenPullRequest, RepoSnapshot } from '../repo'
 import { findNetworkElement } from './lookup'
-import type { NetworkModel } from './types'
+import type { Hypha, NetworkModel } from './types'
 
 function toEpochMs(iso: string): number {
   const ms = Date.parse(iso)
@@ -38,6 +39,26 @@ function findPr(snapshot: RepoSnapshot, kind: 'merged' | 'closed' | 'open', numb
   return snapshot.openPullRequests.find((pr) => String(pr.number) === number) ?? null
 }
 
+/**
+ * Words a PR hypha's real attachment honestly (see `Hypha.attachment`'s doc
+ * in `types.ts`): `'colony'` never claims a specific branch-off point, only
+ * that it sprouted when the branch itself was created; `'parent-branch'`
+ * names the real parent PR (or, lacking one -- the parent resolved to `main`
+ * itself, which carries no PR title -- falls back to `undefined` rather than
+ * fabricating a branch name).
+ */
+function resolveOrigin(model: NetworkModel, snapshot: RepoSnapshot, hypha: Hypha): PullRequestOrigin | undefined {
+  if (hypha.attachment === 'colony') return { kind: 'colony' }
+  if (hypha.attachment !== 'parent-branch' || !hypha.parentHyphaId) return undefined
+  const parent = model.hyphae.find((h) => h.id === hypha.parentHyphaId)
+  if (!parent || parent.ref.type !== 'pull_request') return undefined
+  const parentKind = parent.kind === 'merged' ? 'merged' : parent.kind === 'closed' ? 'closed' : 'open'
+  if (parentKind !== 'merged' && parentKind !== 'closed' && parentKind !== 'open') return undefined
+  const parentPr = findPr(snapshot, parentKind, parent.ref.id)
+  if (!parentPr) return undefined
+  return { kind: 'branch', parentTitle: parentPr.title, parentNumber: parentPr.number, parentElementId: parent.id }
+}
+
 function buildPullRequestDetail(
   id: string,
   pr: MergedPullRequest | ClosedPullRequest | OpenPullRequest,
@@ -45,6 +66,7 @@ function buildPullRequestDetail(
   status: 'merged' | 'closed' | 'open',
   date: number,
   nodeIds: Set<string>,
+  origin?: PullRequestOrigin,
 ): PullRequestDetail {
   const commits: PullRequestCommitEntry[] = pr.commits.map((commit) => {
     const candidateId = `node-${hyphaId}-commit-${commit.oid}`
@@ -67,6 +89,7 @@ function buildPullRequestDetail(
     labels: hasFinancials ? pr.labels : [],
     commitCount: pr.commitCount,
     commits,
+    origin,
   }
 }
 
@@ -111,7 +134,15 @@ export function resolveNetworkElementDetail(model: NetworkModel, snapshot: RepoS
       const status = element.kind === 'merged' ? 'merged' : element.kind === 'closed' ? 'closed' : 'open'
       const pr = findPr(snapshot, element.kind, element.ref.id)
       if (!pr) return null
-      return buildPullRequestDetail(id, pr as MergedPullRequest | ClosedPullRequest | OpenPullRequest, element.id, status, element.endTime, nodeIds)
+      return buildPullRequestDetail(
+        id,
+        pr as MergedPullRequest | ClosedPullRequest | OpenPullRequest,
+        element.id,
+        status,
+        element.endTime,
+        nodeIds,
+        resolveOrigin(model, snapshot, element),
+      )
     }
 
     case 'liveBranch': {
@@ -199,7 +230,16 @@ export function resolveNetworkElementDetail(model: NetworkModel, snapshot: RepoS
       }
       const pr = findPr(snapshot, 'open', element.ref.id)
       if (!pr) return null
-      return buildPullRequestDetail(id, pr as OpenPullRequest, element.hyphaId, 'open', element.time, nodeIds)
+      const openHypha = model.hyphae.find((h) => h.id === element.hyphaId)
+      return buildPullRequestDetail(
+        id,
+        pr as OpenPullRequest,
+        element.hyphaId,
+        'open',
+        element.time,
+        nodeIds,
+        openHypha ? resolveOrigin(model, snapshot, openHypha) : undefined,
+      )
     }
 
     case 'mushroom': {

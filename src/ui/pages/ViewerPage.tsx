@@ -1,13 +1,12 @@
 import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
-import { resolveElementDetail } from '../../domain/elementDetail'
+import { resolveNetworkElementDetail, type NetworkModel } from '../../domain/network'
 import { mapErrorToViewState } from '../../domain/repoRequestState'
 import type { RepoSnapshot } from '../../domain/repo'
-import type { TreeModel } from '../../domain/tree'
 import { validateRepoIdentity } from '../../domain/validateRepoIdentity'
 import { DetailPanel } from '../components/DetailPanel'
-import { ExploreList } from '../components/ExploreList'
 import { Legend } from '../components/Legend'
+import { NetworkExploreList } from '../components/NetworkExploreList'
 import { StateScreen } from '../components/StateScreen'
 import { TimeScrubber } from '../components/TimeScrubber'
 import { Toast } from '../components/Toast'
@@ -17,18 +16,18 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { useGrowthClock } from '../hooks/useGrowthClock'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
-import { useRepoTree } from '../hooks/useRepoTree'
+import { useRepoNetwork } from '../hooks/useRepoNetwork'
 import { useSelection } from '../hooks/useSelection'
 import { useToast } from '../hooks/useToast'
 import { ui } from '../theme/tokens'
 
 const MOBILE_QUERY = '(max-width: 640px)'
 
-const Scene = lazy(() => import('../scene/Scene.tsx'))
+const Scene = lazy(() => import('../scene/network/Scene.tsx'))
 
 /**
  * `?t=0..1` pins the growth cursor to a fixed fraction of the timeline
- * (skipping auto-play) instead of animating, for deterministic visual QA
+ * (skipping autoplay) instead of animating, for deterministic visual QA
  * (see `scripts/shot.ts`).
  */
 function readDebugProgressOverride(): number | null {
@@ -46,9 +45,9 @@ export interface ViewerPageProps {
 
 /**
  * The `/:owner/:repo` route: validates the identity, fetches+renders that
- * repository, and covers every product state (P6) -- loading, not found,
- * private/forbidden, rate-limited, token-required, network error, and a
- * malformed `owner`/`repo` in the URL itself.
+ * repository as a mycelium network (M3), and covers every product state
+ * (P6) -- loading, not found, private/forbidden, rate-limited, token-
+ * required, network error, and a malformed `owner`/`repo` in the URL itself.
  */
 export function ViewerPage({ owner, repo }: ViewerPageProps) {
   const identity = (() => {
@@ -74,13 +73,13 @@ export function ViewerPage({ owner, repo }: ViewerPageProps) {
 }
 
 function ViewerPageBody({ owner, repo }: { owner: string; repo: string }) {
-  const { status, model, snapshot, errorInfo } = useRepoTree(owner, repo)
+  const { status, model, snapshot, errorInfo } = useRepoNetwork(owner, repo)
   const reducedMotion = usePrefersReducedMotion()
   const [, navigate] = useLocation()
 
   if (status === 'loading') {
     return (
-      <StateScreen title="Fetching history…">
+      <StateScreen title="Germinating…">
         Reading {owner}/{repo}&apos;s releases, pull requests and commits from GitHub.
       </StateScreen>
     )
@@ -103,7 +102,7 @@ function ErrorState({
 }: {
   owner: string
   repo: string
-  errorInfo: NonNullable<ReturnType<typeof useRepoTree>['errorInfo']>
+  errorInfo: NonNullable<ReturnType<typeof useRepoNetwork>['errorInfo']>
   onRetry: () => void
 }) {
   const state = mapErrorToViewState(errorInfo)
@@ -163,9 +162,9 @@ function ErrorState({
   }
 }
 
-function ReadyViewer({ model, snapshot, reducedMotion }: { model: TreeModel; snapshot: RepoSnapshot; reducedMotion: boolean }) {
+function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; snapshot: RepoSnapshot; reducedMotion: boolean }) {
   const debugProgress = readDebugProgressOverride()
-  const clock = useGrowthClock(model.bounds, reducedMotion, debugProgress)
+  const clock = useGrowthClock(model.bounds.time, reducedMotion, debugProgress)
   const getCurrentTime = useCallback(() => clock.getTime(), [clock])
   const selection = useSelection()
   const [exploreOpen, setExploreOpen] = useState(false)
@@ -176,7 +175,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: TreeModel; sna
   const toast = useToast()
 
   const selectedDetail =
-    !exploreOpen && selection.selectedId ? resolveElementDetail(model, snapshot, selection.selectedId) : null
+    !exploreOpen && selection.selectedId ? resolveNetworkElementDetail(model, snapshot, selection.selectedId) : null
   const mobileSheetOpen = isMobile && selectedDetail !== null
 
   if (selection.selectedId !== lastSelectedId) {
@@ -219,7 +218,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: TreeModel; sna
   return (
     <>
       <ViewerHeader snapshot={snapshot} onCopyLink={handleCopyLink} onSaveImage={handleSaveImage} />
-      <Suspense fallback={<StateScreen title="Loading the diorama…" />}>
+      <Suspense fallback={<StateScreen title="Growing hyphae…" />}>
         <Scene
           model={model}
           getCurrentTime={getCurrentTime}
@@ -233,9 +232,9 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: TreeModel; sna
           }}
         />
       </Suspense>
-      {!mobileSheetOpen && <TimeScrubber clock={clock} bounds={model.bounds} />}
+      {!mobileSheetOpen && <TimeScrubber clock={clock} bounds={model.bounds.time} />}
       <Legend />
-      <TooltipLayer model={model} snapshot={snapshot} hoveredId={selection.hoveredId} />
+      <TooltipLayer resolveDetail={(id) => resolveNetworkElementDetail(model, snapshot, id)} hoveredId={selection.hoveredId} />
       <DetailPanel
         detail={selectedDetail}
         onClose={() => selection.select(null)}
@@ -267,7 +266,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: TreeModel; sna
         {exploreOpen ? 'Close explore list' : 'Explore list'}
       </button>
       {exploreOpen && (
-        <ExploreList
+        <NetworkExploreList
           model={model}
           snapshot={snapshot}
           selectedId={selection.selectedId}

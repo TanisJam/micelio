@@ -138,4 +138,59 @@ describe('buildMushroomsOnRings (colony layout)', () => {
     const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
     expect(mushrooms[0]!.nearPr).toBeNull()
   })
+
+  // A flat radius/time slope (unlike the outer `RADIUS_FOR_TIME`, tuned for
+  // millisecond-scale test dates) so multi-month gaps between releases --
+  // required to keep them un-clustered (> `MUSHROOM_CLUSTER_GAP_MS`, 3 days)
+  // -- still land within one long-lived hypha's own disc-radius span.
+  const FLAT_RADIUS_FOR_TIME = (time: number): number => 1 + time / (1000 * 60 * 60 * 24 * 1000)
+
+  it('spreads a run of releases that all resolve to the same anchor hypha across distinct angles instead of one straight line', () => {
+    // A long-lived merged PR (its own curve spans disc radius 1..30, far past
+    // any of these releases' ring radii) with no OTHER merge in between --
+    // every release below honestly resolves `nearPr` to the same PR, which
+    // previously meant `Math.atan2` of a point on that one hypha's own curve
+    // for every single one, visually reading as "all these mushrooms sit on
+    // one exact line" (a real bug found via 3D visual review, M3).
+    const longLivedPr = mergedHypha({
+      points: [
+        { position: { x: 1, y: 0, z: 0 }, radius: 0.02, time: 0 },
+        { position: { x: 30, y: 0, z: 0 }, radius: 0.01, time: 1000 * 60 * 60 * 24 * 900 },
+      ],
+    })
+    const releases = [
+      release('v1.0.0', new Date(1000 * 60 * 60 * 24 * 10).toISOString()),
+      release('v1.1.0', new Date(1000 * 60 * 60 * 24 * 60).toISOString()), // 50 days later: not clustered
+      release('v1.2.0', new Date(1000 * 60 * 60 * 24 * 120).toISOString()), // another 60 days later: not clustered
+      release('v1.3.0', new Date(1000 * 60 * 60 * 24 * 180).toISOString()),
+    ]
+    const mushrooms = buildMushroomsOnRings(releases, FLAT_RADIUS_FOR_TIME, [longLivedPr], 'o/r')
+
+    // Every release still honestly links to the same real PR...
+    for (const mushroom of mushrooms) expect(mushroom.nearPr).toEqual({ type: 'pull_request', id: '1' })
+    // ...but their angles are no longer all identical (spread across the run).
+    const angles = mushrooms.map((m) => Math.atan2(m.position.z, m.position.x))
+    const uniqueAngles = new Set(angles.map((a) => a.toFixed(4)))
+    expect(uniqueAngles.size).toBe(mushrooms.length)
+    // Still bounded -- a reasonable "fruiting near its real anchor" spread, not scattered randomly far away.
+    const angleSpread = Math.max(...angles) - Math.min(...angles)
+    expect(angleSpread).toBeLessThan(1.2)
+  })
+
+  it('is deterministic for a repeated-anchor run (same seed -> same spread)', () => {
+    const longLivedPr = mergedHypha({
+      points: [
+        { position: { x: 1, y: 0, z: 0 }, radius: 0.02, time: 0 },
+        { position: { x: 30, y: 0, z: 0 }, radius: 0.01, time: 1000 * 60 * 60 * 24 * 900 },
+      ],
+    })
+    const releases = [
+      release('v1.0.0', new Date(1000 * 60 * 60 * 24 * 10).toISOString()),
+      release('v1.1.0', new Date(1000 * 60 * 60 * 24 * 60).toISOString()),
+      release('v1.2.0', new Date(1000 * 60 * 60 * 24 * 120).toISOString()),
+    ]
+    const a = buildMushroomsOnRings(releases, FLAT_RADIUS_FOR_TIME, [longLivedPr], 'o/r')
+    const b = buildMushroomsOnRings(releases, FLAT_RADIUS_FOR_TIME, [longLivedPr], 'o/r')
+    expect(a).toEqual(b)
+  })
 })

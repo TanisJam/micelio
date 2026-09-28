@@ -2,10 +2,10 @@
 /**
  * Visual QA harness: boots the Vite dev server, drives it with a
  * software-rendered (SwiftShader) headless Chromium so WebGL works without a
- * GPU, and saves desktop/mobile screenshots -- the 3D viewer at a few growth
- * states, the landing page, and a couple of product states -- into
- * `.shots/` (gitignored). Fails (non-zero exit) if the page logs any
- * console error. Run with: `pnpm shot`.
+ * GPU, and saves desktop/mobile screenshots -- the mycelium network viewer at
+ * a few growth/selection states for BOTH bundled fixtures, the landing page,
+ * and a couple of product states -- into `.shots/` (gitignored). Fails
+ * (non-zero exit) if the page logs any console error. Run with: `pnpm shot`.
  */
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -25,10 +25,37 @@ const VIEWPORTS: Viewport[] = [
   { name: 'mobile', width: 390, height: 844 },
 ]
 
-// A twig id from the bundled fixture (`pmndrs/valtio`), stable across runs
-// since the fixture and the deterministic tree model never change.
-const SELECTED_PR_TWIG_ID = 'twig-pr1'
-const FIXTURE_PATH = '/pmndrs/valtio'
+/**
+ * Real network element ids from each bundled fixture's deterministic
+ * `buildNetwork(snapshot, { layout: 'colony' })` output (`hypha-pr<N>` for a
+ * merged/closed PR hypha, `mushroom-<tag>` for a release) -- stable across
+ * runs since both the fixture and the model are deterministic. Found via a
+ * throwaway inspection script, not guessed.
+ */
+interface FixtureIds {
+  mergedHyphaId: string
+  closedHyphaId: string
+  mushroomId: string
+}
+
+interface Fixture {
+  name: string
+  path: string
+  ids: FixtureIds
+}
+
+const FIXTURES: Fixture[] = [
+  {
+    name: 'valtio',
+    path: '/pmndrs/valtio',
+    ids: { mergedHyphaId: 'hypha-pr1', closedHyphaId: 'hypha-pr22', mushroomId: 'mushroom-v1.0.0' },
+  },
+  {
+    name: 'express',
+    path: '/expressjs/express',
+    ids: { mergedHyphaId: 'hypha-pr645', closedHyphaId: 'hypha-pr3695', mushroomId: 'mushroom-3.5.3' },
+  },
+]
 
 interface Shot {
   name: string
@@ -36,13 +63,20 @@ interface Shot {
   path: string
 }
 
+function fixtureShots(fixture: Fixture): Shot[] {
+  const { path: base, ids } = fixture
+  return [
+    // `?t=1` pins the growth cursor to fully-grown instead of animating, for deterministic visual QA.
+    { name: `${fixture.name}-end`, path: `${base}?t=1` },
+    { name: `${fixture.name}-mid`, path: `${base}?t=0.5` },
+    { name: `${fixture.name}-selected-merged`, path: `${base}?t=1&sel=${ids.mergedHyphaId}` },
+    { name: `${fixture.name}-selected-closed`, path: `${base}?t=1&sel=${ids.closedHyphaId}` },
+  ]
+}
+
 const SHOTS: Shot[] = [
   { name: 'landing', path: '/' },
-  // `?t=1` pins the growth cursor to fully-grown instead of animating, for
-  // deterministic visual QA.
-  { name: 'end', path: `${FIXTURE_PATH}?t=1` },
-  { name: 'mid', path: `${FIXTURE_PATH}?t=0.5` },
-  { name: 'end-selected', path: `${FIXTURE_PATH}?t=1&sel=${SELECTED_PR_TWIG_ID}` },
+  ...FIXTURES.flatMap(fixtureShots),
   // Product states (P6), both reachable fully offline/deterministically:
   // a real, non-fixture repo with no GITHUB_TOKEN configured always hits
   // `token_required`; a single-segment path never matches `/:owner/:repo`,
@@ -87,9 +121,9 @@ async function main(): Promise<void> {
 
         const url = new URL(shot.path, baseUrl)
         await page.goto(url.toString(), { waitUntil: 'networkidle' })
-        // Let the canvas mount, the WebGL context initialize and a few
-        // frames render (shadows/instances settle) before capturing.
-        await page.waitForTimeout(1800)
+        // Let the canvas mount, the WebGL context initialize, postprocessing
+        // compile and a few frames render (growth/bloom settle) before capturing.
+        await page.waitForTimeout(2200)
 
         const fileName = `${viewport.name}-${shot.name}.png`
         const filePath = path.join(SHOTS_DIR, fileName)

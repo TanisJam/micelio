@@ -19,6 +19,12 @@ const MUSHROOM_CLUSTER_GAP_MS = 1000 * 60 * 60 * 24 * 3 // releases within 3 day
 export const MUSHROOM_CLUSTER_SCATTER = 0.05
 /** Colony layout only: angular scatter (radians) for a clustered mushroom around its ring anchor angle. */
 export const MUSHROOM_CLUSTER_ANGLE_SCATTER = 0.24
+/** Colony layout only: target angular gap (radians) between adjacent members of a same-direction run (see `ANGLE_PROXIMITY_RADIANS`) -- scales the run's total spread with its size instead of always using one fixed arc, so a small run of 2-3 doesn't get spread as wide as a real 79-long early-growth chain would. */
+export const REPEATED_ANCHOR_GAP = 0.08
+/** Colony layout only: hard ceiling (radians) on a run's total spread, regardless of size -- real early-colony growth can chain many dozens of releases into one run (an honest property of the real data, not fabricated), so this still caps out at a wide-but-bounded arc (~130deg) rather than spanning the whole circle. */
+export const REPEATED_ANCHOR_MAX_SPREAD = 2.3
+/** Colony layout only: how close (radians) two consecutive releases' own real anchor angles have to be before they're treated as "the same direction" and folded into a spread-out run. */
+export const ANGLE_PROXIMITY_RADIANS = 0.3
 const MUSHROOM_SCALE_PATCH = 0.55
 const MUSHROOM_SCALE_MINOR = 0.75
 const MUSHROOM_SCALE_MAJOR = 1.05
@@ -146,16 +152,76 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
   for (const entry of sequence) clusterSizes.set(entry.clusterIndex, (clusterSizes.get(entry.clusterIndex) ?? 0) + 1)
   const clusterMemberSeen = new Map<number, number>()
 
+  // Real-world release cadence is bursty relative to merge cadence, and
+  // early colony growth hasn't yet spread across the full circle -- both
+  // make `findRingAnchor`'s "nearest preceding merge" resolve to the same
+  // anchor hypha repeatedly, OR to several DIFFERENT early hyphae that still
+  // happen to sit within a narrow angular band. Either way, each individual
+  // link is honest (it *is* the real nearest-preceding merge/crossing), but
+  // sampling many ring radii along nearly the same angle visually reads as
+  // "all these mushrooms sit in a straight line/trail," not as mycelium
+  // fruiting across the colony (a real bug found via 3D visual review, M3).
+  // Fixed the same way clustered members are already fanned: a run of
+  // consecutive *non-clustered* entries whose real anchor angles land within
+  // `ANGLE_PROXIMITY_RADIANS` of each other gets spread evenly across a
+  // small arc centered on the run's own first real angle, instead of every
+  // member landing exactly on (or right next to) that same direction.
+  interface PrimaryAngle {
+    index: number
+    anchor: RingAnchor
+    angle: number
+  }
+  const primaries: PrimaryAngle[] = []
+  sequence.forEach((entry, index) => {
+    if (entry.isClustered) return
+    const radius = radiusForTime(entry.time)
+    const anchor = findRingAnchor(hyphae, entry.time, radius)
+    const angle = anchor.angle ?? randRange(prng, 0, Math.PI * 2)
+    primaries.push({ index, anchor, angle })
+  })
+
+  for (let i = 0; i < primaries.length; ) {
+    // A pure-fallback (no real crossing at all, `anchorKey === null`) angle
+    // is already an independent seeded random draw -- never group those.
+    if (primaries[i]!.anchor.anchorKey === null) {
+      i += 1
+      continue
+    }
+    const runStartAngle = primaries[i]!.angle
+    let j = i + 1
+    while (
+      j < primaries.length &&
+      primaries[j]!.anchor.anchorKey !== null &&
+      Math.abs(primaries[j]!.angle - runStartAngle) < ANGLE_PROXIMITY_RADIANS
+    )
+      j++
+    const runSize = j - i
+    if (runSize > 1) {
+      const spread = Math.min(REPEATED_ANCHOR_MAX_SPREAD, (runSize - 1) * REPEATED_ANCHOR_GAP)
+      for (let k = i; k < j; k++) {
+        const fanFraction = (k - i) / (runSize - 1) - 0.5
+        primaries[k]!.angle = runStartAngle + fanFraction * spread
+      }
+    }
+    i = j
+  }
+
+  const angleByIndex = new Map(primaries.map((p) => [p.index, p.angle]))
+  const anchorByIndex = new Map(primaries.map((p) => [p.index, p.anchor]))
+
   const mushrooms: Mushroom[] = []
   let clusterId: string | null = null
   let clusterAngle: number | null = null
+  let clusterNearPr: NetworkRef | null = null
 
-  for (const entry of sequence) {
+  sequence.forEach((entry, index) => {
     if (!entry.isClustered) clusterId = null
 
     const radius = radiusForTime(entry.time)
-    const anchor = findRingAnchor(hyphae, entry.time, radius)
-    const angle: number = clusterAngle ?? anchor.angle ?? randRange(prng, 0, Math.PI * 2)
+    const primaryAngle = angleByIndex.get(index)
+    const primaryAnchor = anchorByIndex.get(index)
+    const angle: number = clusterAngle ?? primaryAngle ?? randRange(prng, 0, Math.PI * 2)
+    const nearPr = primaryAnchor ? primaryAnchor.nearPr : clusterNearPr
 
     let scatterAngle = 0
     if (clusterAngle !== null) {
@@ -172,12 +238,14 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
       const prev = mushrooms[mushrooms.length - 1]
       if (prev) prev.clusterId = clusterId
       clusterAngle = angle
+      clusterNearPr = nearPr
     } else if (!entry.isClustered) {
       clusterAngle = angle
+      clusterNearPr = nearPr
     }
 
-    mushrooms.push(makeMushroom(entry, position, clusterId, anchor.nearPr))
-  }
+    mushrooms.push(makeMushroom(entry, position, clusterId, nearPr))
+  })
 
   return mushrooms
 }
@@ -185,6 +253,8 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
 interface RingAnchor {
   angle: number | null
   nearPr: NetworkRef | null
+  /** Internal grouping key (the anchor hypha's own id), used only to detect a run of consecutive releases sharing the same real anchor -- never exposed on `Mushroom` itself. `null` when no real crossing hypha was found at all (a pure seeded-angle fallback, never grouped). */
+  anchorKey: string | null
 }
 
 /** A hypha's own start/end disc radius (ignores tube thickness), from its already-grown points. */
@@ -204,7 +274,7 @@ function findRingAnchor(hyphae: Hypha[], releaseTime: number, ringRadius: number
     const span = hyphaRadiusSpan(closestMergedBefore)
     if (ringRadius >= span.start - 1e-6 && ringRadius <= span.end + 1e-6) {
       const at = pointOnHyphaAtRadius(closestMergedBefore.points, ringRadius)
-      return { angle: Math.atan2(at.position.z, at.position.x), nearPr: closestMergedBefore.ref }
+      return { angle: Math.atan2(at.position.z, at.position.x), nearPr: closestMergedBefore.ref, anchorKey: closestMergedBefore.id }
     }
   }
 
@@ -222,10 +292,10 @@ function findRingAnchor(hyphae: Hypha[], releaseTime: number, ringRadius: number
   }
   if (nearestCrossing) {
     const at = pointOnHyphaAtRadius(nearestCrossing.points, ringRadius)
-    return { angle: Math.atan2(at.position.z, at.position.x), nearPr: null }
+    return { angle: Math.atan2(at.position.z, at.position.x), nearPr: null, anchorKey: nearestCrossing.id }
   }
 
-  return { angle: null, nearPr: null }
+  return { angle: null, nearPr: null, anchorKey: null }
 }
 
 function makeMushroom(entry: ReleaseSequenceEntry, position: Vec3, clusterId: string | null, nearPr: NetworkRef | null): Mushroom {

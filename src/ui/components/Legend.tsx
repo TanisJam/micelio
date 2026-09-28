@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { palette, ui } from '../theme/tokens'
+import { mycelium, ui } from '../theme/tokens'
 
 interface LegendEntry {
   label: string
@@ -8,15 +8,18 @@ interface LegendEntry {
 }
 
 const ENTRIES: LegendEntry[] = [
-  { label: 'Leaf', color: palette.leafFresh, description: 'a commit (color = age, fresh green to autumn rust)' },
-  { label: 'Fruit', color: palette.fruit, description: 'a merged pull request' },
-  { label: 'Flower', color: palette.blossom, description: 'a release' },
-  { label: 'Bud', color: palette.bud, description: 'an open pull request or live branch' },
-  { label: 'Limb', color: palette.barkLight, description: 'an era of the repository’s history' },
-  { label: 'Soil', color: palette.soilRock, description: 'the languages used in the repository' },
+  { label: 'Spore', color: mycelium.sporeCore, description: 'the first commit / the repository itself' },
+  { label: 'Distance from center', color: mycelium.ring, description: 'time (always later further out)' },
+  { label: 'Filament', color: mycelium.hyphaActiveTip, description: 'a pull request (length = amount of work)' },
+  { label: 'Fork', color: mycelium.hyphaActiveBase, description: 'a branch was created' },
+  { label: 'Knot', color: mycelium.fusion, description: 'a merged pull request' },
+  { label: 'Dry filament', color: mycelium.hyphaDeadTip, description: 'closed without merging' },
+  { label: 'Glowing tip', color: mycelium.hyphaOpen, description: 'an open pull request or live branch' },
+  { label: 'Fine hair', color: mycelium.hyphaActiveTip, description: 'a commit' },
+  { label: 'Mushroom', color: mycelium.mushroomCap, description: 'a release' },
 ]
 
-/** Compact, collapsible legend explaining the tree's data mapping (P9). */
+/** Compact, collapsible legend explaining the mycelium's data mapping (P9). */
 export function Legend() {
   const [open, setOpen] = useState(false)
 

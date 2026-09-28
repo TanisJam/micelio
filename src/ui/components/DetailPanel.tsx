@@ -94,17 +94,36 @@ function DetailBody({ detail, onFocusElement }: { detail: ElementDetail; onFocus
         </>
       )
 
-    case 'pull_request':
+    case 'pull_request': {
+      const branchOrigin = detail.origin?.kind === 'branch' ? detail.origin : null
       return (
         <>
           <h2 style={{ margin: 0, fontFamily: ui.fontDisplay, fontSize: '1.15rem' }}>
             #{detail.number} {detail.title}
           </h2>
-          <Field label="Status">{detail.status === 'merged' ? 'Merged' : 'Open'}</Field>
+          <Field label="Status">
+            {detail.status === 'merged' ? 'Merged' : detail.status === 'closed' ? 'Closed without merging' : 'Open'}
+          </Field>
           <Field label="Author">
             <AuthorLine author={detail.author} />
           </Field>
-          <Field label={detail.status === 'merged' ? 'Merged' : 'Opened'}>{formatDate(detail.date)}</Field>
+          <Field label={detail.status === 'merged' ? 'Merged' : detail.status === 'closed' ? 'Closed' : 'Opened'}>
+            {formatDate(detail.date)}
+          </Field>
+          {detail.origin?.kind === 'colony' && (
+            <Field label="Branched from">Sprouted from the colony when the branch was created</Field>
+          )}
+          {branchOrigin && (
+            <Field label="Branched from">
+              <button
+                type="button"
+                onClick={() => onFocusElement(branchOrigin.parentElementId)}
+                style={{ background: 'transparent', border: 'none', color: ui.accent, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+              >
+                #{branchOrigin.parentNumber} {branchOrigin.parentTitle}
+              </button>
+            </Field>
+          )}
           {detail.additions !== null && detail.deletions !== null && (
             <Field label="Changes">
               <span style={{ color: '#7fd88a' }}>{formatSignedNumber(detail.additions)}</span>{' '}
@@ -168,6 +187,7 @@ function DetailBody({ detail, onFocusElement }: { detail: ElementDetail; onFocus
           </Field>
         </>
       )
+    }
 
     case 'commit':
       return (

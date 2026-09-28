@@ -1,21 +1,19 @@
 import { useEffect, useState } from 'react'
-import { resolveElementDetail, summarizeElementDetail } from '../../domain/elementDetail'
-import type { RepoSnapshot } from '../../domain/repo'
-import type { TreeModel } from '../../domain/tree'
+import { summarizeElementDetail, type ElementDetail } from '../../domain/elementDetail'
 import { Tooltip } from './Tooltip'
 
 export interface TooltipLayerProps {
-  model: TreeModel
-  snapshot: RepoSnapshot
+  /** id -> detail view-model, metaphor-agnostic (tree: `resolveElementDetail`, network: `resolveNetworkElementDetail`, both bound to their own model/snapshot by the caller). */
+  resolveDetail: (id: string) => ElementDetail | null
   hoveredId: string | null
 }
 
 /**
  * Tracks the pointer (only while something is hovered) and renders the hover
  * tooltip near it. Kept as its own component so the pointer-position state
- * doesn't re-render the 3D scene above it in the tree on every mouse move.
+ * doesn't re-render the 3D scene above it on every mouse move.
  */
-export function TooltipLayer({ model, snapshot, hoveredId }: TooltipLayerProps) {
+export function TooltipLayer({ resolveDetail, hoveredId }: TooltipLayerProps) {
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
@@ -28,7 +26,7 @@ export function TooltipLayer({ model, snapshot, hoveredId }: TooltipLayerProps) 
   }, [hoveredId])
 
   if (!hoveredId || !pointer) return null
-  const detail = resolveElementDetail(model, snapshot, hoveredId)
+  const detail = resolveDetail(hoveredId)
   if (!detail) return null
   return <Tooltip summary={summarizeElementDetail(detail)} x={pointer.x} y={pointer.y} />
 }

@@ -23,18 +23,45 @@ export const palette = {
   fog: '#f6c9a0',
 } as const
 
+/**
+ * M3's bioluminescent-mycelium-on-dark-loam palette (P1), shared by the 3D
+ * network scene and any UI chrome that wants to echo it. Kept separate from
+ * `palette` above (still used by the not-yet-removed tree code, M4) rather
+ * than replacing it in place.
+ */
+export const mycelium = {
+  soilNear: '#05070a',
+  soilFar: '#0a0e12',
+  hyphaActiveBase: '#4fa8c9',
+  hyphaActiveTip: '#6ee7ff',
+  hyphaDeadBase: '#5a4a3a',
+  hyphaDeadTip: '#8a6b4f',
+  hyphaOpen: '#ffe9a8',
+  hyphaLiveBranch: '#9fb3c8',
+  hyphaConduit: '#2c4a52',
+  fusion: '#ffe9a8',
+  mushroomCap: '#fff8ec',
+  mushroomRim: '#b9f5ff',
+  sporeCore: '#eafffa',
+  sporeHalo: '#7ff5c4',
+  ring: '#4fa8c9',
+  selection: '#eafffb',
+} as const
+
 export const ui = {
   // Self-hosted via @fontsource (see `main.tsx`) -- falls back to a generic
   // system serif/sans if the font files ever fail to load.
   fontDisplay: '"Fraunces", Georgia, "Times New Roman", serif',
   fontBody: '"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-  bg: '#151009',
-  panelBg: 'rgba(21, 16, 9, 0.82)',
-  panelBorder: 'rgba(255, 217, 160, 0.22)',
-  text: '#fbf3e7',
-  textMuted: 'rgba(251, 243, 231, 0.65)',
-  accent: palette.leafGold,
-  focusRing: '#ffd9a0',
+  // Near-black loam (P1), matching the mycelium scene's own background --
+  // was a warm brown (`#151009`) for the tree metaphor.
+  bg: '#05070a',
+  panelBg: 'rgba(5, 7, 10, 0.82)',
+  panelBorder: 'rgba(110, 231, 255, 0.22)',
+  text: '#eafffb',
+  textMuted: 'rgba(234, 255, 251, 0.65)',
+  accent: mycelium.hyphaActiveTip,
+  focusRing: mycelium.hyphaActiveTip,
   space: (steps: number) => `${steps * 4}px`,
 } as const
 
