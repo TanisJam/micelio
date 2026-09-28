@@ -58,6 +58,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] M1 Data for topology: extend adapter/snapshot with PR `baseRefName`/`headRefName`, first-commit time, closed-unmerged PRs (capped), default-branch merge commits if cheap; regenerate fixture(s). Route: delegated.
 - [x] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
 - [x] M2b Layout iteration: fix chord-crossing loops, far-flung dead ends/mushrooms, empty inter-turn space, and add mycelial hair texture, per orchestrator visual review of `.shots/network-*.png`. Route: delegated (writer).
+- [x] M2c Radial colony layout prototype: alternative `layout: 'colony'` mapping (radius = time, angle = contributor sector, true branch-from-branch sprouting, fusion knots/bridges, growth rings) behind `buildNetwork(snapshot, { layout })`, compared side by side against the spiral. Route: delegated (writer).
 - [ ] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
 - [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
 (T8 polish now applies to the mycelium build.)
@@ -1017,12 +1018,279 @@ free (full-model `toEqual`).
 Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (286
 tests total, +9 for M2b) · `pnpm build`: pass.
 
+### M2c Radial colony layout prototype — done
+Commit: `feat: add radial colony layout for the mycelium network`.
+Trigger: the orchestrator reviewed the M2b spiral images and reported they
+read as a spiral galaxy/snail, not mycelium, with hyphae still crossing the
+interior. Instructed to prototype a genuinely RADIAL layout (many hyphae
+radiating from the center, branching, concentric growth rings) as a
+`layout: 'colony'` alternative alongside the existing `layout: 'spiral'`,
+sharing topology, for side-by-side comparison -- not to replace the spiral
+yet.
+
+**New files** (`src/domain/network/`): `sectors.ts` (author angular-sector
+assignment), `colonyLayout.ts` (the colony geometry strategy). **Changed**:
+`types.ts` (`Hypha.attachment`, `GrowthRing`, `Fusion`, `NetworkModel.rings`/
+`fusions`/`layout`, `NetworkSummary.fusionCount`), `layout.ts` (exports
+`DISC_MAX_RADIUS`/`radiusForCommitCount`/`capEvenly` for reuse; spiral hyphae
+now set `attachment: 'parent-branch'` always, since the spiral's attach
+point already sits on the real parent's own curve), `topology.ts`
+(`HyphaCommitDraft.author?` -- only populated for a genuine direct commit on
+`main`, needed to place its colony spur in the right author sector),
+`mushrooms.ts` (extracted layout-agnostic `computeReleaseSequence`; added
+`buildMushroomsOnRings` for the colony placement strategy alongside the
+unchanged `buildMushrooms`), `buildNetwork.ts` (`NetworkBuildOptions.layout:
+'spiral' | 'colony'`, branches to `layoutNetworkColony` and folds its
+rings/fusions into bounds/summary), `index.ts` (new exports).
+`scripts/network-svg.ts` now renders **both** layouts for **both**
+fixtures: `.shots/network-<repo>.svg/png` (spiral, unchanged name) and
+`.shots/network-<repo>-colony.svg/png` (new).
+
+**Mapping** (`colonyLayout.ts`):
+- **Radius = pure eased time**, `radiusForFrac(timeToFrac(time, bounds))`
+  (same `frac^0.58` sub-linear ease as the spiral, `DISC_MAX_RADIUS = 5`
+  shared), but **without** M2b's activity-weighted CDF blend -- a deliberate
+  divergence from the spiral, decided and found necessary during round 2/3
+  of visual iteration (see below): a concentric ring's whole *point* is to
+  be an honest, roughly-even function of elapsed real time, and the
+  activity blend's "more radius where activity is dense" behavior does the
+  opposite of what a ring needs (a quiet stretch barely advances the
+  activity CDF, so everything born in it collapses onto nearly one radius).
+  Spore at the exact center = first commit, by construction (`radiusForFrac(0) = 0`).
+- **The default branch is the colony itself**: no rendered main curve. A
+  degenerate 2-point `main` `Hypha` entry still exists (kind `'main'`,
+  `attachment: null`) purely so `findNetworkElement`/`resolveNetworkElementDetail`
+  keep working unchanged for the branch-detail lookup; `network-svg.ts`
+  explicitly skips drawing it. `GrowthRing`s (`rings: GrowthRing[]`) are the
+  colony's own concentric structure: one real ring per release
+  (`ringKind: 'release'`, carrying that release's own `ref`) plus faint
+  optional calendar-year rings (`ringKind: 'year'`, `ref: null`, real
+  elapsed-time boundaries, non-interactive, excluded from
+  `LookupableNetworkElement`, capped at 40). Direct commits on the default
+  branch become radial spurs: one `NetworkNode` (`hyphaId: main.id`) + one
+  radially-outward `Hair` per genuine direct commit, placed in the commit
+  author's own sector (reusing the same sector-slot mechanism as PR
+  hyphae) -- not a "seeded angle" fallback, since `HyphaCommitDraft.author`
+  was threaded through for exactly this.
+- **Angle = contributor** (`sectors.ts`): every author is ranked by real
+  merged-PR count; the top `MAX_AUTHOR_SECTORS` (20, tuned up from an
+  initial 14 during round 4) each get their own sector, angular width
+  strictly proportional to their merged-PR count (a small
+  `MIN_SECTOR_WEIGHT`/`MIN_SECTOR_ANGLE` floor-then-renormalize keeps any
+  sector from collapsing to an invisible sliver); every other author
+  (including anyone with zero merged PRs) shares one always-present
+  `'community'` sector. Sectors are ordered around the circle by each
+  group's earliest real contribution time (stable, deterministic) --
+  **not** by size. A community sector is now *unconditionally* reserved
+  (even with a floor-only weight) so `resolveSectorKey` can never point at
+  a sector that doesn't exist -- a real bug found while testing: a
+  direct-commit author who never opened a PR isn't in the population
+  `buildAuthorSectors` was built from, so without an always-present
+  community fallback their spur would have been silently dropped. Within a
+  sector, PRs/commits get an angular "slot" via the same greedy
+  interval-scheduling idea as the spiral's radial lanes
+  (`assignSlotsWithinGroup`), plus a small seeded jitter.
+- **Merged PR = a hypha that sprouts, grows, and fuses.** Its base point is
+  `radiusForTime(splitTime)` at an angle that depends on real topology
+  honesty (`Hypha.attachment`): if the PR's real base branch is another
+  PR's real head branch (`parentHyphaId` points at a non-main hypha, exactly
+  the same "branch-from-branch" case `topology.ts` already resolves for the
+  spiral), it sprouts from that **real** parent hypha's own curve point at
+  the split time -- `attachment: 'parent-branch'`, true topology, no
+  approximation. Otherwise (its base is the default branch), it sprouts
+  from the **nearest already-positioned hypha point in its own sector**
+  near that radius (a coarse radius-bucketed spatial grid,
+  `RADIUS_BIN_WIDTH = 0.12`, keeps this an O(1)-ish query regardless of
+  hypha count -- see the perf test), or from the nearest growth ring/spore
+  if nothing is nearby yet -- `attachment: 'colony'`, explicitly a visual
+  sprout point, not a claimed data relationship. The curve then grows
+  outward: **disc-radius at each sampled point is recomputed directly from
+  that point's own real time** (`radiusForTime(lerp(splitTime, endTime,
+  t))`), never lerped between the two endpoints -- since `radiusForTime` is
+  monotonically non-decreasing by construction, this makes "radius
+  monotonic non-decreasing along the curve" an *exact* guarantee, not an
+  approximation. Angle eases from the sprout angle to the PR's own
+  author-sector target angle (`easeInOutCubic`), with a small seeded
+  low-frequency curl (amplitude a *fraction* of the sector's own width, not
+  an absolute angle, envelope zero at both ends) for organic wiggle. Ends
+  in a **`Fusion`**: a small knot at the real tip position plus a short
+  "anastomosis bridge" to whichever real structure (another hypha's nearby
+  point, or a growth ring/spore) is nearest at that radius -- an honest
+  visual anchor, not a claimed relationship (mirrors `attachment`'s
+  honesty framing; `Fusion.bridgeToKind` records which).
+- **Closed PR** = same growth mechanism, ends dry (thinner/desaturated via
+  the existing `status: 'dead_end'`), no fusion. **Open PR** = grows to
+  `radiusForTime(bounds.lastEventTime)` ("now"), keeps the existing `Tip`
+  element with a bright growing-tip treatment in the SVG.
+- **Commit = hair.** Every rendered commit node on a PR hypha gets the
+  same lateral-filament `Hair` the spiral layout already uses
+  (`buildPrHairs`, tangent-perpendicular to its own hypha's local curve,
+  alternating side, seeded jitter, longer for a merge-point commit) --
+  explicitly reusing M2b's mechanism per the task brief, not a new one.
+  Only `main`'s genuine direct-commit spurs use the separate
+  radially-outward variant described above. `hairs.length === nodes.length`
+  always (tested).
+
+**Honesty (`Hypha.attachment`)**: added to the shared `Hypha` type (used by
+both layouts) so a future detail panel can word a colony PR's origin
+correctly -- `'parent-branch'` for a real base-branch relationship (always
+true for every spiral hypha, and for a colony hypha whose real base is
+another PR), `'colony'` only for a colony hypha whose visual sprout point is
+an approximation (its real base is the default branch, and the nearest
+existing structure was used purely for visual continuity). `null` only for
+`main`. Not yet wired into `elementDetail.ts`'s panel copy -- M3 doesn't
+render either network layout yet, so there is no live UI text to fix; this
+is the model-level plumbing the task asked for, ready for M3 to consume.
+
+**Visual iteration** (4 rounds, `pnpm network-svg` + `Read` on both PNGs
+each round; images: `.shots/network-pmndrs-valtio-colony.png`,
+`.shots/network-expressjs-express-colony.png`, regenerate with `pnpm
+network-svg`):
+**(1)** First working pass (topology + sectors + growth curves + fusions
+all wired) read as chaotic, disc-spanning nested rotated squares/polygons on
+both fixtures, and `hairs: 9` in the on-image debug counter (should equal
+`nodes`, ~1800+) -- two real bugs, not tuning. Root-caused (not just
+eyeballed) with a throwaway script printing one long-lived hypha's raw
+per-point angle sequence: `lerp(baseAngle, targetAngle, ...)` was
+interpolating two numerically-different-but-circularly-equivalent angle
+representations (e.g. `-0.46` and `5.80`, the same direction ~`2*pi` apart)
+literally, sweeping the curve almost all the way around the disc instead of
+the short way. The `hairs: 9` count was simply a scope bug: only `main`'s
+direct-commit spurs were generating hairs; PR-hypha commit nodes had none.
+**(2)** Fixed both: added `shortestAngleTo` (re-expresses the target angle
+as the base angle plus the shortest signed distance in `(-pi, pi]` before
+any interpolation) and added `buildPrHairs` (reusing the spiral's
+tangent-perpendicular mechanism) for every PR-hypha node. The result
+immediately read as recognizable radiating/branching mycelium for the first
+time -- but a new problem appeared: a very bright, almost solid ring band at
+one fixed radius on `expressjs/express`. Traced (via a histogram script
+over ring radii) to the activity-weighted radius blend inherited from M2b:
+a long quiet real stretch barely advances the activity CDF, so ~100 of
+`express`'s 117 release rings collapsed onto nearly the same radius
+(2.4-2.6), and ~100 semi-transparent circle strokes stacked at the same
+pixels read as solid. **(3)** Fixed by dropping the activity blend entirely
+for colony (pure eased time -- see the Mapping section above for the
+reasoning); the bright band was smaller but not gone, since even genuinely
+real, honest time-based radii can still land very close together for a
+real release-storm. Added render-time (not model-time -- every release
+still gets its own real `GrowthRing`) deduplication in
+`network-svg.ts`: skip drawing a ring within `0.03` world units of the last
+drawn one, the same "visually merge, never fabricate" idea `mushrooms.ts`
+already applies to clustered mushrooms. **(4)** Confirmed the bright band
+was gone on both fixtures; the remaining visible unevenness (dense
+wedges next to comparatively sparse ones) tracked back to real, uneven
+per-author contribution timing, not a bug -- widened `MAX_AUTHOR_SECTORS`
+14 -> 20 for a moderate improvement (more individual sectors, smaller
+`'community'` share) and confirmed both fixtures read as a plausible,
+roughly circular, densely radiating/branching fungal colony at first
+glance, with faint concentric rings, visible fusion knots, and a growth
+front reaching the rim.
+
+**Weaknesses, honestly reported**:
+- Angular fill is uneven -- some sectors are dense out to the rim, others
+  only populated near the center (an author active early but not
+  recently) or thin throughout (a low-merged-PR author). This is a real,
+  honest reflection of uneven contribution timing per author, not a layout
+  bug (mycelium colonies grow unevenly toward resource-rich directions too)
+  -- but it does mean "no big voids" from the target brief isn't fully met
+  for either fixture. Fixing this further without fabricating data would
+  need a fundamentally different angle strategy (e.g. reflowing/interleaving
+  sectors by activity over time, not just by initial proportional width),
+  which felt like a bigger design change than this prototype's scope --
+  flagged for the product-owner decision below rather than gold-plated here.
+- A colony-attached (`attachment: 'colony'`) hypha's own *base* angle can
+  occasionally land up to ~0.8 rad outside its nominal author sector
+  (measured on both fixtures, see `colonyLayout.test.ts`'s documented
+  tolerance): its sprout-neighbor search can pick a point belonging to a
+  same-sector sibling hypha whose *own* base is real-topology-anchored
+  elsewhere (a `'parent-branch'` attachment). The *tip* (and thus the
+  sector one actually perceives the hypha "belonging to") is always exactly
+  within sector -- this only affects a short stretch near the base of an
+  already-rare case.
+- The dense white "blob" clusters visible on both fixtures (a tight mass of
+  overlapping hairs/nodes) reflect genuinely bursty real commit activity by
+  one author in a short window -- an honest result, not injected texture,
+  but visually reads more like a clump than distinguishable branching
+  filaments at that zoom level; M3's eventual selective bloom/dimming might
+  help more than further pure-layout tuning would.
+- Not benchmarked against a genuinely tiny/empty repo beyond the unit test
+  case, or visually screenshotted for one (only the two mid/large real
+  fixtures were used for the visual QA loop, per the task's fixtures) --
+  the tiny-repo unit test (`colonyLayout.test.ts`) confirms it doesn't
+  crash/NaN, not that it looks good.
+
+**Performance**: `buildNetwork(snapshot, { layout: 'colony' })` on a
+synthetic 1000-merged-PR snapshot measured ~137ms in Node (cold, includes
+topology build) via a throwaway timing script -- comfortably under the
+~200ms target. The committed test (`buildNetwork.test.ts`, `it.each` over
+both layouts) asserts a generous 600ms CI-safe budget rather than the exact
+~200ms figure, to avoid flaking on a slow/shared runner while still
+catching a real regression; the ~137ms figure is recorded here as the
+actual honest measurement. The spatial radius-bucket grid
+(`RADIUS_BIN_WIDTH = 0.12`, small bounded search spread) is what keeps
+sprout/fusion neighbor search from becoming O(n^2) as hypha count grows.
+
+**Comparison verdict, spiral vs. colony -- recommendation**: the colony
+prototype reads as mycelium/a fungal colony at first glance in a way the
+spiral does not (the orchestrator's own critique of the M2b spiral images
+was "reads as a spiral galaxy/snail" with interior crossings); colony has
+no interior-crossing hyphae by construction (radius is monotonically
+non-decreasing along every hypha, guaranteed, not just visually tuned) and
+gains real concentric growth rings, true branch-from-branch sprouting
+visuals, and honest fusion knots the spiral never had. Its own honest
+weakness is angular unevenness (voids) versus the spiral's more
+deliberately-engineered "fairy ring" evenness (M2b spent 4 rounds
+specifically flattening its own fill unevenness). **My recommendation is
+to proceed with `colony` as the primary metaphor for M3** (the look the
+orchestrator asked for is a materially better fit than a few more rounds of
+spiral polish could achieve, since the spiral's core issue -- reading as a
+galaxy, not a colony -- is structural to the spiral shape itself, not a
+tuning problem), while carrying the angular-fill weakness above forward as
+a named, tracked risk for M3/T8 polish (most likely addressed with
+selective bloom/dimming and/or a reflow of the sector strategy, both
+reasonable M3-adjacent scope) rather than blocking this prototype task on
+it. This is a recommendation, not a decision -- see below.
+
+Tests (`src/domain/network/sectors.test.ts`, `colonyLayout.test.ts`,
++additions to `mushrooms.test.ts`/`buildNetwork.test.ts`): author-sector
+proportionality/determinism/community-fallback/always-present-community
+(the real bug above); every hypha's angle strictly within its sector
+(`assignAngularSlots`); non-overlapping angular slots for overlapping-time
+items; colony-layout determinism; monotonic non-decreasing disc-radius
+along every PR hypha (exact, tiny epsilon); start/end radius match
+`radiusForFrac(timeToFrac(...))` exactly; every hypha's tip is exactly
+within its sector, base within a measured/documented tolerance; a fusion
+knot exists iff (and only iff) a hypha is merged; every open hypha's tip
+reaches `radiusForTime(now)`; every mushroom sits exactly on its own
+release's ring radius; hair count equals node count; no NaN/non-finite
+anywhere; a tiny repo (0 PRs, 0 releases, 1 commit) produces a spore + one
+degenerate main entry without crashing; both real fixtures smoke-tested via
+`buildNetwork(snapshot, { layout: 'colony' })`; a spiral/colony comparison
+test confirms both layouts share the exact same underlying hypha id set
+(same topology); a performance test (both layouts) over a synthetic
+1000-merged-PR snapshot.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (317
+tests total, +31 for M2c) · `pnpm build`: pass.
+
+**Decisions needed for the product owner**:
+- Adopt `colony` as the primary layout for M3 (my recommendation above), or
+  keep iterating `spiral`, or carry both forward longer for further
+  comparison? M3 (rendering) hasn't started for either, so this is still a
+  cheap decision.
+- If `colony` is adopted: is the angular-fill unevenness (some sectors
+  dense, others sparse/void) acceptable as an honest reflection of real
+  contribution history, or does it need a further layout pass (e.g. a
+  different sector-ordering/interleaving strategy) before M3 renders it?
+
 ## Next step
-M3 (network rendering + growth + interaction wiring), then M4 (cleanup,
-remove superseded tree code), then T8 polish and the final independent
-review.
+Product owner decision on M2c (`colony` vs. `spiral` for M3, see the M2c
+progress entry above), then M3 (network rendering + growth + interaction
+wiring, for whichever layout is selected), then M4 (cleanup, remove
+superseded tree code), then T8 polish and the final independent review.
 
 **Decisions/gaps for the product owner (M3 planning)**:
+- M2c decision (colony vs. spiral vs. continue comparing) -- see the M2c
+  progress entry above for the full recommendation and tradeoffs.
 - The network model exposes `NetworkModel.overflow` (hyphae/nodes omitted
   by the caps) — M3 should decide how (or whether) to surface this in the
   UI/legend, mirroring how the tree model's overflow-PR count is currently
