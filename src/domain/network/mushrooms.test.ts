@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HyphaPoint } from './types'
-import { buildMushrooms } from './mushrooms'
+import { buildMushrooms, buildMushroomsOnRings } from './mushrooms'
 
 const MAIN_POINTS: HyphaPoint[] = [
   { position: { x: 0, y: 0, z: 0 }, radius: 0.1, time: 0 },
@@ -58,5 +58,45 @@ describe('buildMushrooms', () => {
     const mushrooms = buildMushrooms(releases, MAIN_POINTS, 'o/r')
     expect(Number.isFinite(mushrooms[0]!.scale)).toBe(true)
     expect(Number.isFinite(mushrooms[0]!.position.x)).toBe(true)
+  })
+})
+
+describe('buildMushroomsOnRings (colony layout)', () => {
+  const RADIUS_FOR_TIME = (time: number): number => 1 + time / 10000
+
+  it('returns [] for no releases', () => {
+    expect(buildMushroomsOnRings([], RADIUS_FOR_TIME, 'o/r')).toEqual([])
+  })
+
+  it('places each mushroom exactly at radiusForTime(its own release date)', () => {
+    const releases = [release('v1.0.0', new Date(500).toISOString()), release('v2.0.0', new Date(1000 * 60 * 60 * 24 * 400).toISOString())]
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, 'o/r')
+    for (const mushroom of mushrooms) {
+      const radius = Math.hypot(mushroom.position.x, mushroom.position.z)
+      expect(radius).toBeCloseTo(RADIUS_FOR_TIME(mushroom.time), 6)
+    }
+  })
+
+  it('is deterministic for the same seed', () => {
+    const releases = [release('v1.0.0', new Date(200).toISOString()), release('v1.0.1', new Date(210).toISOString())]
+    expect(buildMushroomsOnRings(releases, RADIUS_FOR_TIME, 'o/r')).toEqual(buildMushroomsOnRings(releases, RADIUS_FOR_TIME, 'o/r'))
+  })
+
+  it('clusters releases close in time under a shared clusterId, and leaves distant ones standalone', () => {
+    const closeTogether = [release('v1.0.0', new Date(0).toISOString()), release('v1.0.1', new Date(1000 * 60 * 60).toISOString())]
+    const farApart = [release('v2.0.0', new Date(1000 * 60 * 60 * 24 * 400).toISOString())]
+    const mushrooms = buildMushroomsOnRings([...closeTogether, ...farApart], RADIUS_FOR_TIME, 'o/r')
+    const clustered = mushrooms.filter((m) => m.ref.id === 'v1.0.0' || m.ref.id === 'v1.0.1')
+    expect(clustered[0]!.clusterId).not.toBeNull()
+    expect(clustered[0]!.clusterId).toBe(clustered[1]!.clusterId)
+    const standalone = mushrooms.find((m) => m.ref.id === 'v2.0.0')!
+    expect(standalone.clusterId).toBeNull()
+  })
+
+  it('never produces NaN/Infinity', () => {
+    const releases = [release('nightly-build', new Date(0).toISOString())]
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, 'o/r')
+    expect(Number.isFinite(mushrooms[0]!.position.x)).toBe(true)
+    expect(Number.isFinite(mushrooms[0]!.position.z)).toBe(true)
   })
 })

@@ -31,7 +31,8 @@ export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
 }
 
 // --- Disc / spiral tuning -----------------------------------------------
-const DISC_MAX_RADIUS = 5
+/** Shared with the colony layout (`colonyLayout.ts`) so both disc-based layouts render at the same real-world scale for side-by-side comparison. */
+export const DISC_MAX_RADIUS = 5
 /** < 1: early history gets proportionally more radius per unit time, so it isn't crushed near the spore. */
 const RADIUS_EASE_EXPONENT = 0.58
 export const SPIRAL_TURNS = 2.1
@@ -270,7 +271,7 @@ export function pointOnHyphaAtTime(points: HyphaPoint[], time: number): { positi
   }
 }
 
-function radiusForCommitCount(commitCount: number): number {
+export function radiusForCommitCount(commitCount: number): number {
   return lerp(SIDE_MIN_RADIUS, SIDE_MAX_RADIUS, logScale(commitCount, 0, 200))
 }
 
@@ -437,6 +438,12 @@ function layoutChildHypha(
     lane: laneAssignment.lane,
     side: laneAssignment.side,
     commitCount: draft.commitCount,
+    // The spiral layout always follows the real parent hypha's own curve at
+    // the real split time (`pointOnHyphaAtTime(parent.points, ...)` above),
+    // whether the parent is main or another PR -- an honest attach point
+    // either way, unlike the colony layout's visual-only "sprout from the
+    // colony" case. See `Hypha.attachment` in `types.ts`.
+    attachment: 'parent-branch',
   }
 
   return { hypha, points }
@@ -499,7 +506,7 @@ function buildHairs(nodes: NetworkNode[], positionedById: Map<string, Positioned
 }
 
 /** Picks an evenly-spaced representative subset (always including the first and last), honestly recording the rest as overflow. */
-function capEvenly<T>(items: T[], max: number): { kept: T[]; omitted: number } {
+export function capEvenly<T>(items: T[], max: number): { kept: T[]; omitted: number } {
   if (items.length <= max || max <= 0) return { kept: items, omitted: Math.max(0, items.length - Math.max(max, 0)) }
   if (max === 1) return { kept: [items[0]!], omitted: items.length - 1 }
   const kept: T[] = []
@@ -545,6 +552,7 @@ export function layoutNetwork(
     lane: 0,
     side: 0,
     commitCount: main.commitCount,
+    attachment: null,
   }
 
   const positionedById = new Map<string, PositionedHyphaResult>([[main.id, { hypha: mainHypha, points: mainPoints }]])

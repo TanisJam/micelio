@@ -14,6 +14,15 @@ export interface HyphaCommitDraft {
   time: number
   ref: NetworkRef
   isMergePoint: boolean
+  /**
+   * Only populated for a genuine direct commit on `main` (undefined for a
+   * merge-point pseudo-entry and for PR-hypha commits, whose author is
+   * already carried by their own `HyphaDraft.author`). Used by the colony
+   * layout to place a direct commit's radial spur in its author's sector
+   * (M2c) -- optional so the spiral layout, which never reads it, is
+   * unaffected.
+   */
+  author?: CommitAuthor
 }
 
 export interface HyphaDraft {
@@ -162,6 +171,7 @@ export function buildHyphaTopology(
       time: clampTime(toEpochMs(commit.authoredDate), bounds.firstEventTime, bounds.lastEventTime),
       ref: { type: 'commit', id: commit.oid },
       isMergePoint: false,
+      author: commit.author,
     })),
   }
 

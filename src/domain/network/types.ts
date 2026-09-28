@@ -69,6 +69,18 @@ export interface Hypha {
   side: -1 | 0 | 1
   /** Real commit count backing this hypha (PR's `commitCount`, or rendered node count for `main`/`liveBranch`). */
   commitCount: number
+  /**
+   * Honesty flag for the detail panel (see `Fusion`/M2c colony mapping):
+   * `'parent-branch'` means the split point sits on the real parent hypha's
+   * own curve (a true git base-branch relationship, or the spiral's
+   * always-real-parent-following attach point). `'colony'` means the split
+   * point is a visual sprout from the nearest structure in the author's
+   * sector (the colony/ring/spore), used only when a PR's real base is the
+   * default branch itself under the radial-colony layout -- the UI must not
+   * word this as "branched from a specific commit". `null` only for `main`
+   * (no parent).
+   */
+  attachment: 'colony' | 'parent-branch' | null
 }
 
 export interface NetworkNode {
@@ -121,6 +133,46 @@ export interface Hair {
   baseRadius: number
 }
 
+/**
+ * A colony-layout-only element: a faint concentric growth ring on the
+ * colony disc, either at a real release's radius (`ringKind: 'release'`,
+ * carrying that release's own `ref` -- the same one its mushroom(s) carry)
+ * or at a calendar-year boundary (`ringKind: 'year'`, `ref: null` -- purely
+ * a faint background grid derived from real elapsed time, not an
+ * individually clickable element, so intentionally excluded from
+ * `LookupableNetworkElement`). Always empty for the spiral layout.
+ */
+export interface GrowthRing {
+  id: string
+  kind: 'ring'
+  ringKind: 'release' | 'year'
+  time: number
+  radius: number
+  ref: NetworkRef | null
+}
+
+/**
+ * A colony-layout-only element: the honest visual record of where a merged
+ * PR's hypha "fuses" back into the mycelium -- a small knot at the hypha's
+ * own real tip (`position`, real `mergedAt` time/place) plus a short
+ * anastomosis bridge to whichever real structure (another hypha's point, or
+ * a growth ring) happens to be nearest at that radius (`bridgeTo`). The
+ * bridge target is a visual anchor, not a claimed data relationship -- see
+ * `Hypha.attachment` for the equivalent honesty flag on the split end.
+ * Always empty for the spiral layout (which already renders a fused loop's
+ * own rejoin-the-parent-curve segment).
+ */
+export interface Fusion {
+  id: string
+  kind: 'fusion'
+  hyphaId: string
+  time: number
+  ref: NetworkRef
+  position: Vec3
+  bridgeTo: Vec3
+  bridgeToKind: 'hypha' | 'ring' | 'spore'
+}
+
 export interface Mushroom {
   id: string
   kind: 'mushroom'
@@ -160,10 +212,15 @@ export interface NetworkSummary {
   mushroomCount: number
   /** Always equal to `nodeCount` -- one hair per rendered commit node. */
   hairCount: number
+  /** Always equal to the count of `merged` hyphae -- a fusion knot exists iff merged (colony layout only; 0 for spiral). */
+  fusionCount: number
 }
+
+export type NetworkLayoutMode = 'spiral' | 'colony'
 
 export interface NetworkModel {
   seed: string
+  layout: NetworkLayoutMode
   bounds: NetworkBounds
   spore: Spore
   hyphae: Hypha[]
@@ -171,6 +228,10 @@ export interface NetworkModel {
   tips: Tip[]
   mushrooms: Mushroom[]
   hairs: Hair[]
+  /** Colony-layout-only (empty for spiral): concentric release/year growth rings. */
+  rings: GrowthRing[]
+  /** Colony-layout-only (empty for spiral): one fusion knot + bridge per merged hypha. */
+  fusions: Fusion[]
   overflow: NetworkOverflow
   summary: NetworkSummary
 }

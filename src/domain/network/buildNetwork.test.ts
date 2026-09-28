@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import valtioFixture from '../../server/fixtures/pmndrs-valtio.json' with { type: 'json' }
 import expressFixture from '../../server/fixtures/expressjs-express.json' with { type: 'json' }
-import type { RepoSnapshot } from '../repo'
+import type { CommitAuthor, MergedPullRequest, RepoSnapshot } from '../repo'
 import { makeSnapshot } from '../tree/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { pointOnHyphaAtTime } from './layout'
 import { MUSHROOM_CLUSTER_SCATTER } from './mushrooms'
-import type { NetworkModel } from './types'
+import type { NetworkLayoutMode, NetworkModel } from './types'
 
 const FIXTURES: [string, RepoSnapshot][] = [
   ['pmndrs/valtio', valtioFixture as unknown as RepoSnapshot],
@@ -149,5 +149,90 @@ describe('buildNetwork', () => {
         expect(lateral).toBeLessThanOrEqual(MUSHROOM_CLUSTER_SCATTER * Math.SQRT2 + 0.02)
       }
     })
+
+    it('produces a sane colony-layout model too, sharing the same topology', () => {
+      const spiral = buildNetwork(snapshot, { layout: 'spiral' })
+      const colony = buildNetwork(snapshot, { layout: 'colony' })
+      expect(colony.layout).toBe('colony')
+      expect(spiral.layout).toBe('spiral')
+      // Same underlying topology (`topology.ts` is shared): every non-main
+      // hypha id present in one layout is present in the other.
+      const spiralIds = new Set(spiral.hyphae.map((h) => h.id))
+      const colonyIds = new Set(colony.hyphae.map((h) => h.id))
+      expect(colonyIds).toEqual(spiralIds)
+      expect(findNonFinite(colony)).toBeNull()
+      expect(colony.rings.length).toBeGreaterThan(0)
+      expect(colony.fusions.length).toBeGreaterThan(0)
+      expect(colony.hairs.length).toBe(colony.nodes.length)
+    })
+  })
+})
+
+describe('buildNetwork performance (colony layout)', () => {
+  const AUTHOR_COUNT = 25
+  const PR_COUNT = 1000
+  /**
+   * Generous relative to the ~200ms/1000-PR budget (M2c task brief) to
+   * avoid CI flakiness on a slow/shared runner, while still catching a real
+   * regression; the actual observed time (see the M2c progress notes) is
+   * well under 200ms on a normal dev machine.
+   */
+  const BUDGET_MS = 600
+
+  function buildLargeSnapshot(): RepoSnapshot {
+    const authors: CommitAuthor[] = Array.from({ length: AUTHOR_COUNT }, (_, i) => ({ login: `author${i}`, avatarUrl: null }))
+    const base = Date.parse('2015-01-01T00:00:00Z')
+    const mergedPullRequests: MergedPullRequest[] = Array.from({ length: PR_COUNT }, (_, i) => {
+      const splitAt = base + i * 86_400_000 * 3
+      const mergedAt = splitAt + 86_400_000 * 2
+      const author = authors[i % AUTHOR_COUNT]!
+      return {
+        number: i + 1,
+        title: `PR ${i + 1}`,
+        author,
+        mergedAt: new Date(mergedAt).toISOString(),
+        createdAt: new Date(splitAt).toISOString(),
+        url: `https://x/${i + 1}`,
+        baseRefName: 'main',
+        headRefName: `pr-${i + 1}`,
+        firstCommitTime: new Date(splitAt).toISOString(),
+        additions: 5,
+        deletions: 1,
+        changedFiles: 1,
+        labels: [],
+        commitCount: 3,
+        commits: [1, 2, 3].map((k) => ({
+          oid: `oid-${i}-${k}`,
+          messageHeadline: 'x',
+          authoredDate: new Date(splitAt + k * 1000).toISOString(),
+          author,
+          url: 'https://x',
+        })),
+      }
+    })
+
+    return makeSnapshot({
+      mergedPullRequests,
+      openPullRequests: [],
+      closedPullRequests: [],
+      liveBranches: [],
+      releases: Array.from({ length: 50 }, (_, i) => ({
+        name: `v${i}`,
+        tag: `v${i}.0.0`,
+        date: new Date(base + i * 86_400_000 * 30).toISOString(),
+        url: 'https://x',
+        targetOid: null,
+      })),
+      directCommits: [],
+    })
+  }
+
+  it.each<NetworkLayoutMode>(['spiral', 'colony'])('lays out 1000 PRs (%s layout) in well under the CI-safe budget', (layout) => {
+    const snapshot = buildLargeSnapshot()
+    const start = performance.now()
+    const model = buildNetwork(snapshot, { layout })
+    const elapsed = performance.now() - start
+    expect(model.hyphae.length).toBeGreaterThan(PR_COUNT)
+    expect(elapsed).toBeLessThan(BUDGET_MS)
   })
 })
