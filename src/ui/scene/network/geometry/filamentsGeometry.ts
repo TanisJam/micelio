@@ -52,6 +52,15 @@ export function buildFilamentsGeometry(model: NetworkModel, hyphaIndexById: Map<
   const hyphaIndices: number[] = []
   const progresses: number[] = []
   const flowFactors: number[] = []
+  // Hairs/bridges are simple line segments, not tapered ribbons -- the
+  // shared `growthMaterial.ts` shader still reads `crossU`/`brightness` per
+  // vertex (every mesh sharing one `ShaderMaterial`/program must populate
+  // every attribute it declares, or WebGL reuses stale attribute state left
+  // bound by whichever OTHER mesh using the same material drew last). `0`
+  // keeps the cross-ribbon glow falloff a no-op (core = edgeFade = 1) and
+  // `1` keeps the along-length brightness variation a no-op.
+  const crossUs: number[] = []
+  const brightnesses: number[] = []
   const pickTargets: PickTarget[] = []
 
   const hairColor = hexToRgb(mycelium.hyphaActiveTip)
@@ -71,6 +80,8 @@ export function buildFilamentsGeometry(model: NetworkModel, hyphaIndexById: Map<
       hyphaIndices.push(hyphaIndex)
       progresses.push(0)
       flowFactors.push(0)
+      crossUs.push(0)
+      brightnesses.push(1)
     }
     pickTargets.push({ id: hair.nodeId, x1: hair.position.x, z1: hair.position.z, x2: tipX, z2: tipZ })
   }
@@ -86,6 +97,8 @@ export function buildFilamentsGeometry(model: NetworkModel, hyphaIndexById: Map<
       hyphaIndices.push(hyphaIndex)
       progresses.push(0)
       flowFactors.push(0)
+      crossUs.push(0)
+      brightnesses.push(1)
     }
   }
 
@@ -97,6 +110,8 @@ export function buildFilamentsGeometry(model: NetworkModel, hyphaIndexById: Map<
   geometry.setAttribute('hyphaIndex', new THREE.Float32BufferAttribute(hyphaIndices, 1))
   geometry.setAttribute('progress', new THREE.Float32BufferAttribute(progresses, 1))
   geometry.setAttribute('flowFactor', new THREE.Float32BufferAttribute(flowFactors, 1))
+  geometry.setAttribute('crossU', new THREE.Float32BufferAttribute(crossUs, 1))
+  geometry.setAttribute('brightness', new THREE.Float32BufferAttribute(brightnesses, 1))
 
   return { geometry, pickTargets }
 }

@@ -115,7 +115,7 @@ describe('buildFilamentsGeometry', () => {
       },
     ]
     const { geometry } = buildFilamentsGeometry(model, new Map([['hypha-pr1', 0]]))
-    for (const name of ['position', 'color', 'alpha', 'birthTime', 'hyphaIndex']) {
+    for (const name of ['position', 'color', 'alpha', 'birthTime', 'hyphaIndex', 'crossU', 'brightness']) {
       const attr = geometry.getAttribute(name)
       for (let i = 0; i < attr.array.length; i++) expect(Number.isFinite(attr.array[i])).toBe(true)
     }

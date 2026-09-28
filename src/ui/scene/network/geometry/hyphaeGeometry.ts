@@ -20,10 +20,27 @@ import { hyphaColorAt } from './colors'
  * never by rebuilding this geometry.
  */
 
-export const RIBBON_WIDTH_SCALE = 4.5
+export const RIBBON_WIDTH_SCALE = 5
 const MIN_HALF_WIDTH = 0.003
 /** Alpha baked into a "time-honesty conduit" segment (see `conduitSplitRadius`) -- faint, never fully hidden. */
 const CONDUIT_ALPHA = 0.1
+/** Fraction of the ribbon's own half-width added/subtracted as a per-side Y offset (P3 "tiny y-thickness variation so arms have depth when orbiting") -- a shallow "tent" cross-section, invisible from directly overhead but giving the strand real volume once the camera orbits off-axis. */
+const CROSS_Y_TILT = 0.35
+/**
+ * Taper span at EACH end of a hypha's polyline, as a fraction of its own
+ * total sample count (P3 "rounded/tapered tips to zero width, no square
+ * caps") -- proportional, not a fixed few samples, so a long arm tapers
+ * over a visibly long stretch rather than just its last couple of vertices
+ * (an M3b round-2 visual finding: a too-short taper still bloomed into a
+ * fuzzy "blocky" cap, since the ribbon stayed near full width/brightness
+ * almost all the way to a very-last-moment point). Floored at
+ * `MIN_TAPER_POINTS` samples so a shorter hypha still visibly tapers.
+ * Hyphae with fewer than `MIN_POINTS_TO_TAPER` samples skip tapering
+ * entirely so a short/synthetic polyline never fully degenerates.
+ */
+const TAPER_FRACTION = 0.18
+const MIN_TAPER_POINTS = 3
+const MIN_POINTS_TO_TAPER = 6
 /**
  * Base (unselected/unhovered) alpha range, base -> tip. Deliberately modest:
  * hyphae render additively blended (P2: "translucent/additive where they
@@ -49,6 +66,30 @@ function perpendicularXZ(tangentX: number, tangentZ: number): [number, number] {
   return [-tangentZ / length, tangentX / length]
 }
 
+/**
+ * Smoothstep-eased taper toward zero width at both ends of a hypha's own
+ * polyline (`index`/`count`), over the nearest `TAPER_POINTS` samples --
+ * `1` (no taper) everywhere else, and `1` everywhere for a polyline too
+ * short to taper without fully degenerating (`count < MIN_POINTS_TO_TAPER`).
+ * Pure and exported for testing.
+ */
+export function tipTaperFactor(index: number, count: number): number {
+  if (count < MIN_POINTS_TO_TAPER) return 1
+  const proportional = Math.round((count - 1) * TAPER_FRACTION)
+  const span = Math.min(Math.max(MIN_TAPER_POINTS, proportional), Math.floor((count - 1) / 2))
+  if (span <= 0) return 1
+  const distanceFromNearestEnd = Math.min(index, count - 1 - index)
+  if (distanceFromNearestEnd >= span) return 1
+  const t = distanceFromNearestEnd / span
+  return t * t * (3 - 2 * t)
+}
+
+/** Deterministic pseudo-noise in `[0, 1)` from a plain float seed -- a cheap, dependency-free hash (no PRNG state), used for the along-length brightness variation (P3 "slight brightness variation along length"). Pure and exported for testing. */
+export function hashNoise(seed: number): number {
+  const s = Math.sin(seed * 12.9898) * 43758.5453
+  return s - Math.floor(s)
+}
+
 /** Renderable hyphae: every real filament except the colony layout's degenerate lookup-only `main` stub (never drawn -- see `network-svg.ts`'s own precedent). */
 export function renderableHyphae(model: NetworkModel): Hypha[] {
   return model.hyphae.filter((hypha) => !(hypha.kind === 'main' && model.layout === 'colony') && hypha.points.length >= 2)
@@ -65,6 +106,8 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
   const hyphaIndices: number[] = []
   const progresses: number[] = []
   const flowFactors: number[] = []
+  const crossUs: number[] = []
+  const brightnesses: number[] = []
   const indices: number[] = []
   const pickTargets: PickTarget[] = []
   const hyphaIndexById = new Map<string, number>()
@@ -84,23 +127,36 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
       const tangentZ = next.position.z - prev.position.z
       const [perpX, perpZ] = perpendicularXZ(tangentX, tangentZ)
 
-      const halfWidth = Math.max(MIN_HALF_WIDTH, point.radius * RIBBON_WIDTH_SCALE) / 2
+      const taper = tipTaperFactor(i, pointCount)
+      const halfWidth = (Math.max(MIN_HALF_WIDTH, point.radius * RIBBON_WIDTH_SCALE) * taper) / 2
       const t = pointCount > 1 ? i / (pointCount - 1) : 0
       const colorHex = hyphaColorAt(hypha.kind, t)
       const { r, g, b } = hexToRgb(colorHex)
       const isConduit = splitR !== null && discRadius(point.position) < splitR
-      const alpha = isConduit ? CONDUIT_ALPHA : BASE_ALPHA_MIN + (BASE_ALPHA_MAX - BASE_ALPHA_MIN) * t
+      const baseAlpha = isConduit ? CONDUIT_ALPHA : BASE_ALPHA_MIN + (BASE_ALPHA_MAX - BASE_ALPHA_MIN) * t
+      // Fade brightness together with width toward each tip (not just width
+      // alone) -- a narrow-but-still-full-alpha near-tip segment still
+      // bloomed into a small bright blob (round-2 visual finding), reading
+      // as a "cap" even once the geometry itself tapered to a point.
+      const alpha = baseAlpha * taper
       // Flow pulses (P4) only travel along active/open hyphae, never a dry
       // closed-PR dead end or a faint time-honesty conduit segment.
       const flowFactor = !isConduit && hypha.kind !== 'closed' ? 1 : 0
+      // Slight along-length brightness variation (P3), deterministic per
+      // hypha+sample so it never flickers/changes between renders.
+      const brightness = 0.88 + 0.24 * hashNoise(hyphaIndex * 97.13 + i * 13.7)
+      // A shallow Y "tent" across the ribbon's width, scaled by the same
+      // taper as the width itself so a tapered-to-a-point tip never gets a
+      // stray vertical kink (P3 "tiny y-thickness variation").
+      const yTilt = halfWidth * CROSS_Y_TILT
 
       // Left vertex, then right vertex -- both rings of a cross-section.
       positions.push(
         point.position.x + perpX * halfWidth,
-        point.position.y,
+        point.position.y + yTilt,
         point.position.z + perpZ * halfWidth,
         point.position.x - perpX * halfWidth,
-        point.position.y,
+        point.position.y - yTilt,
         point.position.z - perpZ * halfWidth,
       )
       for (let side = 0; side < 2; side++) {
@@ -110,6 +166,8 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
         hyphaIndices.push(hyphaIndex)
         progresses.push(t)
         flowFactors.push(flowFactor)
+        crossUs.push(side === 0 ? -1 : 1)
+        brightnesses.push(brightness)
       }
 
       if (i < pointCount - 1) {
@@ -139,6 +197,8 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
   geometry.setAttribute('hyphaIndex', new THREE.Float32BufferAttribute(hyphaIndices, 1))
   geometry.setAttribute('progress', new THREE.Float32BufferAttribute(progresses, 1))
   geometry.setAttribute('flowFactor', new THREE.Float32BufferAttribute(flowFactors, 1))
+  geometry.setAttribute('crossU', new THREE.Float32BufferAttribute(crossUs, 1))
+  geometry.setAttribute('brightness', new THREE.Float32BufferAttribute(brightnesses, 1))
   geometry.setIndex(indices)
 
   return { geometry, hyphaIndexById, pickTargets }

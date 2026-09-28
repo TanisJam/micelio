@@ -22,6 +22,8 @@ const VERTEX_SHADER = /* glsl */ `
   attribute float hyphaIndex;
   attribute float progress;
   attribute float flowFactor;
+  attribute float crossU;
+  attribute float brightness;
 
   varying vec3 vColor;
   varying float vAlpha;
@@ -29,6 +31,8 @@ const VERTEX_SHADER = /* glsl */ `
   varying float vHyphaIndex;
   varying float vProgress;
   varying float vFlowFactor;
+  varying float vCrossU;
+  varying float vBrightness;
 
   void main() {
     vColor = color;
@@ -37,6 +41,8 @@ const VERTEX_SHADER = /* glsl */ `
     vHyphaIndex = hyphaIndex;
     vProgress = progress;
     vFlowFactor = flowFactor;
+    vCrossU = crossU;
+    vBrightness = brightness;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
@@ -50,6 +56,8 @@ const FRAGMENT_SHADER = /* glsl */ `
   varying float vHyphaIndex;
   varying float vProgress;
   varying float vFlowFactor;
+  varying float vCrossU;
+  varying float vBrightness;
 
   uniform float uCurrentTime;
   uniform float uSelectedIndex;
@@ -64,10 +72,32 @@ const FRAGMENT_SHADER = /* glsl */ `
     float isHovered = (uHoveredIndex >= 0.0 && abs(vHyphaIndex - uHoveredIndex) < 0.5) ? 1.0 : 0.0;
     float dimOthers = (uSelectedIndex >= 0.0 && isSelected < 0.5) ? 1.0 : 0.0;
 
-    vec3 outColor = vColor;
-    float outAlpha = vAlpha * mix(1.0, 0.22, dimOthers);
+    // Cross-ribbon glow profile (P3 "fine luminous threads, not painted
+    // ribbons"): a bright gaussian-ish core narrowing well inside the
+    // ribbon's own geometric width, softly fading to exactly 0 alpha at the
+    // edges -- so the mesh is wide enough to glow (bloom has something to
+    // catch) but reads as a thin thread, never a flat-shaded brush stroke.
+    // crossU is -1..1 across the ribbon width (0 for non-ribbon geometry,
+    // e.g. hairs/bridges, which fall through with core=edgeFade=1, unchanged).
+    // The SELECTED hypha gets a deliberately wider core (P7: "clearly the
+    // brightest thing") -- at full-disc zoom a merely-brighter-but-equally-
+    // thin thread is too easy to lose among hundreds of similar strands, so
+    // selection also reads as a visibly thicker glowing line, not just a
+    // tinted one.
+    float u = clamp(vCrossU, -1.0, 1.0);
+    float coreWidth = mix(6.5, 2.2, isSelected);
+    float core = exp(-coreWidth * u * u);
+    float edgeFade = 1.0 - smoothstep(0.82, 1.0, abs(u));
+    float widthProfile = core * edgeFade;
 
-    outColor += vec3(0.55) * isSelected;
+    vec3 outColor = vColor * vBrightness * mix(0.65, 1.35, core);
+    float outAlpha = vAlpha * widthProfile * mix(1.0, 0.3, dimOthers);
+    // A selected hypha never fades away entirely even near its own ribbon
+    // edge -- keeps the "clearly the brightest thing" read solid rather than
+    // letting the gaussian falloff thin it back out.
+    outAlpha = max(outAlpha, isSelected * vAlpha * 0.85);
+
+    outColor += vec3(0.85) * isSelected;
     outColor += vec3(0.22) * isHovered * (1.0 - isSelected);
 
     float phase = fract(vProgress * 2.2 - uTime * 0.12);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Hypha, NetworkModel } from '../../../../domain/network'
-import { buildHyphaeGeometry, renderableHyphae } from './hyphaeGeometry'
+import { buildHyphaeGeometry, hashNoise, renderableHyphae, tipTaperFactor } from './hyphaeGeometry'
 
 function makeHypha(overrides: Partial<Hypha>): Hypha {
   return {
@@ -65,6 +65,68 @@ describe('renderableHyphae', () => {
   })
 })
 
+describe('tipTaperFactor', () => {
+  it('never tapers a polyline shorter than the minimum (too few samples to taper without fully degenerating)', () => {
+    for (let count = 0; count < 6; count++) {
+      for (let i = 0; i < count; i++) expect(tipTaperFactor(i, count)).toBe(1)
+    }
+  })
+
+  it('tapers exactly to 0 at both very ends of a long-enough polyline', () => {
+    expect(tipTaperFactor(0, 12)).toBe(0)
+    expect(tipTaperFactor(11, 12)).toBe(0)
+  })
+
+  it('is 1 (no taper) well inside the polyline', () => {
+    expect(tipTaperFactor(6, 12)).toBe(1)
+  })
+
+  it('is symmetric between the start and end tapers', () => {
+    expect(tipTaperFactor(1, 12)).toBeCloseTo(tipTaperFactor(10, 12), 10)
+    expect(tipTaperFactor(2, 12)).toBeCloseTo(tipTaperFactor(9, 12), 10)
+  })
+
+  it('is monotonically non-decreasing from the start toward the middle', () => {
+    const count = 20
+    let previous = -1
+    for (let i = 0; i <= count / 2; i++) {
+      const value = tipTaperFactor(i, count)
+      expect(value).toBeGreaterThanOrEqual(previous)
+      previous = value
+    }
+  })
+
+  it('stays within [0, 1] for a wide range of polyline lengths', () => {
+    for (let count = 6; count <= 40; count++) {
+      for (let i = 0; i < count; i++) {
+        const value = tipTaperFactor(i, count)
+        expect(value).toBeGreaterThanOrEqual(0)
+        expect(value).toBeLessThanOrEqual(1)
+      }
+    }
+  })
+})
+
+describe('hashNoise', () => {
+  it('is deterministic for the same seed', () => {
+    expect(hashNoise(42.7)).toBe(hashNoise(42.7))
+  })
+
+  it('stays within [0, 1)', () => {
+    for (let seed = 0; seed < 200; seed += 0.37) {
+      const value = hashNoise(seed)
+      expect(value).toBeGreaterThanOrEqual(0)
+      expect(value).toBeLessThan(1)
+    }
+  })
+
+  it('varies across different seeds (not a constant function)', () => {
+    const values = new Set<number>()
+    for (let seed = 0; seed < 20; seed++) values.add(hashNoise(seed))
+    expect(values.size).toBeGreaterThan(1)
+  })
+})
+
 describe('buildHyphaeGeometry', () => {
   it('produces one hyphaIndex per hypha and a consistent vertex count', () => {
     const model = makeModel([makeHypha({})])
@@ -84,7 +146,7 @@ describe('buildHyphaeGeometry', () => {
   it('never produces NaN/non-finite positions or colors', () => {
     const model = makeModel([makeHypha({}), makeHypha({ id: 'hypha-pr2', kind: 'closed', status: 'dead_end' })])
     const { geometry } = buildHyphaeGeometry(model)
-    for (const name of ['position', 'color', 'alpha', 'birthTime', 'hyphaIndex']) {
+    for (const name of ['position', 'color', 'alpha', 'birthTime', 'hyphaIndex', 'crossU', 'brightness']) {
       const attr = geometry.getAttribute(name)
       for (let i = 0; i < attr.array.length; i++) expect(Number.isFinite(attr.array[i])).toBe(true)
     }
