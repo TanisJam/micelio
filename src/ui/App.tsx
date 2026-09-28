@@ -8,10 +8,15 @@ import { Legend } from './components/Legend'
 import { TimeScrubber } from './components/TimeScrubber'
 import { TooltipLayer } from './components/TooltipLayer'
 import { useGrowthClock } from './hooks/useGrowthClock'
+import { useMediaQuery } from './hooks/useMediaQuery'
 import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion'
 import { useRepoTree } from './hooks/useRepoTree'
 import { useSelection } from './hooks/useSelection'
 import { ui } from './theme/tokens'
+
+// Matches `.detail-panel`'s `@media (max-width: 640px)` breakpoint in
+// `index.css` -- the point at which the detail panel becomes a bottom sheet.
+const MOBILE_QUERY = '(max-width: 640px)'
 
 const Scene = lazy(() => import('./scene/Scene.tsx'))
 
@@ -58,6 +63,9 @@ function GrownDiorama({ model, snapshot, reducedMotion }: { model: TreeModel; sn
   const getCurrentTime = useCallback(() => clock.getTime(), [clock])
   const selection = useSelection()
   const [exploreOpen, setExploreOpen] = useState(false)
+  const isMobile = useMediaQuery(MOBILE_QUERY)
+  const [mobileSheetExpanded, setMobileSheetExpanded] = useState(false)
+  const [lastSelectedId, setLastSelectedId] = useState(selection.selectedId)
 
   // The detail panel and the Explore list both anchor to the same side of
   // the screen (and the mobile bottom sheet), so while the list is open its
@@ -67,6 +75,21 @@ function GrownDiorama({ model, snapshot, reducedMotion }: { model: TreeModel; sn
   // list reveals the detail panel for whatever ended up selected.
   const selectedDetail =
     !exploreOpen && selection.selectedId ? resolveElementDetail(model, snapshot, selection.selectedId) : null
+  // On mobile the detail panel becomes a bottom sheet that covers roughly
+  // the lower half of the screen; hide the scrubber while it's open (it'd
+  // either be covered or fight the sheet for the same strip) and restore it
+  // once the sheet closes (P7/mobile).
+  const mobileSheetOpen = isMobile && selectedDetail !== null
+
+  // Collapse back to the compact sheet height whenever the selection changes
+  // (including closing), so re-opening a new detail never inherits a stale
+  // expanded state from a previous one. Adjusting state during render
+  // (rather than in an effect) avoids an extra commit/cascading render --
+  // see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  if (selection.selectedId !== lastSelectedId) {
+    setLastSelectedId(selection.selectedId)
+    setMobileSheetExpanded(false)
+  }
 
   const selectAndCloseExplore = useCallback(
     (id: string | null) => {
@@ -93,10 +116,16 @@ function GrownDiorama({ model, snapshot, reducedMotion }: { model: TreeModel; sn
           selectedId={selection.selectedId}
         />
       </Suspense>
-      <TimeScrubber clock={clock} bounds={model.bounds} />
+      {!mobileSheetOpen && <TimeScrubber clock={clock} bounds={model.bounds} />}
       <Legend />
       <TooltipLayer model={model} snapshot={snapshot} hoveredId={selection.hoveredId} />
-      <DetailPanel detail={selectedDetail} onClose={() => selection.select(null)} onFocusElement={selection.select} />
+      <DetailPanel
+        detail={selectedDetail}
+        onClose={() => selection.select(null)}
+        onFocusElement={selection.select}
+        mobileExpanded={isMobile ? mobileSheetExpanded : undefined}
+        onToggleMobileExpand={isMobile ? () => setMobileSheetExpanded((value) => !value) : undefined}
+      />
       <button
         type="button"
         onClick={() => (exploreOpen ? setExploreOpen(false) : openExploreList())}

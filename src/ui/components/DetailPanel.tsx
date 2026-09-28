@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ElementDetail } from '../../domain/elementDetail'
-import { formatDate, formatNumber, formatShortOid, formatSignedNumber } from '../../domain/format'
+import { formatCount, formatDate, formatDeletions, formatNumber, formatShortOid, formatSignedNumber } from '../../domain/format'
 import { ui } from '../theme/tokens'
 
 export interface DetailPanelProps {
@@ -8,6 +8,9 @@ export interface DetailPanelProps {
   onClose: () => void
   /** Selects (and camera-focuses) another element from within the panel -- e.g. a PR's commit, or a commit's parent PR. */
   onFocusElement: (id: string) => void
+  /** Mobile only: whether the compact bottom sheet is expanded to a taller view (see `.detail-panel` in `index.css`). Omit both this and `onToggleMobileExpand` on desktop, where the panel doesn't need an expand toggle. */
+  mobileExpanded?: boolean
+  onToggleMobileExpand?: () => void
 }
 
 const LINK_STYLE = { color: ui.accent, textDecoration: 'underline', textUnderlineOffset: 2 }
@@ -105,8 +108,8 @@ function DetailBody({ detail, onFocusElement }: { detail: ElementDetail; onFocus
           {detail.additions !== null && detail.deletions !== null && (
             <Field label="Changes">
               <span style={{ color: '#7fd88a' }}>{formatSignedNumber(detail.additions)}</span>{' '}
-              <span style={{ color: '#e08a8a' }}>{formatSignedNumber(-detail.deletions)}</span>
-              {detail.changedFiles !== null && <span style={{ color: ui.textMuted }}> · {formatNumber(detail.changedFiles)} files</span>}
+              <span style={{ color: '#e08a8a' }}>{formatDeletions(detail.deletions)}</span>
+              {detail.changedFiles !== null && <span style={{ color: ui.textMuted }}> · {formatCount(detail.changedFiles, 'file')}</span>}
             </Field>
           )}
           {detail.labels.length > 0 && (
@@ -224,14 +227,21 @@ function DetailBody({ detail, onFocusElement }: { detail: ElementDetail; onFocus
  * the `.detail-panel` CSS in `index.css`, media-query driven). Renders
  * `null` when nothing is selected.
  */
-export function DetailPanel({ detail, onClose, onFocusElement }: DetailPanelProps) {
+export function DetailPanel({ detail, onClose, onFocusElement, mobileExpanded, onToggleMobileExpand }: DetailPanelProps) {
   if (!detail) return null
+
+  // Reserve enough right-side padding for both header buttons (close, and
+  // the mobile expand toggle when present) so a long title never runs
+  // underneath either of them.
+  const headerButtonCount = onToggleMobileExpand ? 2 : 1
+  const paddingRight = ui.space(6 + headerButtonCount * 4)
 
   return (
     <div
       className="detail-panel"
       role="dialog"
       aria-label="Selection details"
+      data-expanded={mobileExpanded ? 'true' : 'false'}
       style={{
         background: ui.panelBg,
         borderColor: ui.panelBorder,
@@ -239,9 +249,35 @@ export function DetailPanel({ detail, onClose, onFocusElement }: DetailPanelProp
         color: ui.text,
         fontFamily: ui.fontBody,
         backdropFilter: 'blur(10px)',
-        padding: ui.space(4),
+        // Extra right padding reserves space for the absolutely-positioned
+        // header buttons so a long title never runs underneath them.
+        padding: `${ui.space(4)} ${paddingRight} ${ui.space(4)} ${ui.space(4)}`,
       }}
     >
+      {onToggleMobileExpand && (
+        <button
+          type="button"
+          onClick={onToggleMobileExpand}
+          aria-label={mobileExpanded ? 'Collapse details' : 'Expand details'}
+          style={{
+            position: 'absolute',
+            top: ui.space(3),
+            right: ui.space(9),
+            zIndex: 1,
+            background: 'transparent',
+            border: `1px solid ${ui.panelBorder}`,
+            color: ui.text,
+            borderRadius: '50%',
+            width: 28,
+            height: 28,
+            cursor: 'pointer',
+            fontSize: '0.75rem',
+            lineHeight: 1,
+          }}
+        >
+          {mobileExpanded ? '⌄' : '⌃'}
+        </button>
+      )}
       <button
         type="button"
         onClick={onClose}
@@ -250,6 +286,7 @@ export function DetailPanel({ detail, onClose, onFocusElement }: DetailPanelProp
           position: 'absolute',
           top: ui.space(3),
           right: ui.space(3),
+          zIndex: 1,
           background: 'transparent',
           border: `1px solid ${ui.panelBorder}`,
           color: ui.text,

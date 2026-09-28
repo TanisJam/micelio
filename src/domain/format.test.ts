@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, formatDateTime, formatNumber, formatShortOid, formatSignedNumber } from './format'
+import { formatCount, formatDate, formatDateTime, formatDeletions, formatNumber, formatShortOid, formatSignedNumber } from './format'
 
 describe('formatDate', () => {
   it('formats an epoch timestamp as a readable date', () => {
@@ -42,6 +42,38 @@ describe('formatSignedNumber', () => {
 
   it('adds no sign for zero', () => {
     expect(formatSignedNumber(0)).toBe('0')
+  })
+})
+
+describe('formatDeletions', () => {
+  it('always prefixes with a minus sign, including zero', () => {
+    expect(formatDeletions(0)).toBe('−0')
+    expect(formatDeletions(44)).toBe('−44')
+  })
+
+  it('adds thousands separators', () => {
+    expect(formatDeletions(1234)).toBe('−1,234')
+  })
+
+  it('falls back to −0 for a non-finite input', () => {
+    expect(formatDeletions(Number.NaN)).toBe('−0')
+  })
+})
+
+describe('formatCount', () => {
+  it('uses the singular form for a count of exactly 1', () => {
+    expect(formatCount(1, 'file')).toBe('1 file')
+  })
+
+  it('uses the plural form for 0 and for counts above 1', () => {
+    expect(formatCount(0, 'file')).toBe('0 files')
+    expect(formatCount(2, 'file')).toBe('2 files')
+    expect(formatCount(1234, 'file')).toBe('1,234 files')
+  })
+
+  it('accepts an explicit irregular plural', () => {
+    expect(formatCount(1, 'branch', 'branches')).toBe('1 branch')
+    expect(formatCount(3, 'branch', 'branches')).toBe('3 branches')
   })
 })
 

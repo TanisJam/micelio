@@ -39,7 +39,7 @@ export default function Scene({
     <Canvas
       shadows="variance"
       camera={{ fov: 42, near: 0.1, far: 500 }}
-      gl={{ antialias: true }}
+      gl={{ antialias: true, preserveDrawingBuffer: true }}
       style={{ cursor: hoveredId ? 'pointer' : 'auto' }}
       onPointerMissed={() => onElementSelect?.(null)}
       onCreated={({ gl, scene }) => {
