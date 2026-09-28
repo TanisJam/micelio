@@ -55,8 +55,8 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
 - [x] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
-- [ ] M1 Data for topology: extend adapter/snapshot with PR `baseRefName`/`headRefName`, first-commit time, closed-unmerged PRs (capped), default-branch merge commits if cheap; regenerate fixture(s). Route: delegated.
-- [ ] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
+- [x] M1 Data for topology: extend adapter/snapshot with PR `baseRefName`/`headRefName`, first-commit time, closed-unmerged PRs (capped), default-branch merge commits if cheap; regenerate fixture(s). Route: delegated.
+- [x] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
 - [ ] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
 - [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
 (T8 polish now applies to the mycelium build.)
@@ -680,5 +680,208 @@ verified to render correctly and be clickable in the shots, not verified
 end-to-end (clipboard permissions and file-save dialogs aren't
 exercisable from a headless screenshot script).
 
+### M1 Data for topology — done
+Commit: `4794d36` feat: capture branch topology for merged and closed pull
+requests.
+`src/domain/repo.ts`: new shared `PrTopology` (`baseRefName`, `headRefName`,
+`firstCommitTime`) mixed into `MergedPullRequest`, `OpenPullRequest`
+(now also carries `commitCount`/`commits`, capped) and a new
+`ClosedPullRequest` type; `RepoSnapshot.closedPullRequests` (capped, most
+recent first); `ReleaseInfo.targetOid` (release tag's commit oid, when
+cheaply resolvable).
+`src/adapters/github/`: `queries.ts` adds `baseRefName`/`headRefName` to the
+merged-PR fragment, a `SecondaryPrCommitsFields` fragment (lower commit cap,
+`CAPS.secondaryCommitsPerPr = 8`) shared by new `OpenPrFields`/
+`ClosedPrFields` fragments, and a release `tag { target { ... on Commit { oid }
+... on Tag { target { ... on Commit { oid } } } } }` selection (mirrors the
+existing tags-fallback drill-through). `mappers.ts` adds
+`computeFirstCommitTime` (min authored/committed date across a PR's fetched
+commits, falling back to `createdAt`), `mapClosedPullRequest`,
+`resolveReleaseTargetOid`. `caps.ts` adds `maxClosedPrs = 200`,
+`closedPrsPageSize = 50`, `secondaryCommitsPerPr = 8`.
+**Real bug found and fixed while building this**: closed PRs were
+originally bundled into the single `REPO_OVERVIEW_QUERY` (merged + open +
+closed, each with nested commits) — this reliably produced intermittent
+upstream 502/504s when generating fixtures for repos with substantial PR
+history (reproduced repeatedly against `pmndrs/zustand` and
+`expressjs/express`). Fixed by fetching closed PRs as their own fully
+independent, always-paginated-from-`after: null` query
+(`CLOSED_PRS_PAGE_QUERY`), wrapped so a failure at *any* page (including the
+first) stops fetching and keeps whatever succeeded — `closedPullRequests`
+can legitimately end up `[]` rather than failing the whole snapshot fetch,
+since it's supplementary (dead-end hyphae) data, not the core timeline.
+Fixtures: regenerated `pmndrs/valtio` (1312 KB, unchanged repo selection,
+new fields only) and added `expressjs/express` (1250 KB) as the required
+second fixture with real branch-from-branch topology: 106 of 566 merged PRs
+at generation time had `baseRefName !== defaultBranch` (vs. 0 checked for
+`vitejs/vite-plugin-react`, which is why it wasn't chosen), plus a rich
+closed-PR tail (1974 closed PRs at generation time, capped to 200).
+`pmndrs/zustand` (930 merged PRs, 188 non-default-base) was tried first and
+is topologically richer, but its fixture came out at 2209 KB — over the 1.5
+MB budget — so it was discarded in favor of `expressjs/express`, whose
+similar merged-PR count to `valtio` (566 vs. 538) kept it comparably sized.
+Both registered in `src/server/fixtures/index.ts`.
+Tests: `computeFirstCommitTime` (empty-commits fallback, true min across
+authored/committed dates, tolerant of a missing `committedDate`),
+`mapClosedPullRequest` (full mapping + the lower secondary-PR commit cap),
+`mapOpenPullRequest` (now includes branch topology + commits),
+`resolveReleaseTargetOid` (direct commit target, annotated-tag drill-
+through, missing tag/target), closed-PR pagination in
+`fetchRepoSnapshot.test.ts` (continues across pages; honestly returns `[]`
+when even the first page fails; honestly keeps a partial list when a later
+page fails) — 21 new/changed tests, existing merged-PR/release tests updated
+for the new required fields.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (206
+tests at commit time) · `pnpm build`: pass.
+
+### M2 Network model — done
+Commit: `fccc65a` feat: derive mycelium network layout from repository
+history.
+`src/domain/network/` (pure, no React/three/fetch): `topology.ts` (pure
+graph derivation, independently unit-tested per the task brief),
+`spline.ts` (from-scratch centripetal Catmull-Rom, every division guarded
+against near-zero denominators), `layout.ts` (spiral + lanes + curvature),
+`mushrooms.ts`, `lookup.ts`, `focus.ts`, `elementDetail.ts`,
+`exploreGroups.ts`, `buildNetwork.ts` (orchestrator), `types.ts`, `index.ts`.
+Reuses `../tree/vector` (`Vec3`, plus a new `normalizeVec3` added there) and
+`../tree/timeBounds`/`../tree/types` (`computeTimeBounds`/`TimeBounds`) and
+`../tree/prng` rather than duplicating them, since they're metaphor-agnostic
+pure helpers, not tree-geometry-specific — **known follow-up for M4**: once
+the rest of `src/domain/tree/` is deleted, these three should move to a
+shared top-level `src/domain/` location (a small, mechanical import-path
+fix in `network/`, not attempted here to avoid an unrelated blast radius).
+Widened the existing shared `PullRequestDetail.status` (`src/domain/
+elementDetail.ts`) from `'merged' | 'open'` to `'merged' | 'closed' |
+'open'` (purely additive; also fixed `summarizeElementDetail`'s label for
+the new case) so the network's PR-hypha/tip/merge-point-node details reuse
+the exact same `ElementDetail` shape the tree's detail panel already
+consumes -- ready for M3 to wire up without another type change.
+
+**Topology decisions** (`topology.ts`): a PR's parent is the default branch
+when `baseRefName === defaultBranch`; otherwise the closest-preceding
+hypha (by clamped split time) whose `headRefName === baseRefName` and whose
+own split time is `<= ` the child's raw split time ("time-consistent"),
+else falls back to main. A child's effective split time is
+`max(rawFirstCommitTime, parent.splitTime)` (never predates its parent).
+Live branches with no matching PR head ref become minimal open hyphae off
+main, using `lastCommitDate` as the only available time signal (no
+base/head/commit data exists for a bare `LiveBranch`). Hyphae are capped at
+`maxHyphae` (default ~1000, most-recent-first); any hypha whose parent got
+cut by the cap is re-parented to main so the model is never internally
+inconsistent (no dangling `parentHyphaId`).
+**Real bug found and fixed while building this**: `clampTime`'s
+`Number.isFinite(max) ? max : time` branch (meant to make the upper bound a
+no-op when `max` is `Infinity`) actually re-substituted the *original
+unclamped* value as the ceiling, silently undoing the lower-bound clamp —
+found via a genuine data case in `expressjs/express` (PR #821, a 2011-era
+commit whose recorded `authoredDate` is ~14 hours *after* its own
+`mergedAt`), which crashed `Math.min`'s min>max guard in
+`pointOnHyphaAtTime`. Fixed the ternary (`Number.isFinite(max) ? Math.min(floored,
+max) : floored`); the topology invariant is `splitTime <= endTime` for
+every hypha (not strictly `<`, since this exact defensive clamp can produce
+a legitimate zero-duration hypha for bad upstream timestamps) — covered by
+a regression test using this exact scenario.
+
+**Layout decisions** (`layout.ts`, tuned via 3 rounds of `pnpm network-svg`
++ `Read`, see below): disc radius 5 world units, radius = `5 * frac^0.58`
+(sub-linear so early/sparse history isn't crushed near the spore), main
+hypha spirals `2.4` turns. Concurrent same-parent hyphae get a side
+(alternating per new child, independent of lane) and, per side, a lane via
+greedy interval scheduling by split time; lane depth = `0.07 + lane * 0.045`,
+capped by `localSpiralPitch(frac) * 0.42` when the parent is main (so a
+loop never crosses the next winding — the radius gained over one full
+`2*pi` turn at that point, floored at a small minimum) and additionally by
+remaining radial room to the disc's own outer edge (needed once loops
+approach `frac ~= 1`, where "the next turn" is otherwise undefined) — for a
+non-main parent, a fixed cap (`0.35`) instead, since "next turn" doesn't
+apply to a nested loop. A **fused (merged) loop's control points follow its
+parent's own curve** between the split and rejoin times, not a straight
+chord between just those two points (see the visual-iteration bug below).
+A dead-end/open hypha instead runs a straight departure from the attach
+point (there's no "rejoin" segment to follow), length by
+`logScale(duration, 0, 120 days)`, with a droop (dead end) or a slight lift
+(open, ending at a `Tip` element). Organic wiggle is a *fraction* of each
+hypha's own lane depth (`min(depth * 0.22, 0.02)`), not a fixed amplitude,
+and decays to 0 at the split point always (and at the fuse point too, for a
+merged loop) via a `sin` envelope, so short loops read as smooth bows
+rather than noisy scribbles. Mushrooms (`mushrooms.ts`) cluster releases
+within a 3-day gap under a shared `clusterId`; scale by semver importance
+(major/first-of-major > minor > patch > non-semver tag).
+
+**Visual iteration** (required, >=3 rounds via `pnpm network-svg` +
+`Read` on the resulting PNGs, both fixtures — script writes `.svg` +
+`.png` to `.shots/`, gitignored, since no `rsvg-convert`/imagemagick is
+available in this environment so the PNG is rasterized via a headless
+Chromium page instead): **(1)** baseline had several long, straight
+"spoke"-like chords cutting across the whole disc for nested
+branch-from-branch PRs -- traced (not just visually, confirmed via a
+throwaway radial-span script) to `expressjs/express` PR #4287, a *real*
+long-lived "4.18" maintenance branch (`baseRefName: master`, alive
+2018-2022) with several genuine backport PRs based on it; a straight chord
+between a grandchild's attach/rejoin points (both on that 2-year parent
+curve, but far apart in time) cut a stark line across a wide arc of the
+disc instead of running parallel-ish alongside it. **(2)** fixed by
+sampling the parent's actual curve at each control point's own time (with a
+*local*, per-point tangent for the bow direction) for a fused loop, instead
+of a single straight lerp between the two endpoints -- confirmed via a
+before/after SVG diff that the spoke artifacts were gone on both fixtures.
+**(3)** the loops still read as noisy, spiky scribbles rather than smooth
+bows, especially in high-PR-density spans (many concurrent same-parent
+PRs pushing lane depth up via `lane * spacing`, with jitter amplitude fixed
+regardless of that depth) -- tightened `BASE_LANE_DEPTH`/`LANE_SPACING`
+(0.14/0.1 -> 0.07/0.045) and made jitter a fraction of each loop's own depth
+(capped absolutely too) instead of a fixed magnitude; re-rendered both
+fixtures and confirmed a markedly calmer, more "fairy ring"-like result
+(concentric, mostly non-overlapping loops hugging the main spiral) while
+`pnpm test`'s spiral-pitch/tangent-continuity/determinism checks stayed
+green throughout.
+**Residual, honestly reported**: some visual density remains in
+`expressjs/express`'s outer ring (a few longer sweeping loops from other
+long-lived maintenance branches, and a cluster of short concurrent PRs near
+one point in `pmndrs/valtio`'s early history) -- this reflects genuinely
+dense/bursty real PR activity at those points, not a layout bug (verified:
+no hypha has an internal point-to-point jump > 1.5 world units in either
+fixture, and the spiral-pitch/tangent-continuity tests pass for both). A
+further pass tuning lane packing for very-high-concurrency spans, or M3-side
+selective-bloom/dimming to keep dense areas legible, is left for polish
+(T8) rather than gold-plated here, since M3 (actual rendering) doesn't
+exist yet to validate against.
+
+Tests (68 new, `src/domain/network/*.test.ts`): determinism (topology and
+full model); parent resolution (default-branch, branch-from-branch nesting,
+time-inconsistent fallback, split-time clamping); dead-end vs. open vs.
+merged status; hyphae cap with no dangling parent references; live-branch
+inclusion/exclusion/dedup against a matching PR; tiny repo (0 PRs, 0
+releases, 1 commit) produces a spore + a single short main hypha; spline
+sampling passes exactly through every control point and never produces
+NaN/Infinity even for coincident control points; lane assignment has no
+overlapping same-lane-same-side intervals and alternates sides; loops never
+cross the next spiral turn and fuse points are tangent-continuous, both
+checked directly against both real fixtures; a recursive scan of the full
+model confirms no NaN/non-finite number anywhere; every hypha/node/tip/
+mushroom has a non-empty id, a finite time and a ref; mushroom clustering/
+semver scale; `elementDetail`/`lookup`/`focus`/`exploreGroups` cover every
+element kind. Both fixtures additionally smoke-tested for bounds sanity
+(`firstEventTime <= lastEventTime`, positive finite radius, unique element
+ids) as part of `buildNetwork.test.ts`.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (277
+tests total, +71 for M1+M2 combined) · `pnpm build`: pass.
+
 ## Next step
-M1 (data for topology), then M2–M4, then T8 polish and the final independent review.
+M3 (network rendering + growth + interaction wiring), then M4 (cleanup,
+remove superseded tree code), then T8 polish and the final independent
+review.
+
+**Decisions/gaps for the product owner (M3 planning)**:
+- The network model exposes `NetworkModel.overflow` (hyphae/nodes omitted
+  by the caps) — M3 should decide how (or whether) to surface this in the
+  UI/legend, mirroring how the tree model's overflow-PR count is currently
+  labeled in the era detail panel.
+- `PullRequestDetail.status` now includes `'closed'`; `DetailPanel.tsx`'s
+  current `detail.status === 'merged' ? 'Merged' : 'Open'` ternary (tree-only
+  today) will need a third branch once M3 feeds it network data.
+- Dead-end/open hyphae are allowed to extend visually past the disc's
+  nominal outer radius (by design — they "drift away"/"grow" beyond the
+  established structure); M3's camera/bounds framing should account for
+  `NetworkModel.bounds.radius` already including them (it does), not just
+  the main spiral's own radius.
