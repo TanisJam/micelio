@@ -60,7 +60,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] M2b Layout iteration: fix chord-crossing loops, far-flung dead ends/mushrooms, empty inter-turn space, and add mycelial hair texture, per orchestrator visual review of `.shots/network-*.png`. Route: delegated (writer).
 - [x] M2c Radial colony layout prototype: alternative `layout: 'colony'` mapping (radius = time, angle = contributor sector, true branch-from-branch sprouting, fusion knots/bridges, growth rings) behind `buildNetwork(snapshot, { layout })`, compared side by side against the spiral. Route: delegated (writer).
 - [x] M2d Colony algorithm rewrite: replace M2c's duration-based length and author-sector angle (read as tangential arcs/chords) with work-based length and gap-filling angle (space-colonization growth); update SVG debug rendering; tests; ≥4 rounds of visual iteration against both fixtures. Route: delegated (writer).
-- [ ] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
+- [x] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
 - [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
 (T8 polish now applies to the mycelium build.)
 
@@ -1520,30 +1520,283 @@ including a real `Mushroom.nearPr` link exists when releases and merged PRs
 coexist. Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`:
 pass (322 tests total, +5 net for M2d) · `pnpm build`: pass.
 
-## Next step
-M3 (network rendering + growth + interaction wiring for the `colony`
-layout -- the orchestrator's own critique of M2c and this rewrite's target
-both point at colony as the primary metaphor going forward, spiral remains
-available for comparison), then M4 (cleanup, remove superseded tree code),
-then T8 polish and the final independent review.
+### M3 Network rendering + growth + interaction wiring — done
+Commits: `6d8dc7d` feat: render the mycelium network in 3D with growth and
+interaction; `1dd7a8f` feat: spiral the colony's radial growth into galaxy
+arms.
 
-**Decisions/gaps for the product owner (M3 planning)**:
-- The mushroom-cluster "pile" weakness above (a real, honest but visually
-  dense release-burst) -- acceptable as-is, or worth a further layout pass
-  before M3 renders it?
-- `maxTurnRadians`'s tuned constants (70deg absolute ceiling, 0.5 lateral
-  fraction) are a deliberate deviation from the brief's own "10-35deg"
-  estimate, found necessary once the discontinuity bug was fixed and real
-  turns were measured -- flagging for awareness, not blocking.
-- The network model exposes `NetworkModel.overflow` (hyphae/nodes omitted
-  by the caps) — M3 should decide how (or whether) to surface this in the
-  UI/legend, mirroring how the tree model's overflow-PR count is currently
-  labeled in the era detail panel.
-- `PullRequestDetail.status` now includes `'closed'`; `DetailPanel.tsx`'s
-  current `detail.status === 'merged' ? 'Merged' : 'Open'` ternary (tree-only
-  today) will need a third branch once M3 feeds it network data.
-- Dead-end/open hyphae are allowed to extend visually past the disc's
-  nominal outer radius (by design — they "drift away"/"grow" beyond the
-  established structure); M3's camera/bounds framing should account for
-  `NetworkModel.bounds.radius` already including them (it does), not just
-  the main spiral's own radius.
+**Rendering** (`src/ui/scene/network/`): every hypha's tapered ribbon (2
+vertices per cross-section, flat XZ-plane, `RIBBON_WIDTH_SCALE * point.radius`
+wide) merged into ONE `BufferGeometry` (`geometry/hyphaeGeometry.ts`), and
+every hair + fusion "anastomosis bridge" merged into one `THREE.LineSegments`
+(`geometry/filamentsGeometry.ts`) — both driven by a single shared custom
+`ShaderMaterial` (`geometry/growthMaterial.ts`) reused across both meshes, so
+growth/highlight/flow-pulse state updates once per frame instead of per
+object. Mushrooms are one shared `LatheGeometry` (cap + stem, baked
+per-vertex cream/cyan-rim color, `geometry/mushroomGeometry.ts`) rendered
+`InstancedMesh`-many (`MushroomsMesh.tsx`); fusion knots and growing tips
+share a generic small-sphere `InstancedMesh` component
+(`PointGlowInstances.tsx`, tip instances gently "breathe"). The spore is a
+small bright core + a large, low-opacity additive halo (`SporeMesh.tsx`,
+deliberately not blown-out per P1). The soil (`SoilDisc.tsx` +
+`geometry/soilMaterial.ts`) is a single opaque, depth-writing disc with a
+low-frequency value-noise gradient and a color-mixed (not alpha) vignette at
+the rim — see the round-1 bug below for why it's opaque, not alpha-blended.
+Tone mapping/glow: `@react-three/postprocessing`'s `EffectComposer` +
+`Bloom` (luminance-threshold, selective by construction: only pixels above
+the threshold glow) + `ToneMapping` (`NEUTRAL`, not `ACES_FILMIC` — the
+tree's V2 pass found ACES's shadow toe crushes a wide range of dim values
+into the same too-dark output, a finding carried forward from this doc's own
+notes).
+
+**Growth** (T5 reused): `useGrowthClock`/`TimeScrubber` are fully
+metaphor-agnostic already, so no changes were needed there — a new
+`useRepoNetwork.ts` hook (mirrors `useRepoTree.ts`) builds
+`buildNetwork(snapshot, { layout: 'colony' })` instead of `buildTree`, and
+`NetworkSceneContent.tsx` reads `getCurrentTime()` once per frame and writes
+it into the shared shader's `uCurrentTime` uniform; growth reveal is a
+per-fragment `if (vBirthTime > uCurrentTime) discard`, with each vertex's
+`birthTime` baked from its real `HyphaPoint.time`/`Hair.time`/etc. at
+geometry-build time — since a ribbon segment's two rings interpolate their
+`birthTime` per-fragment, the growth "front" sweeps smoothly through a
+segment instead of popping. Mushrooms/fusions/tips (instanced) get the same
+treatment imperatively (`geometry/applyGrowth.ts`, called every frame):
+a not-yet-grown instance is moved far away AND scaled to zero (belt-and-
+suspenders against a renderer treating a degenerate zero-scale instance as a
+stray pixel, a caution carried over from the tree's own `ScatterInstances`).
+TIME HONESTY (a new domain concern, `src/domain/network/renderHints.ts`,
+tested): a colony hypha can visually sprout fresh from the spore (disc
+radius 0) for continuity even though its real `splitTime` corresponds to a
+later, nonzero radius (M2d's "spore-started colony hypha" case) —
+`conduitSplitRadius` locates where that honesty gap ends, and the geometry
+builders render everything before it as a faint, hair-less "conduit" (low
+alpha, no hairs) rather than claiming the branch existed since the
+beginning.
+
+**Interaction** (P7): picking raycasts the pointer onto the y=0 soil plane
+(native `pointermove`/`click` listeners on the canvas, not React Three
+Fiber's per-mesh event system) and queries a precomputed 2D spatial grid
+(`picking/pickingGrid.ts`, pure, unit-tested) built once per model from
+every hypha segment, hair (resolving to its *node*'s id, not a hair id —
+hairs aren't independently selectable), mushroom and tip. Hover/select
+highlight is a `hyphaIndex` vertex attribute compared against
+`uSelectedIndex`/`uHoveredIndex` uniforms: the matched hypha (and a
+selected/hovered node or tip's *owning* hypha, via a small id→index map)
+gets an additive brightness boost; everything else dims via **alpha**, never
+an RGB multiply (the exact ACES-toe lesson from the tree's V2 pass, except
+here sidestepped entirely by not using ACES at all). `DetailPanel.tsx` grew
+a third `'closed'` branch ("Closed without merging" / "Closed" date label)
+and a "Branched from" field wording `Hypha.attachment` honestly — "Sprouted
+from the colony when the branch was created" for `'colony'`, the real
+parent PR's number/title (a focusable button) for `'parent-branch'` — via a
+new optional `PullRequestOrigin` on the shared `PullRequestDetail` (purely
+additive, tree leaves it `undefined`). `NetworkExploreList.tsx` (new,
+mirrors the tree's `ExploreList.tsx`) renders `buildNetworkExploreGroups`'s
+year → PR (incl. closed/open) → commit structure. `TooltipLayer.tsx` was
+generalized to take a `resolveDetail(id)` function instead of a
+tree-specific `model`/`snapshot` pair (its only caller updated), so it works
+for both metaphors without duplicating it. `Legend.tsx` rewritten to the
+mycelium mapping (spore/distance/filament/fork/knot/dry filament/glowing
+tip/fine hair/mushroom).
+
+**Round 1 (initial render, broken)** — findings from the orchestrator's
+review of `.shots/desktop-valtio-end.png` plus my own: no hyphae/hairs
+visible at all (only the soil's growth rings, still present at this point),
+a hard line of mushrooms, growth rings visually dominant, the disc reading
+as a blurry, washed-out ellipse. Root-caused (not just re-tuned): the soil
+material was `transparent: true` (for its rim vignette) with `depthWrite:
+true` — three.js's transparent render queue sorts by a coarse per-object
+bounding-sphere distance, and for a huge flat disc sharing almost the same
+depth as the additively-blended hyphae/hairs sitting just above it, that
+heuristic could (and did) draw the soil *after* the filaments and overwrite
+them, since the soil's own alpha is near 1 across its interior. Fixed by
+making the soil fully **opaque** (real depth writes, always drawn in the
+opaque pass before any transparent object) and doing the rim vignette by
+mixing color toward the background's own near-black instead of alpha —
+reads almost identically here since the background is already a similarly
+dark gradient. The mushroom "line" was root-caused (not eyeballed) to
+`mushrooms.ts`'s `findRingAnchor`: it finds "the merged PR that landed
+closest before this release" globally, and for the fixture's early history
+several releases in a row honestly resolved to the *same* anchor PR (or to
+different early PRs that still happened to cross their own ring radius at a
+similar angle) — each individual link is real, but sampling many ring radii
+along nearly the same angle read as a straight trail, not fruiting across
+the colony.
+
+**Round 2 (soil-opacity + alpha/bloom tuning + mushroom fan-out)** — full
+clean `pnpm shot` run (20/20 screenshots, 0 console errors) after: the soil
+fix above; a new `buildMushroomsOnRings` pass (`mushrooms.ts`) that detects
+a run of consecutive non-clustered releases whose real anchor angles land
+within `ANGLE_PROXIMITY_RADIANS` (0.3 rad) of each other and spreads them
+evenly across a size-scaled arc (`REPEATED_ANCHOR_GAP` per member, capped at
+`REPEATED_ANCHOR_MAX_SPREAD` ≈ 130°) instead of leaving them on top of/next
+to each other — every mushroom keeps its real `nearPr` link and its real
+ring radius, only the angle within the run is redistributed (tested:
+`mushrooms.test.ts`, a synthetic long-lived-anchor-run case, deterministic);
+and a substantial alpha/bloom rebalance (hyphae base alpha 0.62–1.0 → 0.16–
+0.4, hair alpha 0.35 → 0.18, `RIBBON_WIDTH_SCALE` 7 → 4.5, bloom
+`luminanceThreshold` 0.62 → 0.88, `intensity` 0.85 → 0.5) — the first pass's
+values, tuned in isolation, accumulated into an overexposed white haze once
+hundreds of overlapping additively-blended strands were actually visible
+together. Literal result on `pmndrs/valtio` (`desktop-valtio-end.png`):
+individually legible bright-cyan filaments radiating and branching from a
+small bright spore, brown dead-end filaments woven in, a small cluster of
+white mushroom dots reading as a loose patch (not a line), a dark tactile
+soil disc with a soft vignette, faint concentric growth rings visible at
+mid-growth. Same result held on `expressjs/express` (826 hyphae) and on
+mobile framing for both.
+
+**Round 3 (product-direction pivot: galaxy swirl, drop rings)** — the
+orchestrator relayed the product owner's direction: keep the radiating-
+filament look, lose the concentric rings, and bend the radial growth into a
+"luminous spiral galaxy." Implemented as `swirl`/`swirlPower` colony-layout
+options (`src/domain/network/colonyLayout.ts`, default `1.6`/`1.4`, real
+default so the UI gets it automatically): a pure post-process,
+`applySwirl`, run once after every other invariant is established, that
+rotates every already-positioned spatial element (hyphae points, nodes,
+tips, mushrooms, fusions, hairs — a hair's tip is swirled independently of
+its base, then its `direction`/`length` are recomputed, since its two ends
+can sit at slightly different disc radii) around Y by
+`swirlAngleForRadius(radius) = swirl * (radius / DISC_MAX_RADIUS) ^
+swirlPower` — the SAME function of disc radius for every element kind,
+which is what keeps picking and rendering consistent (they both read one
+already-swirled model) and keeps two originally-coincident points (e.g. a
+mushroom and the hypha point it's anchored to) exactly coincident afterward.
+Radius itself is untouched, so every prior time-honesty guarantee still
+holds exactly. Growth rings were removed from the 3D soil render entirely
+(`SoilDisc.tsx` now always passes an empty ring list to the shader, which
+still supports the uniform array for a possible future hover-only reveal);
+`Legend.tsx` dropped its "Faint ring" entry and (a real wording bug caught
+while editing it) fixed "distance from center" to say plain "time" instead
+of "time weighted by activity density" — that activity-density blend is the
+`spiral` layout's own M2b decision, not colony's (colony explicitly uses
+pure eased time, per M2c/M2d's own notes above); `pnpm network-svg`
+regenerated with the swirl (no script changes needed — it already calls
+`buildNetwork`, which now swirls colony output by default).
+**Two existing `colonyLayout.test.ts` invariants needed adapting** (per
+the same "measure on un-swirled coordinates" principle) since swirl adds a
+large, intentional, radius-dependent rotation that has nothing to do with
+either invariant's real subject: the "no single segment over 0.3 world
+units" chord-regression check and the "post-fork angular drift ≤ 0.1 rad"
+check now `unswirlPosition` each point first (this was tried empirically,
+not assumed — both failed by a small margin, ~0.007 and ~0.03 over budget,
+before the fix). Six new tests added: `swirlAngleForRadius`'s ramp (0 at
+the spore, monotonic to `swirl` at the rim), `applySwirlToPosition`
+preserves disc radius exactly and no-ops at the origin,
+`unswirlPosition` exactly inverts it, determinism with swirl enabled, a
+dedicated swirl-consistency test (builds the same snapshot with `swirl: 0`
+and swirl on, then asserts every hypha point/node/tip/mushroom/fusion
+position — and a hair's independently-swirled base+recomputed-tip — keeps
+its exact disc radius and shifts by exactly `swirlAngleForRadius`), and a
+`swirl: 0` opt-out equivalence check.
+Literal result (`desktop-valtio-end.png`, `desktop-express-end.png` and
+their mobile/mid-growth/selected variants, full clean `pnpm shot` run,
+20/20, 0 console errors): both fixtures read as a genuine pinwheel/spiral-
+galaxy shape — bright cyan filaments curving into arms from the central
+spore, brown dead-end filaments woven through the same arms, no visible
+growth rings, mushroom cluster following the curve of its own arm instead
+of the earlier straight line, dark soil disc with a soft vignette. Growth
+mid-replay (`desktop-valtio-mid.png`) still reads as a coherent partial
+spiral (arms cut off partway through, not broken/discontinuous). Selection/
+hover (`*-selected-merged.png`, `*-selected-closed.png`) still dims the
+rest of the disc correctly and highlights the selected hypha's hairs
+brightly, on both fixtures and both viewports — confirming picking stayed
+consistent with the now-swirled render (both read the same post-swirl
+model, as designed).
+**Round 4 (final confirmation)** — reviewed the remaining screenshots from
+the same clean run (mobile express end/mid/selected, both state screens,
+landing) for regressions from the theme-token change (near-black
+`ui.bg`/`ui.panelBg`, cyan `ui.panelBorder`/`ui.accent`, replacing the
+tree's warm brown): none found: state screens and landing read cleanly
+against the new dark/cyan palette, mobile bottom sheet still compact and
+correctly offset, no layout shift. No further changes made.
+
+**Draw calls** (P12, measured via a temporary monkeypatch of
+`WebGLRenderingContext.prototype.drawArrays`/`drawElements`/the instanced
+variants, removed before commit, not left in `Scene.tsx`): **26** per frame
+for both fixtures (draw-call count depends on the number of distinct
+meshes/materials, not model size, by construction of the batched-geometry
+approach) — comfortably under the "~40" target. `pnpm build`: `Scene` chunk
+~1033 kB / gzip ~275 kB (up from T4's ~948 kB/~252 kB — `three` +
+`@react-three/postprocessing` + `postprocessing`), still lazy-loaded
+separately from the initial `index` chunk (~294 kB / gzip ~92 kB).
+
+**Dependency note**: adding `@react-three/postprocessing` +
+`postprocessing` hit a real `pnpm` lockfile bug in this environment — a
+second `pnpm add postprocessing@^6.x` (needed because it's a peer, not a
+transitive, dependency of `@react-three/postprocessing`) silently left the
+root importer's lockfile entry pointing at an unqualified version string
+(`6.39.5`) while the actual resolved package lived under a peer-qualified
+store key (`6.39.5(three@0.186.1)`), so `node_modules/postprocessing` never
+got linked on a clean `pnpm install` (reproduced from a full
+`rm -rf node_modules && pnpm install`, not just a one-off). Fixed by hand-
+editing the importer's `version:` field in `pnpm-lock.yaml` to the
+peer-qualified string and reinstalling; verified fixed with a second clean
+`rm -rf node_modules && pnpm install`.
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (369
+tests total, +47 for M3) · `pnpm build`: pass · `pnpm shot`: 20/20
+screenshots (desktop/mobile × {landing, end/mid/selected-merged/selected-
+closed for both fixtures, state-token-required, state-not-found}), 0
+console errors, across two full iteration rounds (2 and 3 above).
+**Known pre-existing flake, not introduced here**: `buildNetwork.test.ts`'s
+1000-PR performance test (600ms CI-safe budget) intermittently fails only
+when the full suite runs under parallel worker load (observed ~650-690ms
+several times during this task's own verification runs); always passes
+when run standalone (`pnpm vitest run src/domain/network/buildNetwork.test.ts`).
+Not touched here since the perf-sensitive code (`colonyLayout.ts`) only
+gained a cheap post-process; flagging for T8/M4 awareness rather than
+loosening the budget speculatively.
+
+**Weaknesses, honestly reported**:
+- The mushroom-cluster fan-out (round 2) reduces but doesn't fully
+  eliminate visual density for a genuine short release-burst (the same
+  `express` 16-release cluster M2d already flagged) — still a small dense
+  patch, now spread across a wider arc rather than a line/point, not
+  eliminated further since that would mean fabricating angular separation
+  beyond what a size-scaled cap allows.
+- `?sel=` selection and hover were verified via the debug `?t=`/`?sel=`
+  URL params (deterministic screenshots) and manual reasoning about the
+  picking-grid/shader consistency, not via a real synthetic mouse-hover
+  screenshot (the task explicitly marked this "if feasible" — computing a
+  hovered element's exact projected screen position for a Playwright mouse
+  move was judged not worth the added script complexity here).
+- `NetworkModel.overflow` (hyphae/nodes omitted by the render caps) is still
+  not surfaced anywhere in the UI/legend — carried forward from M2d's own
+  open decision, still unresolved; neither fixture used for visual QA hits
+  the caps (623/826 hyphae vs. a ~1000 cap), so this has no visible effect
+  on the shots reviewed here, but a 1000+-hypha repo would silently omit
+  data with no on-screen indication.
+- Touch/real mobile-device interaction was not manually verified (only
+  Playwright's synthetic viewport shots, which don't exercise real
+  touch/pointer-type quirks) — same residual the tree's own T6 entry
+  flagged, still open.
+- fps was not benchmarked on real GPU hardware, only verified via headless
+  SwiftShader software rendering (not representative of real-GPU frame
+  time) — same residual pattern as T4/T5.
+- The soil shader's ring-uniform machinery (`soilMaterial.ts`) is now dead
+  weight in the default render path (rings are always passed as `[]`) —
+  kept rather than deleted since the product direction explicitly allowed
+  "at most a nearly invisible hairline shown only while hovering/selecting
+  a mushroom" as an option; not implemented here (time-boxed out), so this
+  is inert code, not currently reachable from any UI state — flagging for
+  M4/T8 to either wire up or remove.
+
+## Next step
+M4 (cleanup: remove the now-fully-superseded `src/domain/tree/` and
+`src/ui/scene/tree/` code and the tree-specific `Scene.tsx`/`TreeScene.tsx`
+the viewer no longer routes to; update the README/OG image for the
+mycelium metaphor), then T8 polish (perf on a 1000+-hypha repo, a11y
+contrast audit, the residuals listed above) and the final independent
+design/product review against P1–P12.
+
+**Decisions/gaps for the product owner (M4/T8 planning)**:
+- `NetworkModel.overflow` still isn't surfaced in the UI — worth a small
+  M4/T8 pass (e.g. an honest "+N more" note near the Legend), or acceptable
+  to leave silent given neither fixture hits the cap?
+- The soil shader's now-unused ring machinery — wire up the "hover/select a
+  mushroom reveals its own ring" idea, or delete it as dead code?
+- `src/domain/network/layout.ts`'s spiral layout and its own SVG/tests are
+  now fully superseded by colony for the shipped product — confirm M4 should
+  delete `layoutNetwork`/the spiral path through `buildNetwork` too, not
+  just the tree code, or keep it around for comparison a while longer?
