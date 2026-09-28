@@ -1,4 +1,7 @@
 import { lazy, Suspense, useCallback, type ReactNode } from 'react'
+import type { TreeModel } from '../domain/tree'
+import { TimeScrubber } from './components/TimeScrubber'
+import { useGrowthClock } from './hooks/useGrowthClock'
 import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion'
 import { useRepoTree } from './hooks/useRepoTree'
 import { ui } from './theme/tokens'
@@ -11,15 +14,21 @@ const DEMO_OWNER = 'pmndrs'
 const DEMO_REPO = 'valtio'
 
 /**
- * Renders the diorama fully grown: growth (a time cursor animating the tree
- * in over its repository's history) is T5 scope. `getCurrentTime` is a
- * stable function so the 3D scene can read it every frame without a React
- * re-render, matching the contract T5's growth clock will use.
+ * `?t=0..1` pins the growth cursor to a fixed fraction of the timeline
+ * (skipping auto-play) instead of animating, for deterministic visual QA
+ * (see `scripts/shot.ts`).
  */
+function readDebugProgressOverride(): number | null {
+  if (typeof window === 'undefined') return null
+  const raw = new URLSearchParams(window.location.search).get('t')
+  if (raw === null) return null
+  const value = Number.parseFloat(raw)
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null
+}
+
 export function App() {
   const { status, model, error } = useRepoTree(DEMO_OWNER, DEMO_REPO)
   const reducedMotion = usePrefersReducedMotion()
-  const getCurrentTime = useCallback(() => model?.bounds.lastEventTime ?? 0, [model])
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: ui.bg, color: ui.text, fontFamily: ui.fontBody }}>
@@ -29,12 +38,23 @@ export function App() {
         </StatusMessage>
       )}
       {status === 'loading' && <StatusMessage>Growing the tree…</StatusMessage>}
-      {status === 'ready' && model && (
-        <Suspense fallback={<StatusMessage>Loading the diorama…</StatusMessage>}>
-          <Scene model={model} getCurrentTime={getCurrentTime} reducedMotion={reducedMotion} />
-        </Suspense>
-      )}
+      {status === 'ready' && model && <GrownDiorama model={model} reducedMotion={reducedMotion} />}
     </div>
+  )
+}
+
+function GrownDiorama({ model, reducedMotion }: { model: TreeModel; reducedMotion: boolean }) {
+  const debugProgress = readDebugProgressOverride()
+  const clock = useGrowthClock(model.bounds, reducedMotion, debugProgress)
+  const getCurrentTime = useCallback(() => clock.getTime(), [clock])
+
+  return (
+    <>
+      <Suspense fallback={<StatusMessage>Loading the diorama…</StatusMessage>}>
+        <Scene model={model} getCurrentTime={getCurrentTime} reducedMotion={reducedMotion} />
+      </Suspense>
+      <TimeScrubber clock={clock} bounds={model.bounds} />
+    </>
   )
 }
 
