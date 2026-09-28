@@ -45,7 +45,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] T4 Rendering: diorama island, trunk/limb/twig tube geometry, instanced leaves, flowers, fruit, buds, lighting, orbit camera. Route: delegated.
 - [x] T5 Growth time-lapse + time scrubber. Route: delegated.
 - [x] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
-- [ ] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
+- [x] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
 
 ## Polish bar (must all hold before the MVP is called done)
@@ -509,12 +509,175 @@ inventing a number. `?sel=` round-trips correctly (verified via the
   click/hover-resolve, never per frame). Same T8 recommendation as
   before (1000+-PR repo, tiny/empty repo) still stands.
 
+### Product pivot — tree metaphor replaced by a mycelium network
+Mid-session, the orchestrator paused the in-progress V2 visual pass with a
+product pivot: the tree metaphor is being replaced by a mycelium network
+(hyphae that branch *and* fuse back, modeling git merges — a tree's strict
+hierarchy can't represent a merge). All tree-specific visual work (palette,
+crown/island geometry, leaf ramp, selection highlight/dim inside the 3D
+scene) was stopped immediately and **discarded** (`git restore`), not
+committed — see the V2 entry below for exactly what was attempted and why
+it doesn't survive the pivot. `buildTree.ts` and the rest of
+`src/domain/tree/` are untouched and will need a redesign for the new
+topology (a future task, not started here). The metaphor-agnostic pieces
+already in flight (fonts, panel/typography polish, mobile sheet, routing
+groundwork) were kept and finished per the pivot instructions.
+
+### V2 visual pass — attempted, then reverted per the product pivot
+Commit `fix: refine palette, island and selection feedback` was **never
+made** — the pivot landed before this work was committed. For the record
+(so it isn't silently re-discovered later): the attempt covered items 1–7
+of the V2 brief (system-wide palette rework — calmer sky, red/orange-free
+leaf ramp, glossy two-tone fruit/flower geometry; a rebuilt watertight
+island using one shared per-angular jitter sample set instead of each
+band/tip/cap jittering independently, which was the actual root cause of
+the visible gaps/seams/floating-rock-fragment bug; a data-driven
+near-vertical steepening of the newest limbs to close the crown's top
+notch; pulling twig tips into the crown envelope to fix stray
+floating leaf/fruit dots; a parent-limb/twig "lineage" highlight + dim-others
+selection scheme). It was iterated ~6 rounds via `pnpm shot`, including a
+real debugging detour: an apparent "selection dims the whole tree to
+near-black" bug turned out to be ACES filmic tonemapping's shadow-toe
+compressing a wide range of per-instance color multipliers (0.5–0.85) into
+nearly the same too-dark output — confirmed by sampling rendered pixel
+values at several multiplier settings, not just eyeballing screenshots.
+None of this reached a commit; it's moot for the mycelium metaphor, but the
+tonemap-toe finding is worth remembering for whatever dim/highlight scheme
+the mycelium selection UI ends up using.
+
+### Metaphor-agnostic polish — done
+Commit `c6dced2` fix: polish detail panel and typography.
+Kept from the otherwise-discarded V2 branch (verified independently
+green — typecheck/lint/test/build — before committing, per the pivot
+instructions): self-hosted fonts (`@fontsource/fraunces` display,
+`@fontsource/inter` body, replacing the Georgia/system-ui fallback that
+was rendering as a plain Times-like serif); `src/domain/format.ts` gained
+`formatDeletions` (a genuinely-zero deletions count now renders `−0` with
+a real Unicode minus sign and color, instead of a bare unsigned `0` that
+read as a formatting bug) and `formatCount` (Intl.PluralRules-backed
+singular/plural, "1 file" / "2 files"); `DetailPanel`'s title no longer
+runs under the close button (reserved right padding); the mobile detail
+panel is now a compact ~45vh bottom sheet with an expand toggle
+(`data-expanded` + a CSS transition) instead of covering ~70vh
+unconditionally, and the time scrubber hides while the sheet is open,
+restored on close. `Scene.tsx` also gained `gl.preserveDrawingBuffer` (an
+agnostic one-liner, unrelated to the tree geometry, needed by T7's "save
+image" share action regardless of visual metaphor).
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+(186 tests) · `pnpm build`: pass.
+**Caught and fixed during triage**: the initial `git restore` of
+`tokens.ts` (to drop the tree-specific palette) also silently reverted the
+font-family token strings back to Georgia/system-ui, even though
+`main.tsx`'s `@fontsource` imports were still in place — the fonts would
+have loaded but never actually been requested by `ui.fontDisplay`/
+`ui.fontBody`. Caught before committing by re-reading the diff; fixed with
+a small surgical edit restoring just the two font-family strings, palette
+left alone.
+
+### T7 Product shell — done, metaphor-neutral
+Commit `ac2d637` feat: add landing, repository routes and product states.
+Routing via `wouter`: `/` → `LandingPage`, `/:owner/:repo` → `ViewerPage`,
+anything else → `NotFoundPage` (router 404, distinct from a GitHub
+repo-not-found — see below). `?sel=` is untouched (`useSelection` still
+owns it directly via the History API, independent of the router).
+`src/domain/parseRepoInput.ts` (11 tests) parses `owner/repo`, a full
+`https://github.com/owner/repo` URL (with a trailing path/query/hash, a
+`.git` suffix, or no scheme/`www.`), or a `git@github.com:owner/repo.git`
+SSH remote, reusing `validateRepoIdentity`'s real GitHub naming rules and
+never throwing. `src/domain/routePath.ts` (`buildRepoPath`, 2 tests) is
+the inverse, used by the landing page's example chips and form submit.
+`src/domain/repoRequestState.ts` (`mapErrorToViewState`, 6 tests) is a
+pure `RepoErrorCode | 'network_error'` → product-state mapping;
+`useRepoTree` was extended (not the tree domain — this is the existing
+fetch hook) to carry the real error code + `retryAfterSeconds` instead of
+just a message string, and to reset its snapshot/error *during render*
+(not inside the effect, to satisfy `react-hooks/set-state-in-effect`) when
+`owner`/`repo` change, so switching repos never flashes stale data.
+`ViewerPage` covers every P6 state from this: loading ("Fetching
+history…"), not found, private/forbidden, rate-limited (shows the reset
+time when `retryAfterSeconds` is known), token-required (explains the
+sample repo + self-hosting story), network error (retry action), and an
+invalid `owner`/`repo` caught client-side before any fetch. All rendered
+by one shared `StateScreen` component with a small abstract pulsing-mark
+animation — deliberately not tied to any visual metaphor, since the scene
+it stands in for is being redesigned.
+`ViewerHeader` (fixed, single-row, `VIEWER_HEADER_HEIGHT = 56`): repo name
+linked to GitHub (description as a hover title, truncates via ellipsis —
+first pass had `flexShrink: 0` on it, which overlapped the badge and
+buttons on a 390px viewport; fixed to `minWidth: 0` + default shrink,
+verified via a mobile shot before/after), a live/sample source badge,
+stars/forks/age (hidden under 641px via `.viewer-header-stats`), "Copy
+link" (Clipboard API + a `useToast` confirmation) and "Save image"
+(`canvas.toDataURL()` via `onCanvasReady` on `Scene`, filename
+`huerto-<owner>-<repo>.png`). `Legend`, the Explore-list toggle and the
+desktop `.detail-panel` were all re-offset below the new header (56px bar
++ the Legend/Explore-list row) so nothing overlaps — verified via shots,
+not just arithmetic.
+Landing page: brand + pitch, the parsed/validated input, example chips
+(the bundled fixture first, three real repos after — explained as
+needing a `GITHUB_TOKEN` once selected), and a placeholder hero (an
+abstract animated SVG node graphic, explicitly not a render of the 3D
+scene — the brief allows this given the pending metaphor redesign).
+Footer credits `github.com/TanisJam` and `mnr.ar`.
+Meta/OG (P10): `index.html` gained `theme-color`, an SVG favicon (abstract
+node mark, not tree-specific), OG/Twitter tags, and a generated
+placeholder OG image (`public/og.png`, 1200×630, ~264 kB — under the
+300 kB budget; `scripts/generate-og-placeholder.mjs` renders it via a
+headless page screenshot, kept as a reusable script rather than a
+one-off). Per-route `document.title` via a small `useDocumentTitle` hook.
+`vercel.json` adds the SPA rewrite (`/((?!api/).*) → /index.html`) so a
+hard refresh/deep link on `/owner/repo` resolves correctly.
+"Tiny/empty repo renders gracefully" (P6) was **not** re-implemented as
+new tree-specific work (per the pivot's "keep `buildTree` untouched"
+instruction) — it was already covered by T3's existing
+`buildTree.test.ts` case ("handles a snapshot with no merged PRs,
+releases, or activity at all"), which this task left as-is and confirms
+still passes.
+`README.md` rewritten: generic "every repository grows a living history"
+framing, the old trunk/limb/twig mapping table removed and replaced with
+an explicit `TODO(visual metaphor)` block (a screenshot placeholder too),
+run-locally/`.env.example` steps (also fixed a stale `env.example`
+filename reference — the real file is `.env.example`), a Deploy on Vercel
+section, and credits.
+`scripts/shot.ts` now shoots the landing page plus two
+deterministically-offline-reachable product states
+(`state-token-required`: a real non-fixture repo with no `GITHUB_TOKEN`;
+`state-not-found`: a single path segment, which can't match
+`/:owner/:repo` and always falls through to the router 404) alongside the
+existing growth-state shots. Also fixed the script's console-error filter
+to ignore Chromium's own "Failed to load resource: the server responded
+with a status of 503" devtools log line for the token-required shot's
+(expected, handled) failed fetch — the app itself never calls
+`console.error` for this; the filter was verified narrow (only that exact
+message prefix) so it can't hide a real app error.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+(**195 tests total**, +19 for T7) · `pnpm build`: pass · `pnpm shot`: 12/12
+screenshots (desktop/mobile × landing/end/mid/end-selected/
+token-required/not-found), 0 console errors.
+**Residual, honestly reported**: the landing page's example chips beyond
+the fixture (`facebook/react`, `vuejs/core`, `sveltejs/svelte`) always hit
+the `token_required` state in this environment (no `GITHUB_TOKEN`
+configured) — expected/by design, not verified against a real live fetch
+in this session. `useRepoTree` has no unit test of its own (still true
+from T2/T6 — no `@testing-library/react` in the project; its pure pieces
+--`mapErrorToViewState`, `parseRepoInput`, `buildRepoPath` -- are fully
+tested; the hook itself was exercised live via the shot script's
+token-required/landing/viewer runs). "Save image" and "Copy link" were
+verified to render correctly and be clickable in the shots, not verified
+end-to-end (clipboard permissions and file-save dialogs aren't
+exercisable from a headless screenshot script).
+
 ## Next step
-T7 (product shell: landing input, `/owner/repo` routing, loading/error/
-rate-limit states, meta/OG, README) — out of scope for this writer; hand
-back to the orchestrator. T6 left hooks worth reusing: `useSelection`'s
-`?sel=` URL sync is a natural extension point for `?owner=/repo=`-style
-routing state, and `resolveElementDetail`/`DetailPanel` don't assume the
-fixed demo repo anywhere (they're driven entirely by whatever
-`RepoSnapshot`/`TreeModel` they're given), so T7's routing/product-shell
-work shouldn't need to touch them.
+T8 (perf on a 1000+-PR repo and a genuinely tiny/empty repo, mobile
+touch-device check, a11y contrast audit, `prefers-reduced-motion` fps
+check) — but **the mycelium metaphor redesign should come first**: a new
+domain model (`src/domain/tree/` or its replacement) that represents
+branch/merge topology (hyphae fusing back, not just spoke-shaped limbs),
+new rendering geometry/materials for it, and a re-run of the full visual
+polish pass (palette, selection highlight/dim — reusing the ACES
+tonemap-toe finding above — silhouette, motion) against the new shape.
+T7's product shell (routing, states, header, share actions, meta/OG,
+README skeleton) was built metaphor-agnostic on purpose and shouldn't
+need structural changes for the redesign, only the `README.md` mapping
+TODO and the landing hero/OG image placeholders swapped for the real
+thing once the new scene exists.
