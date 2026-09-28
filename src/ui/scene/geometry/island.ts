@@ -1,16 +1,24 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { clamp } from '../../../domain/math'
 import { createPrng, randJitter, type Prng, type SoilStratum } from '../../../domain/tree'
 import { hexToRgb } from '../../theme/color'
 import { palette, soilStratumColor } from '../../theme/tokens'
 
 const RADIAL_SEGMENTS = 9
-const TOP_RADIUS = 1.7
-const BOTTOM_RADIUS = 0.12
-const TOTAL_DEPTH = 1.3
-const GRASS_HEIGHT = 0.12
-const RADIUS_JITTER = 0.09
-const HEIGHT_JITTER = 0.03
+// A thick, chunky diorama slab (not a thin flat plate): depth is a larger
+// fraction of the top radius than before, and the radius is smaller relative
+// to the tree's crown so the strata cross-section reads from the default
+// camera instead of being hidden under a wide flat grass top.
+const TOP_RADIUS = 1.95
+const BOTTOM_RADIUS = 0.2
+const TOTAL_DEPTH = 1.75
+const GRASS_HEIGHT = 0.16
+const RADIUS_JITTER = 0.13
+const HEIGHT_JITTER = 0.045
+// How much the grass top's outer edge rises above its center, forming a
+// raised, irregular rim/lip around the island's crafted top surface.
+const GRASS_RIM_HEIGHT = 0.11
 
 /** Island footprint, exposed so the contact shadow can be sized/positioned to match. */
 export const ISLAND_TOP_RADIUS = TOP_RADIUS
@@ -87,11 +95,17 @@ export function buildIslandGeometry(soil: SoilStratum[], seed: string): THREE.Bu
   for (let i = 0; i < grassPosition.count; i++) {
     const x = grassPosition.getX(i)
     const z = grassPosition.getZ(i)
+    const radialDistance = Math.hypot(x, z)
     // Skip the top cap's fan-center vertex (and near-center ones): jittering
     // it would spike a thin degenerate triangle straight up through the
     // trunk base instead of a gentle bump.
-    if (grassPosition.getY(i) > 0 && Math.hypot(x, z) > CENTER_VERTEX_RADIUS) {
-      grassPosition.setY(i, grassPosition.getY(i) + randJitter(prng, HEIGHT_JITTER))
+    if (grassPosition.getY(i) > 0 && radialDistance > CENTER_VERTEX_RADIUS) {
+      // 0 near the center, 1 near the outer edge -- raises the rim so the
+      // grass top reads as a crafted mound with a slightly raised,
+      // irregular edge rather than a flat disc.
+      const edgeFactor = clamp((radialDistance / TOP_RADIUS - 0.4) / 0.6, 0, 1)
+      const rim = edgeFactor * GRASS_RIM_HEIGHT
+      grassPosition.setY(i, grassPosition.getY(i) + rim + randJitter(prng, HEIGHT_JITTER * (0.6 + edgeFactor)))
     }
   }
   grassPosition.needsUpdate = true

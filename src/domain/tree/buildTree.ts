@@ -1,4 +1,4 @@
-import { clamp, lerp, logScale } from '../math'
+import { clamp, easeInOutCubic, lerp, logScale } from '../math'
 import type { MergedPullRequest, ReleaseInfo, RepoSnapshot } from '../repo'
 import { type EraDraft, type EraOptions, DEFAULT_ERA_OPTIONS, buildEras } from './eras'
 import { createPrng, randJitter, randRange, type Prng } from './prng'
@@ -18,7 +18,7 @@ import type {
   TrunkSegment,
   Twig,
 } from './types'
-import { addVec3, lerpVec3, polarToVec3, scaleVec3, vec3, type Vec3 } from './vector'
+import { addVec3, lerpVec3, polarToVec3, scaleVec3, subVec3, vec3, vec3Length, type Vec3 } from './vector'
 
 export interface BuildTreeOptions extends EraOptions {
   /** Merged PRs beyond this, per limb, become extra leaf density instead of twigs. */
@@ -41,22 +41,44 @@ const MS_PER_DAY = 86_400_000
 const REFERENCE_MAX_AGE_DAYS = 365 * 15 // 15 years, for log-scaling trunk height
 
 const TRUNK_SEGMENTS = 12
-const TRUNK_MIN_HEIGHT = 2.2
-const TRUNK_MAX_HEIGHT = 9
-const TRUNK_BASE_RADIUS = 0.42
-const TRUNK_TOP_RADIUS = 0.1
-const TRUNK_SWAY_STEP = 0.05
+// A shorter, stout trunk that reads as a broadleaf bole, not a conifer pole:
+// crown mass (limb spread) dominates the silhouette, not trunk height.
+const TRUNK_MIN_HEIGHT = 1.5
+const TRUNK_MAX_HEIGHT = 3.9
+const TRUNK_BASE_RADIUS = 0.5
+// Near-zero: the trunk tapers to a point instead of ending in a visible cut
+// cylinder cap (the geometry has no end cap, so a real point avoids the
+// "hollow tube opening" look a wider flat top would have).
+const TRUNK_TOP_RADIUS = 0.045
+const TRUNK_SWAY_STEP = 0.045
+
+// Limbs emerge only in the upper part of the trunk (a clear bole below, a
+// canopy above -- see `timeToHeight`), then arc through this envelope so the
+// crown reads as a wide dome rather than a stack of limbs climbing a pole.
+const CROWN_WIDTH_RATIO = 1.3 // crown width ~= 1.3x crown height
+const CROWN_ENVELOPE_BLEND = 0.75 // soft pull toward the envelope, not a hard clamp
 
 const LIMB_POINTS = 6
-const LIMB_MIN_LENGTH = 0.7
-const LIMB_MAX_LENGTH = 3.2
-const LIMB_MIN_RADIUS = 0.035
-const LIMB_MAX_RADIUS = 0.14
-const LIMB_MIN_UPWARD_ANGLE = 0.28 // radians
-const LIMB_MAX_UPWARD_ANGLE = 1.0
-const LIMB_AZIMUTH_JITTER = 0.35
-const LIMB_ANGLE_JITTER = 0.12
+const LIMB_MIN_LENGTH = 0.85
+const LIMB_MAX_LENGTH = 3.0
+const LIMB_MIN_RADIUS = 0.04
+const LIMB_MAX_RADIUS = 0.16
+// Lower (older-era) limbs leave the trunk near-level, then sweep upward
+// steeply, building the dome's sides; upper (newer-era) limbs already start
+// climbing and stay comparatively flatter, spreading the dome's shoulders
+// wide rather than adding more height. Never dips below level -- a negative
+// start angle read as a "weeping willow" sag rather than a rounded crown.
+const LIMB_START_ANGLE_LOW = 0.05 // radians
+const LIMB_START_ANGLE_HIGH = 0.5
+const LIMB_END_ANGLE_LOW = 1.48
+const LIMB_END_ANGLE_HIGH = 1.05
+const LIMB_AZIMUTH_JITTER = 0.06
+const LIMB_ANGLE_JITTER = 0.1
 const LIMB_CURVE_JITTER = 0.12
+
+const CROWN_VERTICAL_RADIUS = LIMB_MAX_LENGTH * 0.8
+const CROWN_HORIZONTAL_RADIUS = CROWN_VERTICAL_RADIUS * CROWN_WIDTH_RATIO
+const CROWN_CENTER_HEIGHT_FRACTION = 0.62
 
 const TWIG_POINTS = 3
 const TWIG_MIN_LENGTH = 0.18
@@ -69,9 +91,14 @@ const LEAF_CLUSTER_RADIUS = 0.12
 const LEAF_OLD_ERA_KEEP_PROBABILITY = 0.35
 const LEAF_YOUNG_ERA_KEEP_PROBABILITY = 1.0
 
-const FLOWER_SCALE = 0.16
-const FRUIT_SCALE = 0.11
-const BUD_SCALE = 0.09
+// These are instance-matrix scale *multipliers* applied on top of each
+// shared geometry's own baked-in radius (see `shapes.ts`) -- values near 1,
+// not absolute world-unit sizes. (A prior version set these to small
+// absolute-looking numbers like 0.11, which combined with an
+// already-~0.1-radius geometry produced near-invisible fruit/flowers/buds.)
+const FLOWER_SCALE = 0.85
+const FRUIT_SCALE = 0.9
+const BUD_SCALE = 0.8
 const BUD_SCATTER_RADIUS = 0.5
 
 function toEpochMs(iso: string): number {
@@ -79,12 +106,34 @@ function toEpochMs(iso: string): number {
   return Number.isNaN(ms) ? 0 : ms
 }
 
-/** Maps a point in time to a trunk height, monotonically (older = lower). */
+/**
+ * Maps a point in time to a trunk height, monotonically (older = lower).
+ * Limbs emerge from 42% up to 90% of the trunk's height: a clear bole below,
+ * a canopy zone above (like a real broadleaf tree, not limbs climbing the
+ * full pole), while still leaving only a short bare tip above the highest
+ * limb -- so there's no tall exposed "flagpole" above the crown mass.
+ */
 function timeToHeight(time: number, bounds: TimeBounds, trunkHeight: number): number {
   const span = bounds.lastEventTime - bounds.firstEventTime
-  if (span <= 0) return trunkHeight * 0.5
+  if (span <= 0) return trunkHeight * 0.6
   const t = clamp((time - bounds.firstEventTime) / span, 0, 1)
-  return lerp(trunkHeight * 0.15, trunkHeight * 0.92, t)
+  return lerp(trunkHeight * 0.42, trunkHeight * 0.9, t)
+}
+
+/**
+ * Softly pulls `point` toward an ellipsoid envelope (centered at `center`,
+ * `radiusXZ` horizontal, `radiusY` vertical) when it falls outside it, by
+ * `blend` (0 = no pull, 1 = hard clamp to the surface). Keeps limb tips
+ * favoring a dome-shaped crown envelope without making every tip perfectly
+ * conform to it (which would look artificial).
+ */
+function pullTowardCrownEnvelope(point: Vec3, center: Vec3, radiusXZ: number, radiusY: number, blend: number): Vec3 {
+  const rel = subVec3(point, center)
+  const normalized = vec3(rel.x / radiusXZ, rel.y / radiusY, rel.z / radiusXZ)
+  const normalizedDistance = vec3Length(normalized)
+  if (normalizedDistance <= 1) return point
+  const surface = addVec3(center, scaleVec3(rel, 1 / normalizedDistance))
+  return lerpVec3(point, surface, blend)
 }
 
 /** 0 (fresh, at `lastEventTime`) -> 1 (autumn, at `firstEventTime`). */
@@ -168,24 +217,40 @@ function buildLimb(
   const activityNorm = logScale(activity, 0, Math.max(activity, options.maxTwigsPerLimb * 2))
 
   const azimuth = index * GOLDEN_ANGLE + randJitter(prng, LIMB_AZIMUTH_JITTER)
-  const upwardAngle =
-    lerp(LIMB_MIN_UPWARD_ANGLE, LIMB_MAX_UPWARD_ANGLE, normalizedIndex) + randJitter(prng, LIMB_ANGLE_JITTER)
+  // Lower limbs start near-horizontal (even a slight downward dip) then
+  // sweep upward; upper limbs already climb a little and mostly spread
+  // outward, favoring dome width over dome height.
+  const startAngle = lerp(LIMB_START_ANGLE_LOW, LIMB_START_ANGLE_HIGH, normalizedIndex) + randJitter(prng, LIMB_ANGLE_JITTER)
+  const endAngle = lerp(LIMB_END_ANGLE_LOW, LIMB_END_ANGLE_HIGH, normalizedIndex) + randJitter(prng, LIMB_ANGLE_JITTER)
 
   const length = lerp(LIMB_MIN_LENGTH, LIMB_MAX_LENGTH, activityNorm)
   const baseRadius =
     lerp(LIMB_MIN_RADIUS, LIMB_MAX_RADIUS, activityNorm) * lerp(1.35, 0.8, normalizedIndex)
 
   const basePosition = polarToVec3(azimuth, trunk.baseRadius * 0.4, emergenceHeight)
-  const points: LimbPoint[] = []
+  const crownCenter = vec3(0, trunk.height * CROWN_CENTER_HEIGHT_FRACTION, 0)
+
+  const points: LimbPoint[] = [{ position: basePosition, radius: baseRadius }]
+  let cursor = basePosition
   let curveOffset = vec3(0, 0, 0)
-  for (let i = 0; i <= LIMB_POINTS; i++) {
+  const segmentLength = length / LIMB_POINTS
+  for (let i = 1; i <= LIMB_POINTS; i++) {
     const t = i / LIMB_POINTS
-    const forward = scaleVec3(
-      vec3(Math.cos(azimuth) * Math.cos(upwardAngle), Math.sin(upwardAngle), Math.sin(azimuth) * Math.cos(upwardAngle)),
-      length * t,
-    )
+    // The limb's pitch changes along its own length (an arc), not a single
+    // straight ray from the base -- this is what makes it read as a curved
+    // bough instead of a stiff spike.
+    const angle = lerp(startAngle, endAngle, easeInOutCubic(t))
+    const direction = vec3(Math.cos(azimuth) * Math.cos(angle), Math.sin(angle), Math.sin(azimuth) * Math.cos(angle))
+    cursor = addVec3(cursor, scaleVec3(direction, segmentLength))
     curveOffset = addVec3(curveOffset, vec3(randJitter(prng, LIMB_CURVE_JITTER * t), 0, randJitter(prng, LIMB_CURVE_JITTER * t)))
-    const position = addVec3(addVec3(basePosition, forward), curveOffset)
+    const rawPosition = addVec3(cursor, curveOffset)
+    const position = pullTowardCrownEnvelope(
+      rawPosition,
+      crownCenter,
+      CROWN_HORIZONTAL_RADIUS,
+      CROWN_VERTICAL_RADIUS,
+      CROWN_ENVELOPE_BLEND,
+    )
     const radius = lerp(baseRadius, baseRadius * 0.22, t)
     points.push({ position, radius })
   }
@@ -356,7 +421,11 @@ function buildFlowers(snapshot: RepoSnapshot, limbs: Limb[], eras: EraDraft[]): 
 
 function buildBuds(snapshot: RepoSnapshot, trunk: Trunk, prng: Prng, maxBuds: number): Bud[] {
   const perSourceCap = Math.max(1, Math.floor(maxBuds / 2))
-  const crown = vec3(0, trunk.height, 0)
+  // Nestled at/just below the trunk's own height, not above it: the crown's
+  // limbs arc upward past `trunk.height`, so anchoring buds there (rather
+  // than adding extra height) keeps them embedded in the canopy instead of
+  // floating above it as isolated dots.
+  const crown = vec3(0, trunk.height * 0.94, 0)
   const buds: Bud[] = []
 
   for (const pr of snapshot.openPullRequests.slice(0, perSourceCap)) {
@@ -367,7 +436,7 @@ function buildBuds(snapshot: RepoSnapshot, trunk: Trunk, prng: Prng, maxBuds: nu
       kind: 'bud',
       time: toEpochMs(pr.createdAt),
       ref: { type: 'pull_request', id: String(pr.number) },
-      position: addVec3(crown, polarToVec3(azimuth, radius, randRange(prng, 0, 0.4))),
+      position: addVec3(crown, polarToVec3(azimuth, radius, randRange(prng, -0.35, 0.15))),
       scale: BUD_SCALE * randRange(prng, 0.85, 1.15),
       source: 'open_pull_request',
     })
@@ -382,7 +451,7 @@ function buildBuds(snapshot: RepoSnapshot, trunk: Trunk, prng: Prng, maxBuds: nu
       kind: 'bud',
       time: toEpochMs(branch.lastCommitDate),
       ref: { type: 'branch', id: branch.name },
-      position: addVec3(crown, polarToVec3(azimuth, radius, randRange(prng, 0, 0.4))),
+      position: addVec3(crown, polarToVec3(azimuth, radius, randRange(prng, -0.35, 0.15))),
       scale: BUD_SCALE * randRange(prng, 0.85, 1.15),
       source: 'live_branch',
     })

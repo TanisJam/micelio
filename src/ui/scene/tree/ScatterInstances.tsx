@@ -17,6 +17,9 @@ export interface ScatterItem {
   scale: number
   time: number
   color: string
+  /** Small off-vertical tilt (radians), for canopy volume. Defaults to 0. */
+  tiltX?: number
+  tiltZ?: number
 }
 
 export interface ScatterInstancesProps {
@@ -51,7 +54,9 @@ export function ScatterInstances({ geometry, items, bounds, getCurrentTime, onHo
       if (grow <= 0) {
         matrix.copy(scatteredInstanceMatrix(HIDDEN_POSITION, 0, 0.0001))
       } else {
-        matrix.copy(scatteredInstanceMatrix(item.position, item.rotation, item.scale * grow))
+        matrix.copy(
+          scatteredInstanceMatrix(item.position, item.rotation, item.scale * grow, item.tiltX ?? 0, item.tiltZ ?? 0),
+        )
       }
       mesh.setMatrixAt(i, matrix)
     }

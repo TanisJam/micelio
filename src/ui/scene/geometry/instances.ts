@@ -26,9 +26,23 @@ export function alignedInstanceMatrix(position: Vec3, direction: Vec3 | null, sc
   return matrix
 }
 
-/** Simple position + uniform scale + Y rotation matrix, for leaves/fruit/flowers/buds scattered clusters. */
-export function scatteredInstanceMatrix(position: Vec3, yRotation: number, scale: number): THREE.Matrix4 {
-  const quaternion = new THREE.Quaternion().setFromAxisAngle(DEFAULT_UP, yRotation)
+const EULER_ORDER: THREE.EulerOrder = 'XYZ'
+
+/**
+ * Position + uniform scale + rotation matrix, for leaves/fruit/flowers/buds
+ * scattered clusters. `tiltX`/`tiltZ` (both default 0) add a small
+ * off-vertical tilt on top of the Y rotation, so instances of the same
+ * shared geometry don't all sit perfectly flat -- gives the canopy volume
+ * instead of a "stack of discs" look.
+ */
+export function scatteredInstanceMatrix(
+  position: Vec3,
+  yRotation: number,
+  scale: number,
+  tiltX = 0,
+  tiltZ = 0,
+): THREE.Matrix4 {
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(tiltX, yRotation, tiltZ, EULER_ORDER))
   const matrix = new THREE.Matrix4()
   matrix.compose(new THREE.Vector3(position.x, position.y, position.z), quaternion, new THREE.Vector3(scale, scale, scale))
   return matrix

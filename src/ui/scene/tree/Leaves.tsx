@@ -1,8 +1,10 @@
 import { useMemo } from 'react'
-import { limbFullyGrownTime, type TreeModel } from '../../../domain/tree'
+import { createPrng, limbFullyGrownTime, type TreeModel } from '../../../domain/tree'
 import { leafColorForAge } from '../../theme/tokens'
 import { leafGeometry } from '../geometry/shapes'
 import { ScatterInstances, type ScatterItem } from './ScatterInstances'
+
+const LEAF_TILT_RANGE = 0.55 // radians
 
 export interface LeavesProps {
   model: TreeModel
@@ -30,6 +32,10 @@ export function Leaves({ model, getCurrentTime, onHover, onSelect }: LeavesProps
         leaf.twigId !== null
           ? (twigTimeById.get(leaf.twigId) ?? leaf.time)
           : (limbFullyGrownTimeById.get(leaf.limbId) ?? leaf.time)
+      // Deterministic per-leaf tilt (rendering flourish only, not part of
+      // the domain model): a stable hash of the leaf's own id, so the same
+      // repo always renders identically.
+      const tiltPrng = createPrng(leaf.id)
       return {
         id: leaf.id,
         position: leaf.position,
@@ -37,6 +43,8 @@ export function Leaves({ model, getCurrentTime, onHover, onSelect }: LeavesProps
         scale: leaf.scale,
         time: Math.max(leaf.time, supportTime),
         color: leafColorForAge(leaf.age),
+        tiltX: (tiltPrng() - 0.5) * LEAF_TILT_RANGE,
+        tiltZ: (tiltPrng() - 0.5) * LEAF_TILT_RANGE,
       }
     })
   }, [model])

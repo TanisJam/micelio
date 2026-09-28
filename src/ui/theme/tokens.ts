@@ -15,7 +15,7 @@ export const palette = {
   leafFresh: '#5fa851',
   leafGold: '#d9a441',
   leafRust: '#a8502c',
-  fruit: '#f2792b',
+  fruit: '#ff6a12',
   blossom: '#f3c1d1',
   bud: '#bdeb8f',
   skyTop: '#ffd9a0',
