@@ -3,25 +3,9 @@
  * codegen artifact) since the query surface is small and stable.
  */
 
-export const MERGED_PR_FRAGMENT = /* GraphQL */ `
-  fragment MergedPrFields on PullRequest {
-    number
-    title
-    url
-    createdAt
-    mergedAt
-    additions
-    deletions
-    changedFiles
-    author {
-      login
-      avatarUrl
-    }
-    labels(first: 10) {
-      nodes {
-        name
-      }
-    }
+/** Commits for a merged PR: `$commitsPerPr`-capped, with both authored/committed dates for `firstCommitTime`. */
+export const PR_COMMITS_FRAGMENT = /* GraphQL */ `
+  fragment PrCommitsFields on PullRequest {
     commits(first: $commitsPerPr) {
       totalCount
       nodes {
@@ -29,6 +13,7 @@ export const MERGED_PR_FRAGMENT = /* GraphQL */ `
           oid
           messageHeadline
           authoredDate
+          committedDate
           url
           author {
             name
@@ -43,13 +28,128 @@ export const MERGED_PR_FRAGMENT = /* GraphQL */ `
   }
 `
 
+/** Commits for an open/closed PR: `$secondaryCommitsPerPr`-capped (lower than merged -- see `caps.ts`). */
+export const SECONDARY_PR_COMMITS_FRAGMENT = /* GraphQL */ `
+  fragment SecondaryPrCommitsFields on PullRequest {
+    commits(first: $secondaryCommitsPerPr) {
+      totalCount
+      nodes {
+        commit {
+          oid
+          messageHeadline
+          authoredDate
+          committedDate
+          url
+          author {
+            name
+            user {
+              login
+              avatarUrl
+            }
+          }
+        }
+      }
+    }
+  }
+`
+
+export const MERGED_PR_FRAGMENT = /* GraphQL */ `
+  fragment MergedPrFields on PullRequest {
+    number
+    title
+    url
+    createdAt
+    mergedAt
+    baseRefName
+    headRefName
+    additions
+    deletions
+    changedFiles
+    author {
+      login
+      avatarUrl
+    }
+    labels(first: 10) {
+      nodes {
+        name
+      }
+    }
+    ...PrCommitsFields
+  }
+`
+
+export const CLOSED_PR_FRAGMENT = /* GraphQL */ `
+  fragment ClosedPrFields on PullRequest {
+    number
+    title
+    url
+    createdAt
+    closedAt
+    baseRefName
+    headRefName
+    author {
+      login
+      avatarUrl
+    }
+    ...SecondaryPrCommitsFields
+  }
+`
+
+export const OPEN_PR_FRAGMENT = /* GraphQL */ `
+  fragment OpenPrFields on PullRequest {
+    number
+    title
+    url
+    createdAt
+    baseRefName
+    headRefName
+    author {
+      login
+      avatarUrl
+    }
+    ...SecondaryPrCommitsFields
+  }
+`
+
+/**
+ * A release's tag target, drilled through an annotated tag object when
+ * needed, to cheaply recover the commit `oid` it points at.
+ */
+const RELEASE_TAG_TARGET_FIELDS = /* GraphQL */ `
+  tag {
+    target {
+      ... on Commit {
+        oid
+      }
+      ... on Tag {
+        target {
+          ... on Commit {
+            oid
+          }
+        }
+      }
+    }
+  }
+`
+
+// Closed-unmerged PRs are deliberately NOT fetched here: bundling a third
+// paginated, commit-bearing connection into the overview query (alongside
+// mergedPRs and openPRs) pushed its cost/latency high enough to trigger
+// intermittent upstream 502/504s on repositories with substantial PR
+// history (observed while generating fixtures). Fetching them as their own
+// query (see `CLOSED_PRS_PAGE_QUERY`, also used for the first page) keeps
+// every individual request cheaper and independently retriable.
 export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
+  ${PR_COMMITS_FRAGMENT}
+  ${SECONDARY_PR_COMMITS_FRAGMENT}
   ${MERGED_PR_FRAGMENT}
+  ${OPEN_PR_FRAGMENT}
   query RepoOverview(
     $owner: String!
     $name: String!
     $prPageSize: Int!
     $commitsPerPr: Int!
+    $secondaryCommitsPerPr: Int!
     $directCommitsScanned: Int!
   ) {
     repository(owner: $owner, name: $name) {
@@ -105,6 +205,7 @@ export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
           url
           publishedAt
           createdAt
+          ${RELEASE_TAG_TARGET_FIELDS}
         }
       }
       tags: refs(refPrefix: "refs/tags/", first: 100, orderBy: { field: TAG_COMMIT_DATE, direction: ASC }) {
@@ -112,6 +213,7 @@ export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
           name
           target {
             ... on Commit {
+              oid
               committedDate
               url
             }
@@ -121,6 +223,7 @@ export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
               }
               target {
                 ... on Commit {
+                  oid
                   committedDate
                   url
                 }
@@ -141,14 +244,7 @@ export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
       }
       openPRs: pullRequests(states: OPEN, first: 50, orderBy: { field: CREATED_AT, direction: DESC }) {
         nodes {
-          number
-          title
-          url
-          createdAt
-          author {
-            login
-            avatarUrl
-          }
+          ...OpenPrFields
         }
       }
       mergedPRs: pullRequests(states: MERGED, first: $prPageSize, orderBy: { field: CREATED_AT, direction: DESC }) {
@@ -165,6 +261,7 @@ export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
 `
 
 export const MERGED_PRS_PAGE_QUERY = /* GraphQL */ `
+  ${PR_COMMITS_FRAGMENT}
   ${MERGED_PR_FRAGMENT}
   query MergedPrsPage(
     $owner: String!
@@ -186,6 +283,35 @@ export const MERGED_PRS_PAGE_QUERY = /* GraphQL */ `
         }
         nodes {
           ...MergedPrFields
+        }
+      }
+    }
+  }
+`
+
+export const CLOSED_PRS_PAGE_QUERY = /* GraphQL */ `
+  ${SECONDARY_PR_COMMITS_FRAGMENT}
+  ${CLOSED_PR_FRAGMENT}
+  query ClosedPrsPage(
+    $owner: String!
+    $name: String!
+    $closedPrPageSize: Int!
+    $secondaryCommitsPerPr: Int!
+    $after: String
+  ) {
+    repository(owner: $owner, name: $name) {
+      pullRequests(
+        states: CLOSED
+        first: $closedPrPageSize
+        after: $after
+        orderBy: { field: UPDATED_AT, direction: DESC }
+      ) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ...ClosedPrFields
         }
       }
     }

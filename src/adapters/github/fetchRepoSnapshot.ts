@@ -1,9 +1,10 @@
 import { RepoError } from '../../domain/errors.ts'
-import type { MergedPullRequest, RepoSnapshot } from '../../domain/repo.ts'
+import type { ClosedPullRequest, MergedPullRequest, RepoSnapshot } from '../../domain/repo.ts'
 import { CAPS } from './caps.ts'
 import { graphqlRequest } from './graphqlClient.ts'
 import {
   mapBranches,
+  mapClosedPullRequest,
   mapDirectCommits,
   mapLanguages,
   mapMergedPullRequest,
@@ -11,8 +12,8 @@ import {
   mapReleases,
   mapTagsAsReleases,
 } from './mappers.ts'
-import { MERGED_PRS_PAGE_QUERY, REPO_OVERVIEW_QUERY } from './queries.ts'
-import type { MergedPrsPageResponse, RepoOverviewResponse } from './rawTypes.ts'
+import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_OVERVIEW_QUERY } from './queries.ts'
+import type { ClosedPrsPageResponse, MergedPrsPageResponse, RepoOverviewResponse } from './rawTypes.ts'
 
 /**
  * Fetches a full `RepoSnapshot` from the GitHub GraphQL API for `owner/repo`,
@@ -31,6 +32,7 @@ export async function fetchRepoSnapshotFromGitHub(
       name: repo,
       prPageSize: CAPS.mergedPrsPageSize,
       commitsPerPr: CAPS.commitsPerPr,
+      secondaryCommitsPerPr: CAPS.secondaryCommitsPerPr,
       directCommitsScanned: CAPS.directCommitsScanned,
     },
     token,
@@ -65,6 +67,48 @@ export async function fetchRepoSnapshotFromGitHub(
 
   const cappedMergedPullRequests = mergedPullRequests.slice(0, CAPS.maxMergedPrs)
 
+  // Closed-unmerged PRs are fetched as their own fully independent,
+  // always-paginated-from-scratch query (not bundled into the overview
+  // query above): a supplementary, "most recent, capped" dataset (dead-end
+  // hyphae), not the core timeline, so a failure at any point -- including
+  // the very first page -- stops fetching and keeps whatever pages already
+  // succeeded (possibly none) instead of failing the whole snapshot. The
+  // result is honestly a shorter (never fabricated) list. Splitting this
+  // out of the overview query also keeps that query's own cost lower,
+  // avoiding the intermittent upstream 502/504s a three-way (merged + open
+  // + closed, each with nested commits) overview query triggered on
+  // repositories with substantial PR history.
+  const closedPullRequests: ClosedPullRequest[] = []
+  let closedCursor: string | null = null
+  let closedHasNextPage = true
+
+  while (closedHasNextPage && closedPullRequests.length < CAPS.maxClosedPrs) {
+    let page: ClosedPrsPageResponse
+    try {
+      page = await graphqlRequest<ClosedPrsPageResponse>(
+        CLOSED_PRS_PAGE_QUERY,
+        {
+          owner,
+          name: repo,
+          closedPrPageSize: CAPS.closedPrsPageSize,
+          secondaryCommitsPerPr: CAPS.secondaryCommitsPerPr,
+          after: closedCursor,
+        },
+        token,
+      )
+    } catch {
+      break
+    }
+    const pullRequests = page.repository?.pullRequests
+    if (!pullRequests) break
+
+    closedPullRequests.push(...pullRequests.nodes.map(mapClosedPullRequest))
+    closedHasNextPage = pullRequests.pageInfo.hasNextPage
+    closedCursor = pullRequests.pageInfo.endCursor
+  }
+
+  const cappedClosedPullRequests = closedPullRequests.slice(0, CAPS.maxClosedPrs)
+
   const releases =
     repository.releases.totalCount > 0
       ? mapReleases(repository.releases.nodes)
@@ -89,6 +133,7 @@ export async function fetchRepoSnapshotFromGitHub(
     releases,
     mergedPullRequests: cappedMergedPullRequests,
     openPullRequests: repository.openPRs.nodes.slice(0, CAPS.maxOpenPrs).map(mapOpenPullRequest),
+    closedPullRequests: cappedClosedPullRequests,
     liveBranches: mapBranches(repository.branches.nodes).slice(0, CAPS.maxBranches),
     directCommits: mapDirectCommits(historyNodes),
     fetchedAt: new Date().toISOString(),

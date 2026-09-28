@@ -1,4 +1,5 @@
 import type {
+  ClosedPullRequest,
   CommitAuthor,
   LanguageShare,
   LiveBranch,
@@ -12,13 +13,16 @@ import { CAPS } from './caps.ts'
 import type {
   RawActor,
   RawBranchRef,
+  RawClosedPullRequest,
   RawCommit,
   RawGitActor,
   RawHistoryCommit,
   RawLanguageEdge,
   RawMergedPullRequest,
   RawOpenPullRequest,
+  RawPrCommitNode,
   RawRelease,
+  RawReleaseTagTarget,
   RawTagRef,
 } from './rawTypes.ts'
 
@@ -46,6 +50,27 @@ export function mapCommit(raw: RawCommit): PrCommit {
   }
 }
 
+/**
+ * Earliest authored/committed time across a PR's (possibly capped) fetched
+ * commits -- min(authoredDate, committedDate) per commit, then the overall
+ * minimum -- falling back to `fallbackCreatedAt` when no commits were
+ * fetched. Returned as a normalized ISO string.
+ */
+export function computeFirstCommitTime(nodes: RawPrCommitNode[], fallbackCreatedAt: string): string {
+  let earliest: number | null = null
+  for (const node of nodes) {
+    const authored = Date.parse(node.commit.authoredDate)
+    const committed = node.commit.committedDate ? Date.parse(node.commit.committedDate) : Number.NaN
+    for (const candidate of [authored, committed]) {
+      if (Number.isFinite(candidate) && (earliest === null || candidate < earliest)) {
+        earliest = candidate
+      }
+    }
+  }
+  if (earliest === null) return fallbackCreatedAt
+  return new Date(earliest).toISOString()
+}
+
 export function mapMergedPullRequest(raw: RawMergedPullRequest): MergedPullRequest {
   const commits = raw.commits.nodes.slice(0, CAPS.commitsPerPr).map((node) => mapCommit(node.commit))
   return {
@@ -54,6 +79,9 @@ export function mapMergedPullRequest(raw: RawMergedPullRequest): MergedPullReque
     url: raw.url,
     createdAt: raw.createdAt,
     mergedAt: raw.mergedAt,
+    baseRefName: raw.baseRefName,
+    headRefName: raw.headRefName,
+    firstCommitTime: computeFirstCommitTime(raw.commits.nodes, raw.createdAt),
     additions: raw.additions,
     deletions: raw.deletions,
     changedFiles: raw.changedFiles,
@@ -64,13 +92,36 @@ export function mapMergedPullRequest(raw: RawMergedPullRequest): MergedPullReque
   }
 }
 
-export function mapOpenPullRequest(raw: RawOpenPullRequest): OpenPullRequest {
+export function mapClosedPullRequest(raw: RawClosedPullRequest): ClosedPullRequest {
+  const commits = raw.commits.nodes.slice(0, CAPS.secondaryCommitsPerPr).map((node) => mapCommit(node.commit))
   return {
     number: raw.number,
     title: raw.title,
     url: raw.url,
     createdAt: raw.createdAt,
+    closedAt: raw.closedAt,
+    baseRefName: raw.baseRefName,
+    headRefName: raw.headRefName,
+    firstCommitTime: computeFirstCommitTime(raw.commits.nodes, raw.createdAt),
     author: mapActor(raw.author),
+    commitCount: raw.commits.totalCount,
+    commits,
+  }
+}
+
+export function mapOpenPullRequest(raw: RawOpenPullRequest): OpenPullRequest {
+  const commits = raw.commits.nodes.slice(0, CAPS.secondaryCommitsPerPr).map((node) => mapCommit(node.commit))
+  return {
+    number: raw.number,
+    title: raw.title,
+    url: raw.url,
+    createdAt: raw.createdAt,
+    baseRefName: raw.baseRefName,
+    headRefName: raw.headRefName,
+    firstCommitTime: computeFirstCommitTime(raw.commits.nodes, raw.createdAt),
+    author: mapActor(raw.author),
+    commitCount: raw.commits.totalCount,
+    commits,
   }
 }
 
@@ -83,12 +134,20 @@ export function mapLanguages(edges: RawLanguageEdge[] | undefined): LanguageShar
   }))
 }
 
+/** Resolves the commit `oid` a release's tag points at, drilling through an annotated tag object when present. */
+export function resolveReleaseTargetOid(tag: { target: RawReleaseTagTarget | null } | null | undefined): string | null {
+  const target = tag?.target
+  if (!target) return null
+  return target.oid ?? target.target?.oid ?? null
+}
+
 export function mapReleases(releases: RawRelease[]): ReleaseInfo[] {
   return releases.map((release) => ({
     name: release.name ?? release.tagName,
     tag: release.tagName,
     date: release.publishedAt ?? release.createdAt,
     url: release.url,
+    targetOid: resolveReleaseTargetOid(release.tag),
   }))
 }
 
@@ -103,7 +162,13 @@ export function mapTagsAsReleases(tags: RawTagRef[]): ReleaseInfo[] {
     if (!target) continue
 
     if ('committedDate' in target) {
-      result.push({ name: tag.name, tag: tag.name, date: target.committedDate, url: target.url })
+      result.push({
+        name: tag.name,
+        tag: tag.name,
+        date: target.committedDate,
+        url: target.url,
+        targetOid: target.oid ?? null,
+      })
       continue
     }
 
@@ -111,7 +176,7 @@ export function mapTagsAsReleases(tags: RawTagRef[]): ReleaseInfo[] {
     const date = target.tagger?.date ?? annotatedTarget?.committedDate
     const url = annotatedTarget?.url
     if (date && url) {
-      result.push({ name: tag.name, tag: tag.name, date, url })
+      result.push({ name: tag.name, tag: tag.name, date, url, targetOid: annotatedTarget?.oid ?? null })
     }
   }
   return result

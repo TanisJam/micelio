@@ -14,6 +14,16 @@ export const CAPS = {
   maxReleases: 100,
   /** Open PRs fetched. */
   maxOpenPrs: 50,
+  /** Most recent closed-and-not-merged PRs fetched in total (dead-end hyphae). */
+  maxClosedPrs: 200,
+  /** Page size for each closed-PR GraphQL request. */
+  closedPrsPageSize: 50,
+  /**
+   * Commits fetched (and kept) per open/closed PR -- lower than
+   * `commitsPerPr` since these are secondary (dead-end/open-tip) hyphae, not
+   * the main loops, so full commit-history fidelity matters less.
+   */
+  secondaryCommitsPerPr: 8,
   /** Live branches fetched. */
   maxBranches: 100,
   /** Default-branch commits scanned to look for direct (non-PR) commits. */

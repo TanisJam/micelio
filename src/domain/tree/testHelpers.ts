@@ -1,4 +1,5 @@
 import type {
+  ClosedPullRequest,
   CommitAuthor,
   LiveBranch,
   MergedPullRequest,
@@ -38,6 +39,9 @@ export function makeMergedPr(overrides: Partial<MergedPullRequest> = {}): Merged
     mergedAt: '2023-01-01T00:00:00Z',
     createdAt: '2022-12-30T00:00:00Z',
     url: `https://github.com/o/r/pull/${prCounter}`,
+    baseRefName: 'main',
+    headRefName: `pr-${prCounter}`,
+    firstCommitTime: overrides.createdAt ?? '2022-12-30T00:00:00Z',
     additions: 5,
     deletions: 1,
     changedFiles: 1,
@@ -48,14 +52,39 @@ export function makeMergedPr(overrides: Partial<MergedPullRequest> = {}): Merged
   }
 }
 
+export function makeClosedPr(overrides: Partial<ClosedPullRequest> = {}): ClosedPullRequest {
+  prCounter += 1
+  const commits = overrides.commits ?? [makeCommit({ authoredDate: overrides.createdAt ?? '2023-01-01T00:00:00Z' })]
+  return {
+    number: prCounter,
+    title: `Closed PR ${prCounter}`,
+    author: AUTHOR,
+    createdAt: '2023-01-01T00:00:00Z',
+    closedAt: '2023-01-05T00:00:00Z',
+    url: `https://github.com/o/r/pull/${prCounter}`,
+    baseRefName: 'main',
+    headRefName: `closed-pr-${prCounter}`,
+    firstCommitTime: overrides.createdAt ?? '2023-01-01T00:00:00Z',
+    commitCount: commits.length,
+    ...overrides,
+    commits,
+  }
+}
+
 export function makeOpenPr(overrides: Partial<OpenPullRequest> = {}): OpenPullRequest {
+  const commits = overrides.commits ?? [makeCommit({ authoredDate: overrides.createdAt ?? '2024-01-01T00:00:00Z' })]
   return {
     number: 9001,
     title: 'wip',
     author: AUTHOR,
     createdAt: '2024-01-01T00:00:00Z',
     url: 'https://github.com/o/r/pull/9001',
+    baseRefName: 'main',
+    headRefName: 'wip-branch',
+    firstCommitTime: overrides.createdAt ?? '2024-01-01T00:00:00Z',
+    commitCount: commits.length,
     ...overrides,
+    commits,
   }
 }
 
@@ -69,6 +98,7 @@ export function makeRelease(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {
     tag: 'v1.0.0',
     date: '2023-01-01T00:00:00Z',
     url: 'https://github.com/o/r/releases/tag/v1.0.0',
+    targetOid: null,
     ...overrides,
   }
 }
@@ -104,6 +134,7 @@ export function makeSnapshot(overrides: Partial<RepoSnapshot> = {}): RepoSnapsho
       makeMergedPr({ mergedAt: '2023-09-01T00:00:00Z', createdAt: '2023-08-30T00:00:00Z' }),
     ],
     openPullRequests: overrides.openPullRequests ?? [makeOpenPr()],
+    closedPullRequests: overrides.closedPullRequests ?? [],
     liveBranches: overrides.liveBranches ?? [makeBranch()],
     directCommits: overrides.directCommits ?? [],
     fetchedAt: overrides.fetchedAt ?? '2024-01-15T00:00:00Z',

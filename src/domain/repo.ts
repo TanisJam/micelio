@@ -28,6 +28,8 @@ export interface ReleaseInfo {
   tag: string
   date: string
   url: string
+  /** The commit the release's tag points at, when cheaply resolvable from the GraphQL response. */
+  targetOid: string | null
 }
 
 export interface CommitAuthor {
@@ -43,7 +45,24 @@ export interface PrCommit {
   url: string
 }
 
-export interface MergedPullRequest {
+/**
+ * Branch topology shared by every pull-request kind (merged, closed-unmerged,
+ * open): which branch it targets/came from, and when its history actually
+ * started. Used by the network model (M2) to place a PR's hypha as a split
+ * from its parent branch's hypha.
+ */
+export interface PrTopology {
+  baseRefName: string
+  headRefName: string
+  /**
+   * The earliest authored/committed time across the PR's (possibly capped)
+   * commits -- min(authoredDate, committedDate) per commit, then the overall
+   * minimum -- falling back to `createdAt` when no commits were fetched.
+   */
+  firstCommitTime: string
+}
+
+export interface MergedPullRequest extends PrTopology {
   number: number
   title: string
   author: CommitAuthor
@@ -60,12 +79,30 @@ export interface MergedPullRequest {
   commits: PrCommit[]
 }
 
-export interface OpenPullRequest {
+/** A pull request that was closed without being merged -- rendered as a dead-end hypha. */
+export interface ClosedPullRequest extends PrTopology {
+  number: number
+  title: string
+  author: CommitAuthor
+  createdAt: string
+  closedAt: string
+  url: string
+  /** Total commits on the PR, before the `commits` cap below is applied. */
+  commitCount: number
+  /** Capped list of commits (see `commitCount` for the true total). */
+  commits: PrCommit[]
+}
+
+export interface OpenPullRequest extends PrTopology {
   number: number
   title: string
   author: CommitAuthor
   createdAt: string
   url: string
+  /** Total commits on the PR, before the `commits` cap below is applied. */
+  commitCount: number
+  /** Capped list of commits (see `commitCount` for the true total). */
+  commits: PrCommit[]
 }
 
 export interface LiveBranch {
@@ -89,6 +126,8 @@ export interface RepoSnapshot {
   releases: ReleaseInfo[]
   mergedPullRequests: MergedPullRequest[]
   openPullRequests: OpenPullRequest[]
+  /** Closed-and-not-merged pull requests, most recent first, capped (see `CAPS.maxClosedPrs`). */
+  closedPullRequests: ClosedPullRequest[]
   liveBranches: LiveBranch[]
   /** Default-branch commits with no associated PR. Optional, capped, may be empty. */
   directCommits: DirectCommit[]
