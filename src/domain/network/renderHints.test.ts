@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conduitSplitRadius, isGrown } from './renderHints'
+import { conduitSplitRadius, formatOverflowNote, isGrown } from './renderHints'
 import { radiusForFrac, timeToFrac } from './layout'
 import type { Hypha } from './types'
 
@@ -84,5 +84,23 @@ describe('isGrown', () => {
 
   it('is false before birthTime', () => {
     expect(isGrown(100, 99)).toBe(false)
+  })
+})
+
+describe('formatOverflowNote', () => {
+  it('returns null when nothing was omitted', () => {
+    expect(formatOverflowNote(0)).toBeNull()
+  })
+
+  it('returns null for a negative count (defensive, should never happen)', () => {
+    expect(formatOverflowNote(-1)).toBeNull()
+  })
+
+  it('singularizes exactly one omitted pull request', () => {
+    expect(formatOverflowNote(1)).toBe('+1 pull request not drawn')
+  })
+
+  it('pluralizes more than one omitted pull request', () => {
+    expect(formatOverflowNote(42)).toBe('+42 pull requests not drawn')
   })
 })

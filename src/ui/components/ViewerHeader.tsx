@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { formatAge, formatNumber } from '../../domain/format'
 import type { RepoSnapshot, RepoSnapshotSource } from '../../domain/repo'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { ui } from '../theme/tokens'
+
+const NARROW_HEADER_QUERY = '(max-width: 640px)'
 
 export interface ViewerHeaderProps {
   snapshot: RepoSnapshot
@@ -33,24 +36,42 @@ function SourceBadge({ source }: { source: RepoSnapshotSource }) {
   )
 }
 
-function HeaderButton({ label, onClick }: { label: string; onClick: () => void }) {
+/**
+ * `icon` collapses the button to a small square icon-only affordance (still
+ * a real `aria-label`, never a bare glyph with no accessible name) -- narrow
+ * viewports (P5/item 5 of the M3b brief) otherwise let two full-text buttons
+ * ("Copy link" / "Save image") eat enough width to truncate the repo name,
+ * which should win the space instead.
+ */
+function HeaderButton({ label, icon, onClick }: { label: string; icon: string; onClick: () => void }) {
+  const narrow = useMediaQuery(NARROW_HEADER_QUERY)
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-label={narrow ? label : undefined}
+      title={narrow ? label : undefined}
       style={{
         fontFamily: ui.fontBody,
         fontSize: '0.78rem',
-        padding: `${ui.space(1)} ${ui.space(3)}`,
+        padding: narrow ? ui.space(1) : `${ui.space(1)} ${ui.space(3)}`,
+        width: narrow ? 30 : undefined,
+        height: narrow ? 30 : undefined,
+        display: narrow ? 'inline-flex' : undefined,
+        alignItems: narrow ? 'center' : undefined,
+        justifyContent: narrow ? 'center' : undefined,
         borderRadius: ui.space(2),
         border: `1px solid ${ui.panelBorder}`,
         background: 'transparent',
         color: ui.text,
         cursor: 'pointer',
         whiteSpace: 'nowrap',
+        flexShrink: 0,
       }}
     >
-      {label}
+      <span aria-hidden={narrow} style={{ fontSize: narrow ? '0.95rem' : undefined }}>
+        {narrow ? icon : label}
+      </span>
     </button>
   )
 }
@@ -131,8 +152,8 @@ export function ViewerHeader({ snapshot, onCopyLink, onSaveImage }: ViewerHeader
         </div>
       </div>
       <div style={{ display: 'flex', gap: ui.space(2), flexShrink: 0 }}>
-        <HeaderButton label="Copy link" onClick={onCopyLink} />
-        <HeaderButton label="Save image" onClick={onSaveImage} />
+        <HeaderButton label="Copy link" icon="🔗" onClick={onCopyLink} />
+        <HeaderButton label="Save image" icon="⇩" onClick={onSaveImage} />
       </div>
     </header>
   )

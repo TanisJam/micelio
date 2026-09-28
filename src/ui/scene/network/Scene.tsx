@@ -5,7 +5,6 @@ import { ToneMappingMode } from 'postprocessing'
 import * as THREE from 'three'
 import type { NetworkModel } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
-import { buildSkyTexture } from '../geometry/skyTexture'
 import { NetworkSceneContent } from './NetworkSceneContent'
 
 export interface NetworkSceneProps {
@@ -45,7 +44,16 @@ export default function Scene({
   selectedId = null,
   onCanvasReady,
 }: NetworkSceneProps) {
-  const background = useMemo(() => buildSkyTexture(mycelium.soilNear, mycelium.soilFar), [])
+  // A FLAT background (not the tree scene's vertical sky gradient, see
+  // `skyTexture.ts` -- deliberately not reused here) matching the soil
+  // shader's own vignette target (`soilMaterial.ts`'s `uEdgeColor`) exactly.
+  // A round-2 M3b visual finding: even a subtle two-stop gradient produced a
+  // visible edge-contrast "rim" around the disc's circular silhouette
+  // wherever the background happened to be locally lighter than the disc's
+  // own darkest edge tone -- an identical flat color behind AND at the
+  // disc's own rim removes that mismatch everywhere around the circle, not
+  // just approximately.
+  const background = useMemo(() => new THREE.Color(mycelium.soilNear), [])
 
   return (
     <Canvas

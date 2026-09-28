@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
-import { resolveNetworkElementDetail, type NetworkModel } from '../../domain/network'
+import { formatOverflowNote, resolveNetworkElementDetail, type NetworkModel } from '../../domain/network'
 import { mapErrorToViewState } from '../../domain/repoRequestState'
 import type { RepoSnapshot } from '../../domain/repo'
 import { validateRepoIdentity } from '../../domain/validateRepoIdentity'
@@ -233,7 +233,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
         />
       </Suspense>
       {!mobileSheetOpen && <TimeScrubber clock={clock} bounds={model.bounds.time} />}
-      <Legend />
+      <Legend overflowNote={formatOverflowNote(model.overflow.hyphaeOmitted)} />
       <TooltipLayer resolveDetail={(id) => resolveNetworkElementDetail(model, snapshot, id)} hoveredId={selection.hoveredId} />
       <DetailPanel
         detail={selectedDetail}

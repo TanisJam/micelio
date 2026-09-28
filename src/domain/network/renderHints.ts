@@ -30,3 +30,19 @@ export function conduitSplitRadius(hypha: Hypha, bounds: TimeBounds): number | n
 export function isGrown(birthTime: number, currentTime: number): boolean {
   return currentTime >= birthTime
 }
+
+/**
+ * Overflow honesty (P12/M3b item 6): a quiet, singular/plural-correct note
+ * for however many PR-derived hyphae the render cap omitted (`NetworkOverflow.hyphaeOmitted`,
+ * see `buildNetwork.ts`), or `null` when nothing was omitted -- so the UI can
+ * simply not render anything rather than branch on `0` itself. Deliberately
+ * doesn't also fold in `nodesOmittedByHypha` (a different, per-hypha overflow
+ * concern already surfaced honestly in `DetailPanel`'s PR detail, see
+ * `elementDetail.ts`'s `overflowPrCount`) -- this note is specifically about
+ * whole pull requests never drawn at all.
+ */
+export function formatOverflowNote(hyphaeOmitted: number): string | null {
+  if (hyphaeOmitted <= 0) return null
+  const noun = hyphaeOmitted === 1 ? 'pull request' : 'pull requests'
+  return `+${hyphaeOmitted} ${noun} not drawn`
+}

@@ -21,6 +21,17 @@ import { mycelium } from '../../../theme/tokens'
  * (mixing toward the background's own near-black) instead, which reads
  * almost identically here since the scene background is already a similarly
  * dark gradient.
+ *
+ * M3b visual review found this read as "a flat light-blue plate with a hard
+ * edge": the base gradient went soilNear (center) -> soilFar (edge, the
+ * LIGHTER of the two loam tokens) and ONLY THEN mixed toward near-black for
+ * the vignette starting at 0.82*radius -- so there was a visible lighter
+ * ring/band right before the rim, reading as a coin's raised edge, not a
+ * soft patch. Fixed to one monotonic darkening from center to rim: the
+ * center now starts at the lighter `soilFar` tone (a deliberate "faint cool
+ * ambient haze near the core", P1 item 7) and darkens continuously through
+ * `soilNear` into the vignette (now starting much earlier, 0.55*radius)
+ * down to near-black at the true rim -- no reversal, so no band.
  */
 
 export const MAX_SOIL_RINGS = 48
@@ -66,25 +77,36 @@ const FRAGMENT_SHADER = /* glsl */ `
   void main() {
     float dist = length(vXZ);
     float t = clamp(dist / max(uRadius, 0.001), 0.0, 1.0);
-    vec3 base = mix(uColorNear, uColorFar, t);
+    // One monotonic darkening from a slightly lighter core haze (P1 item 7)
+    // out to the loam's own darkest tone -- see the module doc for why this
+    // replaced the old near->far gradient (it produced a visible lighter
+    // "ring" right before the vignette).
+    vec3 base = mix(uColorFar, uColorNear, smoothstep(0.0, 0.65, t));
 
-    float n = valueNoise(vXZ * 1.4) * 0.07 - 0.035;
-    base += vec3(n);
+    // Two noise octaves (P4's "subtle grain"): a low-frequency wash plus a
+    // finer, quieter speckle on top, so the loam reads as tactile grain
+    // rather than a single smooth band of noise.
+    float coarse = valueNoise(vXZ * 1.4) * 0.07 - 0.035;
+    float fine = valueNoise(vXZ * 9.0) * 0.03 - 0.015;
+    base += vec3(coarse + fine);
 
-    // Faint concentric growth rings -- deliberately subtle: several rings
-    // can land close together for a real release-burst, and their
-    // contributions sum, so each ring's own peak must stay small.
+    // A hairline ring -- empty by default (see the module doc); populated
+    // with exactly ONE ring while a mushroom is selected (M3b item 3), so
+    // unlike the old "every release, always on" version this can afford to
+    // read clearly rather than only as a barely-there wash once many
+    // overlapping rings summed together.
     float ringGlow = 0.0;
     for (int i = 0; i < ${MAX_SOIL_RINGS}; i++) {
       if (i >= uRingCount) break;
       float d = abs(dist - uRingRadii[i]);
-      ringGlow += smoothstep(0.012, 0.0, d) * 0.045;
+      ringGlow += smoothstep(0.022, 0.0, d) * 0.4;
     }
-    base += uRingColor * min(ringGlow, 0.12);
+    base += uRingColor * min(ringGlow, 0.4);
 
-    // Vignette: mix toward the background's own near-black at the rim
-    // (color-based, not alpha -- see the module doc for why).
-    float edge = smoothstep(uRadius * 0.82, uRadius, dist);
+    // Vignette: continues the SAME darkening direction (never reverses it)
+    // toward the background's own near-black, starting well before the true
+    // rim so the falloff is soft and gradual -- no visible hard edge.
+    float edge = smoothstep(uRadius * 0.55, uRadius, dist);
     base = mix(base, uEdgeColor, edge);
 
     gl_FragColor = vec4(base, 1.0);

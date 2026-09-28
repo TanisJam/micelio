@@ -23,7 +23,7 @@ export {
 } from './layout'
 export { findNetworkElement } from './lookup'
 export { buildMushrooms, buildMushroomsOnRings, computeReleaseSequence, MUSHROOM_CLUSTER_ANGLE_SCATTER, MUSHROOM_CLUSTER_SCATTER } from './mushrooms'
-export { conduitSplitRadius, isGrown } from './renderHints'
+export { conduitSplitRadius, formatOverflowNote, isGrown } from './renderHints'
 export { authorKeyOf, buildAuthorHueIndex, MAX_AUTHOR_HUES, resolveAuthorHueKey } from './sectors'
 export { buildHyphaTopology, DEFAULT_TOPOLOGY_OPTIONS, type HyphaDraft, type TopologyOptions, type TopologyResult } from './topology'
 export * from './types'

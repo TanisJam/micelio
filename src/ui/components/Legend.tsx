@@ -7,6 +7,11 @@ interface LegendEntry {
   description: string
 }
 
+export interface LegendProps {
+  /** Pre-formatted (`formatOverflowNote`) honesty note for PR-derived hyphae the render cap omitted -- `null`/omitted when nothing was omitted (P12/M3b item 6: "a small, quiet note near the legend"). */
+  overflowNote?: string | null
+}
+
 const ENTRIES: LegendEntry[] = [
   { label: 'Spore', color: mycelium.sporeCore, description: 'the first commit / the repository itself' },
   { label: 'Distance from center', color: mycelium.ring, description: 'time (always later further out)' },
@@ -19,8 +24,8 @@ const ENTRIES: LegendEntry[] = [
   { label: 'Mushroom', color: mycelium.mushroomCap, description: 'a release' },
 ]
 
-/** Compact, collapsible legend explaining the mycelium's data mapping (P9). */
-export function Legend() {
+/** Compact, collapsible legend explaining the mycelium's data mapping (P9), plus an optional quiet overflow-honesty note (P12). */
+export function Legend({ overflowNote = null }: LegendProps) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -31,16 +36,23 @@ export function Legend() {
         top: 64,
         left: ui.space(4),
         zIndex: 25,
-        background: ui.panelBg,
-        border: `1px solid ${ui.panelBorder}`,
-        borderRadius: ui.space(3),
-        color: ui.text,
-        fontFamily: ui.fontBody,
-        backdropFilter: 'blur(6px)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: ui.space(1),
         maxWidth: 'min(280px, calc(100vw - 32px))',
-        overflow: 'hidden',
       }}
     >
+      <div
+        style={{
+          background: ui.panelBg,
+          border: `1px solid ${ui.panelBorder}`,
+          borderRadius: ui.space(3),
+          color: ui.text,
+          fontFamily: ui.fontBody,
+          backdropFilter: 'blur(6px)',
+          overflow: 'hidden',
+        }}
+      >
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -98,6 +110,24 @@ export function Legend() {
             </li>
           ))}
         </ul>
+      )}
+      </div>
+      {overflowNote && (
+        <p
+          style={{
+            margin: 0,
+            padding: `${ui.space(1)} ${ui.space(3)}`,
+            fontFamily: ui.fontBody,
+            fontSize: '0.72rem',
+            color: ui.textMuted,
+            background: ui.panelBg,
+            border: `1px solid ${ui.panelBorder}`,
+            borderRadius: ui.space(3),
+            backdropFilter: 'blur(6px)',
+          }}
+        >
+          {overflowNote}
+        </p>
       )}
     </div>
   )
