@@ -12,7 +12,8 @@ import type { HyphaPoint, Mushroom, NetworkRef } from './types'
 
 const MUSHROOM_LIFT = 0.16
 const MUSHROOM_CLUSTER_GAP_MS = 1000 * 60 * 60 * 24 * 3 // releases within 3 days cluster together
-const MUSHROOM_CLUSTER_SCATTER = 0.05
+/** Exported for tests: a clustered mushroom's XZ position is real-data-anchored -- offset from the main hypha's own point by at most this much. */
+export const MUSHROOM_CLUSTER_SCATTER = 0.05
 const MUSHROOM_SCALE_PATCH = 0.55
 const MUSHROOM_SCALE_MINOR = 0.75
 const MUSHROOM_SCALE_MAJOR = 1.05

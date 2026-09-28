@@ -93,6 +93,34 @@ export interface Tip {
   position: Vec3
 }
 
+/**
+ * A short, fine lateral filament branching off a real commit node -- pure
+ * mycelial texture, never decorative: every hair carries the same `ref` as
+ * the commit node it grows from. One hair is generated per rendered commit
+ * node (see `NetworkSummary.hairCount`/`NetworkModel.hairs.length ===
+ * NetworkModel.nodes.length`), so the fuzzy "dense mat" texture always maps
+ * 1:1 onto real data instead of being sprinkled decoratively. Not
+ * independently selectable (it decorates its `nodeId`'s already-lookupable
+ * `NetworkNode`), so it is intentionally excluded from
+ * `LookupableNetworkElement`.
+ */
+export interface Hair {
+  id: string
+  kind: 'hair'
+  hyphaId: string
+  /** The `NetworkNode.id` this hair branches off. */
+  nodeId: string
+  time: number
+  ref: NetworkRef
+  /** Base point on the hypha where the hair branches off (== its node's position). */
+  position: Vec3
+  /** Unit direction the hair points, alternating side + seeded jitter. */
+  direction: Vec3
+  length: number
+  /** Radius at the base; tapers toward 0 at the tip. */
+  baseRadius: number
+}
+
 export interface Mushroom {
   id: string
   kind: 'mushroom'
@@ -130,6 +158,8 @@ export interface NetworkSummary {
   hyphaCountByKind: Record<HyphaKind, number>
   nodeCount: number
   mushroomCount: number
+  /** Always equal to `nodeCount` -- one hair per rendered commit node. */
+  hairCount: number
 }
 
 export interface NetworkModel {
@@ -140,6 +170,7 @@ export interface NetworkModel {
   nodes: NetworkNode[]
   tips: Tip[]
   mushrooms: Mushroom[]
+  hairs: Hair[]
   overflow: NetworkOverflow
   summary: NetworkSummary
 }

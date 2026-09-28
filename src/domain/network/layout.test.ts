@@ -4,7 +4,19 @@ import expressFixture from '../../server/fixtures/expressjs-express.json' with {
 import type { RepoSnapshot } from '../repo'
 import { computeTimeBounds } from '../tree/timeBounds'
 import { subVec3, vec3Length } from '../tree/vector'
-import { assignLanes, layoutNetwork, localSpiralPitch, pointOnHyphaAtTime, radiusForFrac, timeToFrac } from './layout'
+import {
+  assignLanes,
+  buildActivityCdf,
+  layoutNetwork,
+  localSpiralPitch,
+  NESTED_MAX_LANE_DEPTH,
+  pointOnHyphaAtTime,
+  radiusForFrac,
+  SIDE_JITTER_MAX,
+  SPIRAL_PITCH_SAFETY,
+  SPIRAL_TURNS,
+  timeToFrac,
+} from './layout'
 import { buildHyphaTopology, type HyphaDraft } from './topology'
 
 const FIXTURES: [string, RepoSnapshot][] = [
@@ -126,26 +138,111 @@ describe('pointOnHyphaAtTime', () => {
   })
 })
 
-describe('loops never cross the next spiral turn (fixture check)', () => {
-  it.each(FIXTURES)('%s: every main-parented loop stays under the next winding radius', (_name, snapshot) => {
+describe('no hypha point crosses the next spiral turn (fixture check)', () => {
+  it.each(FIXTURES)('%s: every main-parented hypha (loop, dead end, or open tip) stays under the next winding radius', (_name, snapshot) => {
     const bounds = computeTimeBounds(snapshot)
     const topology = buildHyphaTopology(snapshot, bounds)
     const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
     const layout = layoutNetwork(topology.main, topology.hyphae, bounds, seed)
+    const activity = buildActivityCdf(topology.main, topology.hyphae, bounds)
 
-    // Only merged (fused) loops are constrained by the "never cross the next
-    // turn" rule -- dead-end/open hyphae deliberately drift away from the
-    // disc's structure (see `types.ts`), so they are not "loops" at all.
-    const mainChildren = topology.hyphae.filter((d) => d.parentHyphaId === topology.main.id && d.status === 'fused')
+    // M2b: dead-end/open hyphae are now depth-capped exactly like fused
+    // loops (see `computeLoopDepth` in `layout.ts`), so the "never cross the
+    // next turn" invariant holds for every main-parented hypha, not just
+    // fused ones -- this is what fixed the M2b bug report of open/closed
+    // hyphae straying far outside the disc on long, uncapped stems.
+    const mainChildren = topology.hyphae.filter((d) => d.parentHyphaId === topology.main.id)
     let checked = 0
     for (const draft of mainChildren) {
       const hypha = layout.hyphae.find((h) => h.id === draft.id)!
       const attachFrac = timeToFrac(draft.splitTime, bounds)
-      const nextTurnRadius = radiusForFrac(Math.min(1, attachFrac + 1 / 2.4))
-      const safetyBound = nextTurnRadius + localSpiralPitch(attachFrac) // generous margin above the pitch cap itself
+      const nextTurnRadius = radiusForFrac(Math.min(1, attachFrac + 1 / SPIRAL_TURNS), activity)
+      const safetyBound = nextTurnRadius + localSpiralPitch(attachFrac, activity) // generous margin above the pitch cap itself
       for (const point of hypha.points) {
         const radius = Math.sqrt(point.position.x ** 2 + point.position.z ** 2)
         expect(radius).toBeLessThan(safetyBound)
+      }
+      checked += 1
+    }
+    expect(checked).toBeGreaterThan(0)
+  })
+})
+
+describe('fused loops follow their parent path within a bounded lateral offset (fixture check)', () => {
+  it.each(FIXTURES)('%s: every fused (merged-PR) hypha point stays within its depth cap (+ jitter) of the parent at the same time', (_name, snapshot) => {
+    const bounds = computeTimeBounds(snapshot)
+    const topology = buildHyphaTopology(snapshot, bounds)
+    const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+    const layout = layoutNetwork(topology.main, topology.hyphae, bounds, seed)
+    const activity = buildActivityCdf(topology.main, topology.hyphae, bounds)
+    const byId = new Map(layout.hyphae.map((h) => [h.id, h]))
+
+    // "PR hypha must follow its parent's path... never a direct chord":
+    // only meaningful for a FUSED loop, which really does rejoin the parent
+    // at a later point in time -- its `time` label at every sampled point
+    // corresponds to a real position on the parent's own curve. A dead-end
+    // or open/live-branch hypha instead keeps a short, LOCAL bulge near its
+    // split point while its `time` label keeps advancing (honestly) toward
+    // "now"/its close time, so it is checked separately below against its
+    // fixed attach point, not a same-time parent lookup.
+    let checked = 0
+    for (const draft of topology.hyphae) {
+      if (draft.status !== 'fused') continue
+      const hypha = byId.get(draft.id)!
+      const parent = byId.get(draft.parentHyphaId ?? topology.main.id)!
+      const isOnMain = parent.kind === 'main'
+      const parentFrac = timeToFrac(draft.splitTime, bounds)
+      const roomCap = isOnMain ? localSpiralPitch(parentFrac, activity) * SPIRAL_PITCH_SAFETY : NESTED_MAX_LANE_DEPTH
+      // depth (<= roomCap) + jitter, with a generous safety multiplier since
+      // this recomputes an upper bound rather than the exact (also
+      // room-clamped-by-disc-edge) depth used internally.
+      const bound = roomCap * 1.5 + SIDE_JITTER_MAX + 1e-6
+
+      for (const point of hypha.points) {
+        const parentAt = pointOnHyphaAtTime(parent.points, point.time)
+        const dx = point.position.x - parentAt.position.x
+        const dz = point.position.z - parentAt.position.z
+        const lateral = Math.sqrt(dx * dx + dz * dz)
+        expect(lateral).toBeLessThanOrEqual(bound)
+      }
+      checked += 1
+    }
+    expect(checked).toBeGreaterThan(0)
+  })
+})
+
+describe('dead-end/open hypha length is bounded (fixture check)', () => {
+  it.each(FIXTURES)('%s: every dead-end/open hypha point stays within a bounded distance of its own attach point', (_name, snapshot) => {
+    const bounds = computeTimeBounds(snapshot)
+    const topology = buildHyphaTopology(snapshot, bounds)
+    const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+    const layout = layoutNetwork(topology.main, topology.hyphae, bounds, seed)
+    const activity = buildActivityCdf(topology.main, topology.hyphae, bounds)
+    const byId = new Map(layout.hyphae.map((h) => [h.id, h]))
+
+    // A dead end (closed-unmerged PR) or open/live-branch tip departs its
+    // parent for good -- it never chases a matching time-position on the
+    // parent's curve, it just wanders a short, bounded distance from where
+    // it split off, regardless of how long it then stays open/unmerged.
+    let checked = 0
+    for (const draft of topology.hyphae) {
+      if (draft.status !== 'dead_end' && draft.status !== 'open') continue
+      const hypha = byId.get(draft.id)!
+      const parent = byId.get(draft.parentHyphaId ?? topology.main.id)!
+      const isOnMain = parent.kind === 'main'
+      const parentFrac = timeToFrac(draft.splitTime, bounds)
+      const roomCap = isOnMain ? localSpiralPitch(parentFrac, activity) * SPIRAL_PITCH_SAFETY : NESTED_MAX_LANE_DEPTH
+      const attach = pointOnHyphaAtTime(parent.points, draft.splitTime)
+      // depth (lateral, <= roomCap) + forward reach (<= depth * 0.8) +
+      // jitter + droop/lift (Y-only, still included since this checks 3D
+      // distance), generously bounded.
+      const bound = roomCap * 2.5 + SIDE_JITTER_MAX + 1e-6
+
+      for (const point of hypha.points) {
+        const dx = point.position.x - attach.position.x
+        const dz = point.position.z - attach.position.z
+        const distance = Math.sqrt(dx * dx + dz * dz)
+        expect(distance).toBeLessThanOrEqual(bound)
       }
       checked += 1
     }

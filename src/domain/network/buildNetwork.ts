@@ -1,6 +1,6 @@
 import type { RepoSnapshot } from '../repo'
 import { computeTimeBounds } from '../tree/timeBounds'
-import { vec3Length } from '../tree/vector'
+import { addVec3, scaleVec3, vec3Length } from '../tree/vector'
 import { DEFAULT_LAYOUT_OPTIONS, layoutNetwork, type LayoutOptions } from './layout'
 import { buildMushrooms } from './mushrooms'
 import { buildHyphaTopology, DEFAULT_TOPOLOGY_OPTIONS, type TopologyOptions } from './topology'
@@ -42,6 +42,11 @@ export function buildNetwork(snapshot: RepoSnapshot, options: Partial<NetworkBui
     const radius = vec3Length(mushroom.position)
     if (radius > maxRadius) maxRadius = radius
   }
+  for (const hair of layout.hairs) {
+    const tip = addVec3(hair.position, scaleVec3(hair.direction, hair.length))
+    const radius = vec3Length(tip)
+    if (radius > maxRadius) maxRadius = radius
+  }
 
   const hyphaCountByKind = Object.fromEntries(HYPHA_KINDS.map((kind) => [kind, 0])) as Record<HyphaKind, number>
   for (const hypha of layout.hyphae) hyphaCountByKind[hypha.kind] += 1
@@ -50,6 +55,7 @@ export function buildNetwork(snapshot: RepoSnapshot, options: Partial<NetworkBui
     hyphaCountByKind,
     nodeCount: layout.nodes.length,
     mushroomCount: mushrooms.length,
+    hairCount: layout.hairs.length,
   }
 
   const overflow: NetworkOverflow = {
@@ -65,6 +71,7 @@ export function buildNetwork(snapshot: RepoSnapshot, options: Partial<NetworkBui
     nodes: layout.nodes,
     tips: layout.tips,
     mushrooms,
+    hairs: layout.hairs,
     overflow,
     summary,
   }
