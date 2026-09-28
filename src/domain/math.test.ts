@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clamp, lerp, logScale } from './math'
+import { clamp, lerp, logScale } from './math.ts'
 
 describe('clamp', () => {
   it('keeps values inside the range unchanged', () => {

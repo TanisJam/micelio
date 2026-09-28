@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "fixture": "tsx scripts/fixture.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",
@@ -26,6 +27,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
+    "@vercel/node": "^16.0.1",
     "@vitejs/plugin-react": "^6.1.1",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
@@ -34,6 +36,7 @@
     "globals": "^17.12.0",
     "prettier": "^3.9.9",
     "typescript": "~5.9.3",
+    "tsx": "^4.23.15",
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"
