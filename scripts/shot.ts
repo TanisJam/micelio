@@ -2,8 +2,9 @@
 /**
  * Visual QA harness: boots the Vite dev server, drives it with a
  * software-rendered (SwiftShader) headless Chromium so WebGL works without a
- * GPU, and saves desktop/mobile screenshots at growth-end and mid-growth
- * into `.shots/` (gitignored). Fails (non-zero exit) if the page logs any
+ * GPU, and saves desktop/mobile screenshots -- the 3D viewer at a few growth
+ * states, the landing page, and a couple of product states -- into
+ * `.shots/` (gitignored). Fails (non-zero exit) if the page logs any
  * console error. Run with: `pnpm shot`.
  */
 import { mkdir } from 'node:fs/promises'
@@ -24,21 +25,30 @@ const VIEWPORTS: Viewport[] = [
   { name: 'mobile', width: 390, height: 844 },
 ]
 
-interface GrowthState {
-  name: string
-  t: number
-  /** `?sel=<id>` -- pins a selection so T6's detail panel renders in the shot. */
-  sel?: string
-}
-
 // A twig id from the bundled fixture (`pmndrs/valtio`), stable across runs
 // since the fixture and the deterministic tree model never change.
 const SELECTED_PR_TWIG_ID = 'twig-pr1'
+const FIXTURE_PATH = '/pmndrs/valtio'
 
-const GROWTH_STATES: GrowthState[] = [
-  { name: 'end', t: 1 },
-  { name: 'mid', t: 0.5 },
-  { name: 'end-selected', t: 1, sel: SELECTED_PR_TWIG_ID },
+interface Shot {
+  name: string
+  /** The route to visit, relative to the dev server root. */
+  path: string
+}
+
+const SHOTS: Shot[] = [
+  { name: 'landing', path: '/' },
+  // `?t=1` pins the growth cursor to fully-grown instead of animating, for
+  // deterministic visual QA.
+  { name: 'end', path: `${FIXTURE_PATH}?t=1` },
+  { name: 'mid', path: `${FIXTURE_PATH}?t=0.5` },
+  { name: 'end-selected', path: `${FIXTURE_PATH}?t=1&sel=${SELECTED_PR_TWIG_ID}` },
+  // Product states (P6), both reachable fully offline/deterministically:
+  // a real, non-fixture repo with no GITHUB_TOKEN configured always hits
+  // `token_required`; a single-segment path never matches `/:owner/:repo`,
+  // so it always falls through to the router's 404.
+  { name: 'state-token-required', path: '/facebook/react' },
+  { name: 'state-not-found', path: '/this-page-does-not-exist' },
 ]
 
 async function main(): Promise<void> {
@@ -58,23 +68,30 @@ async function main(): Promise<void> {
 
   try {
     for (const viewport of VIEWPORTS) {
-      for (const state of GROWTH_STATES) {
+      for (const shot of SHOTS) {
         const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } })
         const consoleErrors: string[] = []
         page.on('console', (msg) => {
-          if (msg.type() === 'error') consoleErrors.push(msg.text())
+          if (msg.type() !== 'error') return
+          // Chromium's devtools auto-logs this for every non-2xx
+          // fetch/XHR response -- expected noise, not an app bug, when a
+          // shot deliberately exercises a product error state (e.g. the
+          // `token_required` 503 for a non-fixture repo with no
+          // GITHUB_TOKEN configured). The app's own error handling (which
+          // *is* covered -- see the rendered state screens) never logs
+          // via console.error for this.
+          if (msg.text().startsWith('Failed to load resource: the server responded with a status of')) return
+          consoleErrors.push(msg.text())
         })
         page.on('pageerror', (err) => consoleErrors.push(String(err)))
 
-        const url = new URL(baseUrl)
-        url.searchParams.set('t', String(state.t))
-        if (state.sel) url.searchParams.set('sel', state.sel)
+        const url = new URL(shot.path, baseUrl)
         await page.goto(url.toString(), { waitUntil: 'networkidle' })
         // Let the canvas mount, the WebGL context initialize and a few
         // frames render (shadows/instances settle) before capturing.
         await page.waitForTimeout(1800)
 
-        const fileName = `${viewport.name}-${state.name}.png`
+        const fileName = `${viewport.name}-${shot.name}.png`
         const filePath = path.join(SHOTS_DIR, fileName)
         await page.screenshot({ path: filePath })
         console.log(`Saved ${filePath}`)

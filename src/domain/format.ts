@@ -70,3 +70,19 @@ export function formatCount(count: number, singular: string, plural: string = `$
   const noun = pluralRules.select(count) === 'one' ? singular : plural
   return `${formatNumber(count)} ${noun}`
 }
+
+/**
+ * Formats a coarse age from `fromEpochMs` to `toEpochMs`, e.g. "5 years
+ * old", "8 months old", "3 days old", or "new today". Used for a
+ * repository's age in the viewer header -- deliberately coarse (one unit,
+ * not a full duration breakdown) since it's a glanceable summary, not a
+ * precise value (the exact `createdAt` date is available separately).
+ */
+export function formatAge(fromEpochMs: number, toEpochMs: number): string {
+  if (!Number.isFinite(fromEpochMs) || !Number.isFinite(toEpochMs)) return 'unknown age'
+  const days = Math.floor((toEpochMs - fromEpochMs) / (24 * 60 * 60 * 1000))
+  if (days <= 0) return 'new today'
+  if (days < 30) return formatCount(days, 'day') + ' old'
+  if (days < 365) return formatCount(Math.floor(days / 30), 'month') + ' old'
+  return formatCount(Math.floor(days / 365), 'year') + ' old'
+}

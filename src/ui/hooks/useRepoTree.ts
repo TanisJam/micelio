@@ -1,45 +1,79 @@
 import { useEffect, useMemo, useState } from 'react'
-import { buildTree, type TreeModel } from '../../domain/tree'
+import type { RepoErrorCode } from '../../domain/errors'
 import type { RepoSnapshot } from '../../domain/repo'
+import type { RepoRequestErrorInfo } from '../../domain/repoRequestState'
+import { buildTree, type TreeModel } from '../../domain/tree'
 
 export interface RepoTreeState {
   status: 'loading' | 'error' | 'ready'
   model: TreeModel | null
   snapshot: RepoSnapshot | null
-  error: string | null
+  errorInfo: RepoRequestErrorInfo | null
+}
+
+interface RepoErrorResponseBody {
+  error: RepoErrorCode | 'internal_error'
+  message: string
+  retryAfterSeconds?: number
+}
+
+function isRepoErrorResponseBody(value: unknown): value is RepoErrorResponseBody {
+  return typeof value === 'object' && value !== null && 'error' in value && 'message' in value
 }
 
 /**
  * Fetches a `RepoSnapshot` from `/api/repo?owner=&repo=` (served by the Vite
  * dev middleware or the Vercel function -- falls back to a bundled fixture
  * offline, see `src/server/getRepoSnapshot.ts`) and derives the pure
- * `TreeModel` from it. This is intentionally minimal: full loading/error
- * product states belong to T7/T8, this just must not crash.
+ * `TreeModel` from it. Re-fetches whenever `owner`/`repo` change (T7
+ * routing), resetting any previous snapshot/error first so a repo switch
+ * never briefly shows the *previous* repo's stale data or error.
  */
 export function useRepoTree(owner: string, repo: string): RepoTreeState {
   const [snapshot, setSnapshot] = useState<RepoSnapshot | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [errorInfo, setErrorInfo] = useState<RepoRequestErrorInfo | null>(null)
+
+  // Reset during render (not inside the effect below) when the identity
+  // changes, so a repo switch never briefly shows the *previous* repo's
+  // stale snapshot/error -- see
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  const key = `${owner}/${repo}`
+  const [lastKey, setLastKey] = useState(key)
+  if (key !== lastKey) {
+    setLastKey(key)
+    setSnapshot(null)
+    setErrorInfo(null)
+  }
 
   useEffect(() => {
     let cancelled = false
 
-    // Note: `owner`/`repo` are constant in this MVP (no `/owner/repo` routing
-    // yet -- T7 scope), so this effect only ever runs once; it intentionally
-    // does not reset state on re-run to avoid a synchronous setState-in-effect.
     fetch(`/api/repo?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`)
       .then(async (response) => {
-        const body = (await response.json()) as RepoSnapshot | { error: string; message: string }
+        const body: unknown = await response.json().catch(() => null)
         if (cancelled) return
-        if (!response.ok || 'error' in body) {
-          const message = 'message' in body ? body.message : `Request failed with status ${response.status}`
-          setError(message)
+
+        if (response.ok && !isRepoErrorResponseBody(body)) {
+          setSnapshot(body as RepoSnapshot)
           return
         }
-        setSnapshot(body)
+
+        if (isRepoErrorResponseBody(body)) {
+          setErrorInfo({
+            code: body.error === 'internal_error' ? 'upstream_error' : body.error,
+            message: body.message,
+            retryAfterSeconds: body.retryAfterSeconds,
+          })
+        } else {
+          setErrorInfo({ code: 'upstream_error', message: `Request failed with status ${response.status}.` })
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Unknown error fetching repository data.')
+        setErrorInfo({
+          code: 'network_error',
+          message: err instanceof Error ? err.message : 'Unknown network error fetching repository data.',
+        })
       })
 
     return () => {
@@ -49,7 +83,7 @@ export function useRepoTree(owner: string, repo: string): RepoTreeState {
 
   const model = useMemo(() => (snapshot ? buildTree(snapshot) : null), [snapshot])
 
-  if (error) return { status: 'error', model: null, snapshot: null, error }
-  if (!model) return { status: 'loading', model: null, snapshot: null, error: null }
-  return { status: 'ready', model, snapshot, error: null }
+  if (errorInfo) return { status: 'error', model: null, snapshot: null, errorInfo }
+  if (!model) return { status: 'loading', model: null, snapshot: null, errorInfo: null }
+  return { status: 'ready', model, snapshot, errorInfo: null }
 }

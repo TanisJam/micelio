@@ -24,7 +24,8 @@ export function Legend() {
     <div
       style={{
         position: 'fixed',
-        top: ui.space(4),
+        // Below the fixed `ViewerHeader` bar (`VIEWER_HEADER_HEIGHT` = 56px) plus a small gap.
+        top: 64,
         left: ui.space(4),
         zIndex: 25,
         background: ui.panelBg,

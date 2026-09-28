@@ -36,13 +36,26 @@ body {
 
 @media (min-width: 641px) {
   .detail-panel {
-    /* Leaves the top strip clear so the Legend/Explore-list controls stay
-       visible and clickable even while a detail panel is open. */
-    top: 64px;
+    /* Leaves the fixed ViewerHeader bar and the Legend/Explore-list row
+       clear so they stay visible and clickable even while a detail panel
+       is open. */
+    top: 108px;
     right: 0;
     bottom: 0;
     width: min(380px, 100vw);
     border-left-width: 1px;
+  }
+}
+
+/* Repo stats (stars/forks/age) in `ViewerHeader` are hidden on narrow
+   viewports to keep the single-row bar from wrapping/overflowing. */
+.viewer-header-stats {
+  display: none;
+}
+
+@media (min-width: 641px) {
+  .viewer-header-stats {
+    display: flex;
   }
 }
 

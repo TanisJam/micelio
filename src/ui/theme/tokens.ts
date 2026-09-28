@@ -24,9 +24,10 @@ export const palette = {
 } as const
 
 export const ui = {
-  fontDisplay: "Georgia, 'Times New Roman', serif",
-  fontBody:
-    "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+  // Self-hosted via @fontsource (see `main.tsx`) -- falls back to a generic
+  // system serif/sans if the font files ever fail to load.
+  fontDisplay: '"Fraunces", Georgia, "Times New Roman", serif',
+  fontBody: '"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
   bg: '#151009',
   panelBg: 'rgba(21, 16, 9, 0.82)',
   panelBorder: 'rgba(255, 217, 160, 0.22)',

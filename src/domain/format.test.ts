@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCount, formatDate, formatDateTime, formatDeletions, formatNumber, formatShortOid, formatSignedNumber } from './format'
+import { formatAge, formatCount, formatDate, formatDateTime, formatDeletions, formatNumber, formatShortOid, formatSignedNumber } from './format'
 
 describe('formatDate', () => {
   it('formats an epoch timestamp as a readable date', () => {
@@ -74,6 +74,33 @@ describe('formatCount', () => {
   it('accepts an explicit irregular plural', () => {
     expect(formatCount(1, 'branch', 'branches')).toBe('1 branch')
     expect(formatCount(3, 'branch', 'branches')).toBe('3 branches')
+  })
+})
+
+describe('formatAge', () => {
+  const DAY = 24 * 60 * 60 * 1000
+
+  it('says "new today" for zero or negative elapsed time', () => {
+    expect(formatAge(1000, 1000)).toBe('new today')
+    expect(formatAge(2000, 1000)).toBe('new today')
+  })
+
+  it('formats days for under a month', () => {
+    expect(formatAge(0, 1 * DAY)).toBe('1 day old')
+    expect(formatAge(0, 5 * DAY)).toBe('5 days old')
+  })
+
+  it('formats months for under a year', () => {
+    expect(formatAge(0, 60 * DAY)).toBe('2 months old')
+  })
+
+  it('formats years for a year or more', () => {
+    expect(formatAge(0, 365 * DAY)).toBe('1 year old')
+    expect(formatAge(0, 365 * 5 * DAY)).toBe('5 years old')
+  })
+
+  it('falls back for non-finite input', () => {
+    expect(formatAge(Number.NaN, 1000)).toBe('unknown age')
   })
 })
 

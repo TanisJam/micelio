@@ -136,9 +136,9 @@ export function ExploreList({ model, snapshot, selectedId, onSelect, onClose }: 
       onKeyDown={handleKeyDown}
       style={{
         position: 'fixed',
-        // Below the "Explore list" toggle button that opens this panel, so
-        // the two don't visually overlap.
-        top: 64,
+        // Below the fixed `ViewerHeader` bar and the "Explore list" toggle
+        // button that opens this panel, so neither overlaps it.
+        top: 108,
         right: ui.space(4),
         bottom: ui.space(4),
         width: 'min(380px, calc(100vw - 32px))',

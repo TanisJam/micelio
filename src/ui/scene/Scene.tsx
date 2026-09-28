@@ -14,6 +14,8 @@ export interface SceneProps {
   onElementSelect?: (id: string | null) => void
   hoveredId?: string | null
   selectedId?: string | null
+  /** Hands the underlying `<canvas>` element up once the renderer mounts, so a "save image" share action can call `canvas.toDataURL()` (P10). */
+  onCanvasReady?: (canvas: HTMLCanvasElement) => void
 }
 
 /**
@@ -32,6 +34,7 @@ export default function Scene({
   onElementSelect,
   hoveredId = null,
   selectedId = null,
+  onCanvasReady,
 }: SceneProps) {
   const bounds = useMemo(() => computeModelBounds(model), [model])
 
@@ -48,6 +51,7 @@ export default function Scene({
         gl.outputColorSpace = THREE.SRGBColorSpace
         scene.fog = new THREE.Fog(new THREE.Color(palette.fog), bounds.radius * 1.6, bounds.radius * 6.5)
         scene.background = buildSkyTexture(palette.skyTop, palette.skyHorizon)
+        onCanvasReady?.(gl.domElement)
       }}
     >
       <TreeScene
