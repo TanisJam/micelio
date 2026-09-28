@@ -59,6 +59,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
 - [x] M2b Layout iteration: fix chord-crossing loops, far-flung dead ends/mushrooms, empty inter-turn space, and add mycelial hair texture, per orchestrator visual review of `.shots/network-*.png`. Route: delegated (writer).
 - [x] M2c Radial colony layout prototype: alternative `layout: 'colony'` mapping (radius = time, angle = contributor sector, true branch-from-branch sprouting, fusion knots/bridges, growth rings) behind `buildNetwork(snapshot, { layout })`, compared side by side against the spiral. Route: delegated (writer).
+- [x] M2d Colony algorithm rewrite: replace M2c's duration-based length and author-sector angle (read as tangential arcs/chords) with work-based length and gap-filling angle (space-colonization growth); update SVG debug rendering; tests; ≥4 rounds of visual iteration against both fixtures. Route: delegated (writer).
 - [ ] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
 - [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
 (T8 polish now applies to the mycelium build.)
@@ -1282,15 +1283,258 @@ tests total, +31 for M2c) · `pnpm build`: pass.
   contribution history, or does it need a further layout pass (e.g. a
   different sector-ordering/interleaving strategy) before M3 renders it?
 
+### M2d Colony algorithm rewrite — done
+Commit: `b0480c7` feat: grow the colony by space colonization from real work.
+
+**Trigger**: the orchestrator reviewed the M2c colony images and reported
+they did NOT look like mycelium: hyphae ran as tangential arcs around the
+center (angle interpolated toward far sectors), express showed polygon
+chords across the disc, and most PRs collapsed to dots/blobs. Root cause:
+hypha length = PR duration (days vs. years -> dots) and author sectors
+forcing big angular sweeps.
+
+**Algorithm** (`src/domain/network/colonyLayout.ts`, full rewrite; author
+sectors are no longer used for layout):
+1. `r(t) = radiusForFrac(timeToFrac(t, bounds))` (reused from `layout.ts`,
+   unchanged: `frac^0.58`, `DISC_MAX_RADIUS = 5`) -- a gentle sub-linear
+   power ease so early history isn't crushed near the spore, monotonic by
+   construction. Spore at origin = first commit.
+2. Hyphae process in split-time order (unchanged from M2c). For each:
+   - **Length is work-driven, not duration-driven**:
+     `computeWorkLength(commits, workLines) = clamp(COLONY_LENGTH_MIN +
+     0.34 * log1p(commits*1 + lines*0.015), COLONY_LENGTH_MIN=0.25,
+     COLONY_LENGTH_MAX=1.4)`; closed-unmerged PRs multiply by
+     `COLONY_CLOSED_LENGTH_MULTIPLIER=0.6` (stunted). `workLines`
+     (`additions+deletions`) is real GraphQL data but only fetched for
+     merged PRs (M1); `null` for closed/open, treated as 0 real lines
+     (`topology.ts`'s new `HyphaDraft.workLines`), never fabricated.
+   - **Angle is gap-filling, not a fixed sector**: `chooseTargetAngle`
+     collects the angle-at-r0 of every already-placed hypha whose disc-radius
+     span contains r0 (`computeSpanning`), plus 10 fixed seeded "spore rays"
+     (permanent reference angles so the search isn't starved early on), finds
+     the largest gap, and targets its center + jitter (<=10% of the gap,
+     `pickAngleInLargestGap`). When nothing spans r0 yet, it instead
+     maximizes distance to every already-placed hypha's own base direction
+     (same helper, different candidate set) -- "first hyphae radiate around
+     the spore evenly".
+   - **Parent/attach**: a real base-branch-of-another-PR relationship
+     (`attachment: 'parent-branch'`) always wins, using that real hypha's
+     point at r0 (clamped to its own span if it doesn't reach that far).
+     Otherwise, the already-spanning hypha whose angle at r0 is closest to
+     the target is used ONLY if that's within a natural Y-fork's reach
+     (`maxTurnRadians`, see below); otherwise growth sprouts fresh from the
+     spore instead (`attachment: 'colony'` either way -- a visual anchor, not
+     a data claim).
+   - **Path** (`growHyphaPoints`): starts exactly on the real attach point
+     (or the spore's origin), turns from that point's OWN real angle (never
+     a separate tangent -- see the round-2 finding below) to the target over
+     the first 15-25% of the length (a Y-fork), then grows near-radially
+     with a small organic wiggle. Disc-radius is always
+     `lerp(startRadius, endRadius, t)`, so "radius non-decreasing" holds
+     exactly (not approximately) by construction, regardless of angle.
+   - **`r_end = r0 + L_h`** per the task brief -- for a real/colony attach
+     point this is nearly automatic (`startRadius` was found AT r0); for a
+     spore-started hypha (`startRadius = 0`), `r_end` still uses the nominal
+     `r0`, not 0, so it can reach its own real radius (see the round-3/4
+     findings below for why this matters). Every hypha is additionally
+     capped at `COLONY_RADIUS_CAP = DISC_MAX_RADIUS * 1.05` (round 2
+     orchestrator feedback: keep the disc round), monotonicity preserved via
+     `Math.max(startRadius, ...)`.
+   - **Fork turn bound** (`maxTurnRadians`): NOT a fixed angle -- bounded by
+     how much LATERAL (sideways) distance the turn would sweep at the
+     hypha's own radius (`length * 0.5 / max(radius, 0.12)`, capped at an
+     absolute 70deg), since a fixed angle looks fine near the spore but
+     becomes a huge unnatural sweep at a large disc radius (lateral distance
+     is `radius * angle`).
+3. Commits render as `Hair`s placed by commit ORDER evenly along the
+   already-sampled path (`pointOnHyphaAtFraction`, index-based, not
+   time-based) -- deliberately ignores each commit's own timestamp for
+   *positioning*, since the hypha's length is no longer time-driven.
+   Genuine direct commits on the default branch (merge-point pseudo-entries
+   excluded) get a short radially-outward spur instead, angled via the same
+   gap-filling search against the final hyphae set.
+4. Merge fusion unchanged in spirit from M2c: nearest OTHER hypha point
+   within 0.25 world units (`RadiusGrid`, bucketed by disc radius), or "just
+   a knot" (zero-length bridge) if nothing is close enough. Closed = dry, no
+   fusion. Open = bright growing tip (`Tip` element).
+5. Releases keep one real `GrowthRing` each (SVG-render-time dedupe at 0.04,
+   up from M2c's 0.03). **New**: `Mushroom.nearPr` (`types.ts`) -- a
+   mushroom's angle is a true data link when possible (the merged PR that
+   landed closest before the release, at the point where THAT PR's own
+   hypha actually crosses the release's ring radius, `findRingAnchor` in
+   `mushrooms.ts`), falling back to the nearest hypha (any kind) crossing
+   the ring, then a seeded angle -- `nearPr` is `null` in both fallback
+   cases (mirrors `Hypha.attachment`'s honesty framing). Clustered releases
+   share one anchor angle, fanned evenly across the scatter window by their
+   own position in the cluster (not independently random, to avoid several
+   members randomly landing on top of each other) plus a little jitter.
+6. Angle interpolation toward far sectors is fully removed; every hypha's
+   post-fork angular drift stays within a documented, tested bound (see
+   Tests).
+7. `sectors.ts` rewritten down to color-metadata-only (`buildAuthorHueIndex`,
+   `resolveAuthorHueKey`, `authorKeyOf`) -- ranks contributors deterministically
+   for a future per-author hue, NOT imported by `colonyLayout.ts` at all.
+
+**`scripts/network-svg.ts`** updated to the new visual spec: no node dots
+(hairs alone carry commit texture); hairs opacity 0.35; hyphae opacity
+0.55-0.9 with per-hypha width/opacity scaled by age and real base thickness
+(not a fixed per-kind width); fusion knots `r <= 1.5px`; rings opacity
+0.04-0.1 ("extremely faint"); mushrooms small cream dots (`#f5ead0`) with a
+thin cyan-rim outline, not a flat cyan fill; ring dedupe threshold 0.04.
+
+**Visual iteration (7 rounds, `pnpm network-svg` + `Read` on both PNGs each
+round)** -- images: `.shots/network-pmndrs-valtio-colony.png`,
+`.shots/network-expressjs-express-colony.png` (gitignored, regenerate with
+`pnpm network-svg`):
+
+**(1)** First pass (work-length + gap-fill angle wired, tangent-based fork
+start). Both fixtures still read as a chaotic tangled ball of yarn --
+multiple concentric, near-circular bands of bright cyan sweeping tangentially
+around the center like a whirlpool/vortex, not radiating outward. A debug
+script measuring every hypha's fork-turn magnitude found the median turn was
+53.6deg (75th pct 80.5deg, 43% over 60deg, 20.5% over 90deg, max 178.7deg) --
+forcing a smooth turn that large within a short (15-25%) fork fraction reads
+as a tight circular sweep, exactly what a Y-fork should never look like.
+
+**(2)** Added a natural-fork angle guard (fall back to the spore when the
+closest attachable neighbor's turn exceeds ~40deg). Reduced the vortex but
+didn't fully fix it -- the guard compared the chosen parent's *tangent*
+direction to the target, but `points[0]` is always forced to the parent's
+real *position*; when the two meaningfully differed (e.g. the attach point
+sat inside the parent's own fork/drift), the very next sample jumped to a
+completely different angle at nearly the same radius. Root-caused (not just
+eyeballed) with a script dumping one hypha's raw per-point radius/angle
+sequence: a single 9.443-world-unit segment jump (a chord almost spanning
+the whole disc) between point 0 (real angle -0.915) and point 1 (angle
+1.554, ~141deg away). This was the orchestrator's own round-2 finding too
+(dozens of long straight chords, radius overshooting 6.25 > the nominal 5,
+wiggle reading as a big sinusoidal zigzag, a pile of overlapping mushrooms).
+
+**(3)** Structural fix: `growHyphaPoints` now derives its starting angle
+strictly from the real `startPosition`'s own position angle (`atan2`), never
+a separate tangent -- trivially continuous by construction, since the next
+sample's angle differs from `points[0]`'s by an infinitesimal amount as
+`t -> 0`. Replaced the fixed-angle fork guard with `maxTurnRadians` (lateral
+distance budget, not a raw angle -- see the Algorithm section). Added
+`COLONY_RADIUS_CAP = R*1.05` (hard, monotonic-safe) so the disc stays round.
+Chords and the 9.4-unit jump were gone (added a regression test: no
+single-segment jump over 0.3 world units, any fixture). But now the disc
+filled only a ~270deg crescent -- most of the circle stayed completely
+empty, with a small isolated "starburst" of short rays near the very center
+(the one good-looking part, per the orchestrator's own round-2 note).
+
+**(4)** Root-caused the crescent with a debug script: only 1 of 622 hyphae
+ever started fresh from the spore; the other 621 always found SOME spanning
+neighbor to clamp toward. Since "closest by angle" is unavoidably INSIDE
+whatever arc already has structure once any exists, `maxTurnRadians`
+clamped every new hypha back toward the same crescent instead of letting it
+reach a real, correctly-identified gap on the far side of the disc -- the
+model could seek gaps but could never actually get there. Fixed by
+preferring a spore-start whenever the closest spanning neighbor is still
+farther than a natural fork allows (not only when nothing spans r0 at all),
+and by giving a spore-started hypha its full real reach (`r_end = r0 +
+L_h`, not `0 + L_h` -- a bug in the interim fix, since capping a spore
+hypha's own length at `COLONY_LENGTH_MAX` regardless of how large its real
+`r0` was meant it could never grow far enough to become real coverage for
+later hyphae in that region). Result: the disc filled a full 360deg for the
+first time, densely radiating outward, real forking visible toward the rim
+-- but many long spore-started primaries now rendered as near-perfectly
+straight spokes (the small fixed wiggle amplitude, tuned for a
+<=1.4-length hypha, is imperceptible over a much longer run).
+
+**(5)** Scaled the organic wiggle's lateral budget and curl frequency with
+each hypha's OWN length (capped at the normal small global amount for any
+hypha at or under `COLONY_LENGTH_MAX`), so a long spore-started strand
+visibly meanders proportionate to how far it travels instead of reading as
+a rigid spoke. Both fixtures now show a dense, organically-curving radial
+mycelium: forking, curving filaments from the spore, denser and more
+tangled toward the rim, no arcs, no chords, no dots-collapsed-to-blobs.
+
+**(6)** Addressed the orchestrator's remaining round-2 note: a pile of
+overlapping mushroom dots (a real 16-release cluster on `express`, all with
+a genuine `nearPr` link). Clustering itself is correct (item 5: "cluster
+close releases"), but independently-random per-member scatter could by
+chance pile several members on the same spot for a large cluster -- changed
+to deterministically fan each member across the scatter window by its own
+position in the cluster (plus a little jitter), and widened the scatter
+window (0.12 -> 0.24 rad). The cluster now reads as a small dense patch of
+distinguishable individual dots, not one solid blob -- honest (it IS a
+short, real release-burst), improved but not eliminated (see Weaknesses).
+
+**(7)** Final confirmation pass on both fixtures: dense, organically curving
+radial mycelium filling the whole disc, clear forking especially toward the
+rim, visible fusion knots, faint rings, mushrooms honestly on their rings.
+
+**Weaknesses, honestly reported**:
+- The very center still reads as a dense "sunburst" of many nearly-straight
+  lines converging at one exact point for their first ~10-15% before curving
+  -- an accurate rendering of "many primary hyphae radiate from the spore"
+  (and the one part of M2c's own images the orchestrator explicitly liked),
+  but the sheer density where hundreds of lines meet at a single pixel reads
+  as a bright flare rather than individually legible filaments at this zoom
+  level. M3's eventual selective bloom/dimming and a real camera (vs. this
+  flat top-down debug SVG) should help more than further pure-layout tuning.
+- The large mushroom-cluster "pile" (round 6) is reduced, not eliminated --
+  a genuine short, real release-burst on `express` (16 releases within a
+  chained <=3-day gap) still occupies a visually dense small patch. A
+  further fix (e.g. spreading a very large cluster's members radially too,
+  or capping how many individually render vs. an honest "+N more" label)
+  would need a bigger design decision than this task's scope.
+- `maxTurnRadians`'s absolute ceiling (70deg) and lateral-budget fraction
+  (0.5) were tuned by eye against these two fixtures, not derived from the
+  task brief's own "naturally 10-35deg" language (which undershot in
+  practice once the discontinuity bug was fixed and real turns were
+  measured) -- flagged as a deliberate, documented deviation, not an
+  oversight.
+- Not independently re-benchmarked for a genuinely tiny/empty repo beyond
+  the unit test case (unchanged from M2c's own note); the tiny-repo test
+  confirms it doesn't crash/produce NaN, not that it looks good.
+- `PullRequestDetail`/`Hypha.attachment`/`Mushroom.nearPr` are model-level
+  plumbing only -- M3 doesn't render either network layout yet, so there is
+  no live UI text to word around these honesty flags yet.
+
+**Performance**: the existing `buildNetwork.test.ts` 1000-PR perf test
+(both layouts, 600ms CI-safe budget) continued to pass throughout, but an
+early version of this rewrite (before optimizing `pointOnHyphaAtRadius` to
+avoid a per-call array allocation) measured 654ms and failed it -- fixed by
+rewriting that hot-path helper as a plain forward scan (`layout.ts`) instead
+of `points.map(discRadius)` per call. Final measured time (via the test's
+own `performance.now()`) stayed comfortably under budget after the fix.
+
+Tests (`colonyLayout.test.ts` fully rewritten, `sectors.test.ts` rewritten
+for the color-metadata-only API, `mushrooms.test.ts`/`layout.test.ts`
+additions): determinism; radius non-decreasing per hypha (exact); no
+single polyline segment over 0.3 world units (round-2 regression test);
+every hypha starts exactly on its parent's real curve or exactly at the
+spore origin; `computeWorkLength` stays within `[Lmin, Lmax]` for any
+input (direct unit test) and every non-spore-started hypha's own rendered
+length stays within `[Lmin*0.6, Lmax]` (a spore-started hypha's rendered
+length is documented as `r0 + L_h`, tested separately); post-fork angular
+drift bounded (scaled for a spore-started hypha's documented longer reach);
+merged hyphae get exactly one fusion knot, closed/open never do; every open
+hypha gets a `Tip`; mushrooms sit exactly on their release's ring; hairs ==
+rendered commit nodes; never NaN/non-finite; tiny repo (0 PRs, 0 releases, 1
+commit); a synthetic 200-PR repo has no angular gap over 60deg at r=0.8R
+(gap-filling sanity, item 6 of the brief); both real fixtures smoke-tested,
+including a real `Mushroom.nearPr` link exists when releases and merged PRs
+coexist. Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`:
+pass (322 tests total, +5 net for M2d) · `pnpm build`: pass.
+
 ## Next step
-Product owner decision on M2c (`colony` vs. `spiral` for M3, see the M2c
-progress entry above), then M3 (network rendering + growth + interaction
-wiring, for whichever layout is selected), then M4 (cleanup, remove
-superseded tree code), then T8 polish and the final independent review.
+M3 (network rendering + growth + interaction wiring for the `colony`
+layout -- the orchestrator's own critique of M2c and this rewrite's target
+both point at colony as the primary metaphor going forward, spiral remains
+available for comparison), then M4 (cleanup, remove superseded tree code),
+then T8 polish and the final independent review.
 
 **Decisions/gaps for the product owner (M3 planning)**:
-- M2c decision (colony vs. spiral vs. continue comparing) -- see the M2c
-  progress entry above for the full recommendation and tradeoffs.
+- The mushroom-cluster "pile" weakness above (a real, honest but visually
+  dense release-burst) -- acceptable as-is, or worth a further layout pass
+  before M3 renders it?
+- `maxTurnRadians`'s tuned constants (70deg absolute ceiling, 0.5 lateral
+  fraction) are a deliberate deviation from the brief's own "10-35deg"
+  estimate, found necessary once the discontinuity bug was fixed and real
+  turns were measured -- flagging for awareness, not blocking.
 - The network model exposes `NetworkModel.overflow` (hyphae/nodes omitted
   by the caps) — M3 should decide how (or whether) to surface this in the
   UI/legend, mirroring how the tree model's overflow-PR count is currently
