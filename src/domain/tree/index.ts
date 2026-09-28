@@ -1,6 +1,8 @@
 export { buildTree, DEFAULT_BUILD_TREE_OPTIONS, type BuildTreeOptions } from './buildTree'
 export { computeTimeBounds } from './timeBounds'
 export { computeModelBounds, type ModelBounds } from './bounds'
+export { findTreeElement } from './lookup'
+export { getElementFocusPosition } from './focus'
 export {
   easePlaybackProgress,
   limbFullyGrownTime,

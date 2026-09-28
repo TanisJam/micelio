@@ -11,9 +11,11 @@ export interface LeavesProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
-export function Leaves({ model, getCurrentTime, onHover, onSelect }: LeavesProps) {
+export function Leaves({ model, getCurrentTime, onHover, onSelect, hoveredId, selectedId }: LeavesProps) {
   const items = useMemo<ScatterItem[]>(() => {
     // A leaf's commit date is often *before* its PR's merge date (its
     // twig's sprout time), so gate twig-leaves on the later of the two.
@@ -57,6 +59,8 @@ export function Leaves({ model, getCurrentTime, onHover, onSelect }: LeavesProps
       getCurrentTime={getCurrentTime}
       onHover={onHover}
       onSelect={onSelect}
+      hoveredId={hoveredId}
+      selectedId={selectedId}
     />
   )
 }

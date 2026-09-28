@@ -146,3 +146,6 @@ export interface TreeModel {
   buds: Bud[]
   soil: SoilStratum[]
 }
+
+/** The subset of element kinds `findTreeElement` can look up by id (excludes trunk segments and soil, which aren't individually selectable). */
+export type LookupableTreeElement = Limb | Twig | Fruit | Leaf | Flower | Bud

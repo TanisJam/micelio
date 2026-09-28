@@ -9,9 +9,11 @@ export interface FruitsProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
-export function Fruits({ model, getCurrentTime, onHover, onSelect }: FruitsProps) {
+export function Fruits({ model, getCurrentTime, onHover, onSelect, hoveredId, selectedId }: FruitsProps) {
   const items = useMemo<ScatterItem[]>(
     () =>
       model.fruits.map((fruit) => ({
@@ -33,6 +35,8 @@ export function Fruits({ model, getCurrentTime, onHover, onSelect }: FruitsProps
       getCurrentTime={getCurrentTime}
       onHover={onHover}
       onSelect={onSelect}
+      hoveredId={hoveredId}
+      selectedId={selectedId}
     />
   )
 }

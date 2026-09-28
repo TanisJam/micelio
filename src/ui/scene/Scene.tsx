@@ -11,16 +11,28 @@ export interface SceneProps {
   getCurrentTime: () => number
   reducedMotion: boolean
   onElementHover?: (id: string | null) => void
-  onElementSelect?: (id: string) => void
+  onElementSelect?: (id: string | null) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
 /**
  * The lazy-loaded 3D chunk: owns the R3F `Canvas` (shadows, tone mapping,
  * color management, fog) and renders the tree diorama inside it. Exported
  * as the default so `App.tsx` can `React.lazy(() => import('./scene/Scene'))`
- * and keep the initial bundle light (P12).
+ * and keep the initial bundle light (P12). Clicking empty space deselects
+ * (`onPointerMissed`), and the cursor becomes a pointer while hovering a
+ * selectable element (P7).
  */
-export default function Scene({ model, getCurrentTime, reducedMotion, onElementHover, onElementSelect }: SceneProps) {
+export default function Scene({
+  model,
+  getCurrentTime,
+  reducedMotion,
+  onElementHover,
+  onElementSelect,
+  hoveredId = null,
+  selectedId = null,
+}: SceneProps) {
   const bounds = useMemo(() => computeModelBounds(model), [model])
 
   return (
@@ -28,6 +40,8 @@ export default function Scene({ model, getCurrentTime, reducedMotion, onElementH
       shadows="variance"
       camera={{ fov: 42, near: 0.1, far: 500 }}
       gl={{ antialias: true }}
+      style={{ cursor: hoveredId ? 'pointer' : 'auto' }}
+      onPointerMissed={() => onElementSelect?.(null)}
       onCreated={({ gl, scene }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping
         gl.toneMappingExposure = 1.05
@@ -42,6 +56,8 @@ export default function Scene({ model, getCurrentTime, reducedMotion, onElementH
         reducedMotion={reducedMotion}
         onElementHover={onElementHover}
         onElementSelect={onElementSelect}
+        hoveredId={hoveredId}
+        selectedId={selectedId}
       />
     </Canvas>
   )

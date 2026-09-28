@@ -27,11 +27,18 @@ const VIEWPORTS: Viewport[] = [
 interface GrowthState {
   name: string
   t: number
+  /** `?sel=<id>` -- pins a selection so T6's detail panel renders in the shot. */
+  sel?: string
 }
+
+// A twig id from the bundled fixture (`pmndrs/valtio`), stable across runs
+// since the fixture and the deterministic tree model never change.
+const SELECTED_PR_TWIG_ID = 'twig-pr1'
 
 const GROWTH_STATES: GrowthState[] = [
   { name: 'end', t: 1 },
   { name: 'mid', t: 0.5 },
+  { name: 'end-selected', t: 1, sel: SELECTED_PR_TWIG_ID },
 ]
 
 async function main(): Promise<void> {
@@ -61,6 +68,7 @@ async function main(): Promise<void> {
 
         const url = new URL(baseUrl)
         url.searchParams.set('t', String(state.t))
+        if (state.sel) url.searchParams.set('sel', state.sel)
         await page.goto(url.toString(), { waitUntil: 'networkidle' })
         // Let the canvas mount, the WebGL context initialize and a few
         // frames render (shadows/instances settle) before capturing.

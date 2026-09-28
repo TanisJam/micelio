@@ -9,9 +9,11 @@ export interface BudsProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
-export function Buds({ model, getCurrentTime, onHover, onSelect }: BudsProps) {
+export function Buds({ model, getCurrentTime, onHover, onSelect, hoveredId, selectedId }: BudsProps) {
   // Buds sit at the crown, i.e. the trunk's *final* height -- so during the
   // growth replay they must never pop in before the trunk has visually grown
   // that tall, or they'd appear to float above an unfinished trunk tip.
@@ -38,6 +40,8 @@ export function Buds({ model, getCurrentTime, onHover, onSelect }: BudsProps) {
       getCurrentTime={getCurrentTime}
       onHover={onHover}
       onSelect={onSelect}
+      hoveredId={hoveredId}
+      selectedId={selectedId}
     />
   )
 }

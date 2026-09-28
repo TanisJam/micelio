@@ -5,6 +5,7 @@ import type { RepoSnapshot } from '../../domain/repo'
 export interface RepoTreeState {
   status: 'loading' | 'error' | 'ready'
   model: TreeModel | null
+  snapshot: RepoSnapshot | null
   error: string | null
 }
 
@@ -48,7 +49,7 @@ export function useRepoTree(owner: string, repo: string): RepoTreeState {
 
   const model = useMemo(() => (snapshot ? buildTree(snapshot) : null), [snapshot])
 
-  if (error) return { status: 'error', model: null, error }
-  if (!model) return { status: 'loading', model: null, error: null }
-  return { status: 'ready', model, error: null }
+  if (error) return { status: 'error', model: null, snapshot: null, error }
+  if (!model) return { status: 'loading', model: null, snapshot: null, error: null }
+  return { status: 'ready', model, snapshot, error: null }
 }

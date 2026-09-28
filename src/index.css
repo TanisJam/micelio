@@ -19,3 +19,41 @@ body {
     Roboto,
     sans-serif;
 }
+
+/* Visible focus rings everywhere (P11), using the same accent as the rest of the UI (`ui.focusRing`). */
+:focus-visible {
+  outline: 2px solid #ffd9a0;
+  outline-offset: 2px;
+}
+
+/* The detail panel: right-side on desktop, a bottom sheet on mobile/narrow viewports (P7). */
+.detail-panel {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+@media (min-width: 641px) {
+  .detail-panel {
+    /* Leaves the top strip clear so the Legend/Explore-list controls stay
+       visible and clickable even while a detail panel is open. */
+    top: 64px;
+    right: 0;
+    bottom: 0;
+    width: min(380px, 100vw);
+    border-left-width: 1px;
+  }
+}
+
+@media (max-width: 640px) {
+  .detail-panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 70vh;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    border-top-width: 1px;
+  }
+}

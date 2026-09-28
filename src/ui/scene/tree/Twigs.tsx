@@ -14,10 +14,15 @@ export interface TwigsProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
-/** All twigs as one instanced mesh (a single draw call): each instance is a canonical straight tapered tube, aligned to its own base->tip direction and scaled along that axis to animate growth. */
-export function Twigs({ model, geometry, twigs, getCurrentTime, onHover, onSelect }: TwigsProps) {
+const HOVER_RADIUS_SCALE = 1.35
+const SELECT_RADIUS_SCALE = 1.7
+
+/** All twigs as one instanced mesh (a single draw call): each instance is a canonical straight tapered tube, aligned to its own base->tip direction and scaled along that axis to animate growth. The hovered/selected twig (if any) is rendered visibly thicker (P7). */
+export function Twigs({ model, geometry, twigs, getCurrentTime, onHover, onSelect, hoveredId, selectedId }: TwigsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const count = twigs.data.length
   const matrix = useMemo(() => new THREE.Matrix4(), [])
@@ -31,11 +36,14 @@ export function Twigs({ model, geometry, twigs, getCurrentTime, onHover, onSelec
       const twig = twigs.data[i]!
       const progress = twigGrowthProgress(twig, model.bounds, currentTime)
       const length = twigs.length[i]! * progress
+      const id = twigs.ids[i]
+      const radiusScale = id === selectedId ? SELECT_RADIUS_SCALE : id === hoveredId ? HOVER_RADIUS_SCALE : 1
+      const radius = twigs.radius * radiusScale
       matrix.copy(
         alignedInstanceMatrix(
           { x: twigs.base[i]!.x, y: twigs.base[i]!.y, z: twigs.base[i]!.z },
           { x: twigs.direction[i]!.x, y: twigs.direction[i]!.y, z: twigs.direction[i]!.z },
-          { x: twigs.radius, y: Math.max(length, 0.0001), z: twigs.radius },
+          { x: radius, y: Math.max(length, 0.0001), z: radius },
         ),
       )
       mesh.setMatrixAt(i, matrix)

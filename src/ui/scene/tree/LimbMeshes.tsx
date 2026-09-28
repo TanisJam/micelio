@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { limbGrowthProgress } from '../../../domain/tree'
 import type { TreeModel } from '../../../domain/tree'
+import { ui } from '../../theme/tokens'
 import { drawRangeForProgress } from '../geometry/tubeGeometry'
 import type { LimbGeometryEntry } from './useTreeGeometry'
 
@@ -11,14 +12,25 @@ export interface LimbMeshesProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
 /** One mesh per limb (there are at most ~16), each individually revealed via draw range as its era's PRs land. */
-export function LimbMeshes({ model, limbs, getCurrentTime, onHover, onSelect }: LimbMeshesProps) {
+export function LimbMeshes({ model, limbs, getCurrentTime, onHover, onSelect, hoveredId, selectedId }: LimbMeshesProps) {
   return (
     <>
       {limbs.map((limb) => (
-        <LimbMesh key={limb.id} model={model} limb={limb} getCurrentTime={getCurrentTime} onHover={onHover} onSelect={onSelect} />
+        <LimbMesh
+          key={limb.id}
+          model={model}
+          limb={limb}
+          getCurrentTime={getCurrentTime}
+          onHover={onHover}
+          onSelect={onSelect}
+          isHovered={hoveredId === limb.id}
+          isSelected={selectedId === limb.id}
+        />
       ))}
     </>
   )
@@ -30,12 +42,16 @@ function LimbMesh({
   getCurrentTime,
   onHover,
   onSelect,
+  isHovered,
+  isSelected,
 }: {
   model: TreeModel
   limb: LimbGeometryEntry
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  isHovered: boolean
+  isSelected: boolean
 }) {
   const lastProgress = useRef(-1)
   const modelLimb = model.limbs.find((l) => l.id === limb.id)!
@@ -48,6 +64,8 @@ function LimbMesh({
     const count = drawRangeForProgress(limb.tube, progress)
     limb.geometry.setDrawRange(0, count)
   })
+
+  const isActive = isHovered || isSelected
 
   return (
     <mesh
@@ -67,7 +85,14 @@ function LimbMesh({
         onSelect?.(limb.id)
       }}
     >
-      <meshStandardMaterial color={limb.color} roughness={0.85} metalness={0} flatShading />
+      <meshStandardMaterial
+        color={limb.color}
+        roughness={0.85}
+        metalness={0}
+        flatShading
+        emissive={isActive ? ui.accent : '#000000'}
+        emissiveIntensity={isSelected ? 0.5 : isHovered ? 0.28 : 0}
+      />
     </mesh>
   )
 }

@@ -1,5 +1,6 @@
 import type { TreeModel } from '../../../domain/tree'
 import { Buds } from './Buds'
+import { CameraFocus } from './CameraFocus'
 import { CameraRig } from './CameraRig'
 import { Flowers } from './Flowers'
 import { Fruits } from './Fruits'
@@ -19,27 +20,56 @@ export interface TreeSceneProps {
   reducedMotion: boolean
   onElementHover?: (id: string | null) => void
   onElementSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
 /**
  * The full low-poly tree diorama: soil island, trunk, limbs, twigs, leaves,
  * fruit, flowers, buds, lighting, sky and camera. Every rendered element
  * keeps a mapping back to its `TreeModel` element id via `onElementHover` /
- * `onElementSelect`, ready for T6's inspection panel.
+ * `onElementSelect`, and is visually tinted/thickened when it matches
+ * `hoveredId`/`selectedId` (P7). `CameraFocus` eases the camera to the
+ * selection.
  */
-export function TreeScene({ model, getCurrentTime, reducedMotion, onElementHover, onElementSelect }: TreeSceneProps) {
+export function TreeScene({
+  model,
+  getCurrentTime,
+  reducedMotion,
+  onElementHover,
+  onElementSelect,
+  hoveredId = null,
+  selectedId = null,
+}: TreeSceneProps) {
   const geometry = useTreeGeometry(model)
 
   return (
     <>
       <Lighting bounds={geometry.bounds} />
       <CameraRig bounds={geometry.bounds} />
+      <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
       <SoilIsland geometry={geometry.island} />
-      <TrunkMesh model={model} geometry={geometry.trunk} getCurrentTime={getCurrentTime} onHover={onElementHover} onSelect={onElementSelect} />
+      <TrunkMesh
+        model={model}
+        geometry={geometry.trunk}
+        getCurrentTime={getCurrentTime}
+        onHover={onElementHover}
+        onSelect={onElementSelect}
+        hoveredId={hoveredId}
+        selectedId={selectedId}
+      />
 
       <WindSway enabled={!reducedMotion}>
-        <LimbMeshes model={model} limbs={geometry.limbs} getCurrentTime={getCurrentTime} onHover={onElementHover} onSelect={onElementSelect} />
+        <LimbMeshes
+          model={model}
+          limbs={geometry.limbs}
+          getCurrentTime={getCurrentTime}
+          onHover={onElementHover}
+          onSelect={onElementSelect}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
+        />
         <Twigs
           model={model}
           geometry={geometry.twigGeometry}
@@ -47,11 +77,41 @@ export function TreeScene({ model, getCurrentTime, reducedMotion, onElementHover
           getCurrentTime={getCurrentTime}
           onHover={onElementHover}
           onSelect={onElementSelect}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
         />
-        <Leaves model={model} getCurrentTime={getCurrentTime} onHover={onElementHover} onSelect={onElementSelect} />
-        <Fruits model={model} getCurrentTime={getCurrentTime} onHover={onElementHover} onSelect={onElementSelect} />
-        <Flowers model={model} getCurrentTime={getCurrentTime} onHover={onElementHover} onSelect={onElementSelect} />
-        <Buds model={model} getCurrentTime={getCurrentTime} onHover={onElementHover} onSelect={onElementSelect} />
+        <Leaves
+          model={model}
+          getCurrentTime={getCurrentTime}
+          onHover={onElementHover}
+          onSelect={onElementSelect}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
+        />
+        <Fruits
+          model={model}
+          getCurrentTime={getCurrentTime}
+          onHover={onElementHover}
+          onSelect={onElementSelect}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
+        />
+        <Flowers
+          model={model}
+          getCurrentTime={getCurrentTime}
+          onHover={onElementHover}
+          onSelect={onElementSelect}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
+        />
+        <Buds
+          model={model}
+          getCurrentTime={getCurrentTime}
+          onHover={onElementHover}
+          onSelect={onElementSelect}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
+        />
       </WindSway>
     </>
   )

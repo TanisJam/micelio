@@ -9,9 +9,11 @@ export interface FlowersProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
-export function Flowers({ model, getCurrentTime, onHover, onSelect }: FlowersProps) {
+export function Flowers({ model, getCurrentTime, onHover, onSelect, hoveredId, selectedId }: FlowersProps) {
   const items = useMemo<ScatterItem[]>(
     () =>
       model.flowers.map((flower) => ({
@@ -33,6 +35,8 @@ export function Flowers({ model, getCurrentTime, onHover, onSelect }: FlowersPro
       getCurrentTime={getCurrentTime}
       onHover={onHover}
       onSelect={onSelect}
+      hoveredId={hoveredId}
+      selectedId={selectedId}
     />
   )
 }

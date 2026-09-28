@@ -29,39 +29,34 @@ export interface ScatterInstancesProps {
   getCurrentTime: () => number
   onHover?: (id: string | null) => void
   onSelect?: (id: string) => void
+  hoveredId?: string | null
+  selectedId?: string | null
 }
+
+const HOVER_TINT_AMOUNT = 0.3
+const SELECT_TINT_AMOUNT = 0.55
 
 /**
  * One instanced mesh (single draw call) for a scattered set of small
  * elements -- leaves, fruit, flowers or buds. Each instance pops in
  * (ease-out scale from 0) at its own `time`, and carries its own color via
  * per-instance vertex color (e.g. the leaf age ramp), so a single shared
- * material still reads as varied.
+ * material still reads as varied. The hovered/selected instance (if any) is
+ * tinted toward white on top of its base color (P7).
  */
-export function ScatterInstances({ geometry, items, bounds, getCurrentTime, onHover, onSelect }: ScatterInstancesProps) {
+export function ScatterInstances({
+  geometry,
+  items,
+  bounds,
+  getCurrentTime,
+  onHover,
+  onSelect,
+  hoveredId,
+  selectedId,
+}: ScatterInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const matrix = useMemo(() => new THREE.Matrix4(), [])
   const count = items.length
-
-  useFrame(() => {
-    const mesh = meshRef.current
-    if (!mesh || count === 0) return
-    const currentTime = getCurrentTime()
-
-    for (let i = 0; i < count; i++) {
-      const item = items[i]!
-      const grow = popScale(item.time, bounds, currentTime)
-      if (grow <= 0) {
-        matrix.copy(scatteredInstanceMatrix(HIDDEN_POSITION, 0, 0.0001))
-      } else {
-        matrix.copy(
-          scatteredInstanceMatrix(item.position, item.rotation, item.scale * grow, item.tiltX ?? 0, item.tiltZ ?? 0),
-        )
-      }
-      mesh.setMatrixAt(i, matrix)
-    }
-    mesh.instanceMatrix.needsUpdate = true
-  })
 
   const colorArray = useMemo(() => {
     const array = new Float32Array(count * 3)
@@ -74,6 +69,39 @@ export function ScatterInstances({ geometry, items, bounds, getCurrentTime, onHo
     })
     return array
   }, [items, count])
+
+  useFrame(() => {
+    const mesh = meshRef.current
+    if (!mesh || count === 0) return
+    const currentTime = getCurrentTime()
+    const colorAttr = mesh.instanceColor
+
+    for (let i = 0; i < count; i++) {
+      const item = items[i]!
+      const grow = popScale(item.time, bounds, currentTime)
+      if (grow <= 0) {
+        matrix.copy(scatteredInstanceMatrix(HIDDEN_POSITION, 0, 0.0001))
+      } else {
+        matrix.copy(
+          scatteredInstanceMatrix(item.position, item.rotation, item.scale * grow, item.tiltX ?? 0, item.tiltZ ?? 0),
+        )
+      }
+      mesh.setMatrixAt(i, matrix)
+
+      if (colorAttr) {
+        const isSelected = item.id === selectedId
+        const isHovered = !isSelected && item.id === hoveredId
+        const amount = isSelected ? SELECT_TINT_AMOUNT : isHovered ? HOVER_TINT_AMOUNT : 0
+        const baseIndex = i * 3
+        const baseR = colorArray[baseIndex]!
+        const baseG = colorArray[baseIndex + 1]!
+        const baseB = colorArray[baseIndex + 2]!
+        colorAttr.setXYZ(i, baseR + (1 - baseR) * amount, baseG + (1 - baseG) * amount, baseB + (1 - baseB) * amount)
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    if (colorAttr) colorAttr.needsUpdate = true
+  })
 
   if (count === 0) return null
 
