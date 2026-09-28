@@ -40,3 +40,10 @@ export function lerpVec3(a: Vec3, b: Vec3, t: number): Vec3 {
     z: a.z + (b.z - a.z) * t,
   }
 }
+
+/** Unit-length copy of `a`, or `fallback` (default +Z) when `a` is (near-)zero -- never NaN/Infinity. */
+export function normalizeVec3(a: Vec3, fallback: Vec3 = { x: 0, y: 0, z: 1 }): Vec3 {
+  const length = vec3Length(a)
+  if (length < 1e-9) return fallback
+  return scaleVec3(a, 1 / length)
+}

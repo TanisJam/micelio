@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fixture": "tsx scripts/fixture.ts",
-    "shot": "tsx scripts/shot.ts"
+    "shot": "tsx scripts/shot.ts",
+    "network-svg": "tsx scripts/network-svg.ts"
   },
   "dependencies": {
     "@fontsource/fraunces": "^5.3.0",

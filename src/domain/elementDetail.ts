@@ -46,7 +46,8 @@ export interface PullRequestCommitEntry {
 export interface PullRequestDetail {
   kind: 'pull_request'
   id: string
-  status: 'merged' | 'open'
+  /** `'closed'` (closed-unmerged) is only ever produced by the network model (M2) -- the tree model has no dead-end concept. */
+  status: 'merged' | 'closed' | 'open'
   number: number
   title: string
   url: string
@@ -299,7 +300,12 @@ export function summarizeElementDetail(detail: ElementDetail): ElementSummary {
       }
     case 'pull_request':
       return {
-        kindLabel: detail.status === 'merged' ? 'Merged pull request' : 'Open pull request',
+        kindLabel:
+          detail.status === 'merged'
+            ? 'Merged pull request'
+            : detail.status === 'closed'
+              ? 'Closed pull request'
+              : 'Open pull request',
         title: `#${detail.number} ${detail.title}`,
         date: detail.date,
       }
