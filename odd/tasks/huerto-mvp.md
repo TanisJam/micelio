@@ -61,6 +61,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] M2c Radial colony layout prototype: alternative `layout: 'colony'` mapping (radius = time, angle = contributor sector, true branch-from-branch sprouting, fusion knots/bridges, growth rings) behind `buildNetwork(snapshot, { layout })`, compared side by side against the spiral. Route: delegated (writer).
 - [x] M2d Colony algorithm rewrite: replace M2c's duration-based length and author-sector angle (read as tangential arcs/chords) with work-based length and gap-filling angle (space-colonization growth); update SVG debug rendering; tests; ≥4 rounds of visual iteration against both fixtures. Route: delegated (writer).
 - [x] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
+- [x] M3b Visual polish of the 3D mycelium galaxy: fine luminous filaments with tapered tips, lit mushroom silhouettes, legible selection, dark-loam soil, mobile header fit, overflow honesty. Route: delegated (writer), per orchestrator screenshot review of `.shots/`.
 - [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
 (T8 polish now applies to the mycelium build.)
 
@@ -1782,6 +1783,301 @@ loosening the budget speculatively.
   is inert code, not currently reachable from any UI state — flagging for
   M4/T8 to either wire up or remove.
 
+### M3b Visual polish of the 3D mycelium galaxy — done
+Commits: `d3600e6` feat(network): render hyphae as fine tapered luminous
+threads; `7bbd3f3` feat(network): give mushrooms a lit silhouette and keep
+selection legible; `c4df8e4` feat: dark loam soil, collapsed mobile header,
+and honest overflow note.
+
+Orchestrator's screenshot review of the M3 round-3/4 shots (`desktop-express-
+end.png`, `desktop-valtio-selected-merged.png`, `mobile-express-selected-
+closed.png`) found six problems: (1) filaments read as thick flat painted
+ribbons with square blocky ends; (2) mushrooms read as flat white/gray dots
+in a line; (3) selection wasn't clearly the brightest thing; (4) soil read as
+a flat light-blue plate with a hard edge; (5) mobile: the disc was cropped
+and the repo name truncated behind two full-text header buttons; (6)
+`NetworkModel.overflow` still wasn't surfaced. All six addressed below.
+
+**1. Filaments** (`src/ui/scene/network/geometry/hyphaeGeometry.ts`,
+`filamentsGeometry.ts`, `growthMaterial.ts`): a new per-vertex `crossU`
+attribute (-1..1 across the ribbon width) drives a per-fragment gaussian-ish
+glow falloff (bright core, fading to exactly 0 alpha at the ribbon's own
+edges) instead of a flat-shaded rectangle. A new pure `tipTaperFactor`
+helper (tested, `hyphaeGeometry.test.ts`) smoothsteps both width AND alpha
+to 0 over a proportional span at each end of a hypha's own polyline
+(`TAPER_FRACTION = 0.18`, floored at 3 samples) — fading brightness together
+with width was the fix for a real round-2 finding: a narrowing-but-still-
+full-alpha near-tip segment still bloomed into a small bright "cap" even
+once the geometry itself tapered to a point. A shallow per-vertex Y "tent"
+(`CROSS_Y_TILT`) adds depth when orbiting; a deterministic `hashNoise`
+helper (tested) adds slight along-length brightness variation.
+`RIBBON_WIDTH_SCALE` went 4.5 → 6.5 (round 1, more room for the falloff) →
+5 (round 3, the wider mesh plus a too-soft falloff still read as thick in a
+dense bundle) with the fragment shader's gaussian exponent tightened
+6.5 (was 4.2) for the unselected core. Hairs/bridges (sharing the same
+`ShaderMaterial`/draw call as the ribbon mesh) now populate `crossU=0`/
+`brightness=1` so the shared program's attribute state can't leak stale
+values between the two meshes.
+
+**2. Mushrooms** (`mushroomInstances.ts`, `MushroomsMesh.tsx`,
+`NetworkSceneContent.tsx`, `PointGlowInstances.tsx`): `MushroomsMesh` now
+uses `MeshStandardMaterial` (still `vertexColors` for cap/rim/stem) lit by
+two mushroom-only lights added to the scene — a strong key light plus a
+deliberately DIM ambient hemisphere fill (round-2 finding: a hemisphere
+close in intensity to the key light washed the tiny cap back into flat gray;
+real light/shadow contrast is what makes a form this small still read as
+3D) and a low warm rim light. Every OTHER material in the scene stays fully
+unlit (`MeshBasicMaterial`/raw `ShaderMaterial`), so these lights have zero
+effect elsewhere. `BASE_SCALE` went 0.16 → 0.22 (round 1) → 0.42 (round 3,
+still too small at 0.22 for the shading to read at any real screen size) and
+the minimum-scale floor 0.6 → 0.75. A soft additive glow halo now sits
+behind each cap (`PointGlowInstances`, which gained a configurable
+`opacity` prop, default 0.95 unchanged for fusion knots/tips, 0.3 for the
+mushroom halo so it reads as a diffuse aura rather than a second solid
+shape fighting the lit cap for attention). A small render-time vertical
+stagger (`VERTICAL_STAGGER`, seeded per mushroom id, cosmetic only — the
+real `Mushroom.position.y` is untouched) was added so a cluster doesn't
+read as one flat row. Domain-level fan-out (M3 round 2's
+`buildMushroomsOnRings`) was left as-is — the remaining "clump" read was a
+rendering-scale problem, not a distribution problem (confirmed by how much
+better a scattered cluster reads once caps are 2x bigger and shaded).
+
+**3. Selection** (`growthMaterial.ts`, `CameraFocus.tsx`, `SoilDisc.tsx`,
+`soilMaterial.ts`): the selected hypha's fragment-shader core width now
+narrows far less (`coreWidth` mixes 6.5 → 2.2 when selected) and never
+fully fades near its own ribbon edge (`outAlpha = max(outAlpha, isSelected *
+vAlpha * 0.85)`), so it reads as a visibly thicker, near-solid glowing line,
+not just a tinted version of the same thin thread; its brightness boost went
+`+0.55` → `+0.7` → `+0.85` across rounds, and the rest of the galaxy dims to
+`0.3` alpha (was `0.22`, both within the brief's 0.25–0.35 band). A real
+verification gap was found and fixed while checking this: the two bundled
+fixtures' hardcoded visual-QA selection ids (`scripts/shot.ts`) were each
+fixture's *smallest* PR (valtio PR #1, express PR #645 — both ~1-commit
+diffs), which the colony layout's work-driven hypha length (M2d) draws only
+a few screen pixels long regardless of how bright selection makes it —
+confirmed via a throwaway debug screenshot that the *exact same* shader
+reads as unmistakably bright on a substantial PR. Swapped both ids to each
+fixture's own largest merged PR (valtio #965/170 commits, express
+#2554/504 commits) and largest closed PR (valtio #962/77 commits, express
+#5139/37 commits), so the committed screenshots actually demonstrate the
+effect. Selecting a mushroom now reveals its own real release-ring radius
+as a hairline on the soil (reusing `soilMaterial.ts`'s existing, previously
+dead, ring-uniform machinery — `SoilDisc` updates the uniforms live via the
+mesh ref on selection change, never rebuilding the disc material/geometry);
+the ring's own glow constants were bumped louder (peak `0.045` → `0.09` →
+`0.4`, smoothstep width `0.012` → `0.014` → `0.022`) since it's now a rare
+single-ring reveal, not the old "every release, always on, many summed"
+case that needed to stay barely-there. Camera crop bug found and fixed: a
+mushroom near the disc's rim panned the camera fully onto it (`CameraFocus`
+preserves offset/distance, only translates), which for a far-from-center
+element shifted the view enough that the opposite side of the disc ran off
+-frame — `CameraFocus` now caps the pan distance to a fraction
+(`MAX_PAN_FRACTION_OF_RADIUS = 0.22`) of the model's own bounding radius,
+matching `CameraRig`'s own framing margin, so selection still visibly nudges
+the camera without ever cropping the galaxy.
+
+**4. Soil** (`soilMaterial.ts`, `Scene.tsx`): root-caused (not just
+re-tuned) the "flat light-blue plate with a hard edge" finding to the base
+gradient going darkest-at-center → LIGHTEST-at-edge and only then mixing
+toward black for the vignette starting at `0.82 * radius` — producing a
+visible lighter ring right before the rim, reading as a coin's raised edge.
+Fixed to one monotonic darkening: center now starts at the lighter of the
+two loam tokens (a deliberate "faint cool ambient haze near the core", P1
+item 7) and darkens continuously to the darkest token, with the vignette
+starting much earlier (`0.55 * radius`) and continuing the SAME direction
+(never reversing it) down to near-black at the true rim. A second,
+higher-frequency noise octave was added for finer grain. A second,
+independent edge-contrast source was found afterward (round 3): even with
+the gradient fixed, the disc's circular silhouette still showed a faint
+rim wherever the scene's own vertical sky-gradient background happened to
+be locally lighter than the disc's darkest edge tone (the tree scene's
+shared `buildSkyTexture` two-stop gradient, reused as-is by the network
+scene) — an edge-contrast (Mach-band) effect, not a color bug in the disc
+itself. Fixed by giving the network `Scene.tsx` its own FLAT background
+color matching the soil shader's exact vignette target, instead of reusing
+the shared gradient texture (`src/ui/scene/geometry/skyTexture.ts` itself
+was left untouched — still used by the not-yet-removed tree scene).
+
+**5. Mobile** (`ViewerHeader.tsx`, `CameraFocus.tsx`): the header's "Copy
+link"/"Save image" buttons collapse to icon-only (🔗/⇩, real
+`aria-label` + `title`, `useMediaQuery('(max-width: 640px)')`) under narrow
+widths, freeing width for the repo name (which already truncates via
+ellipsis rather than overflowing) — confirmed fixed via a before/after
+mobile shot: `expressjs/express` now renders in full where it previously
+truncated to `expressj…`. The disc-cropping half of this item turned out to
+be the SAME root cause as item 3's camera-pan bug (a selection focused near
+the rim, common on the narrow mobile shots the review looked at) — the pan
+clamp fixes both; a plain (non-selected) mobile shot was already unclipped
+before this fix too, confirming the clamp was the right fix rather than a
+`CameraRig` framing-margin change.
+
+**6. Overflow honesty** (`src/domain/network/renderHints.ts`,
+`Legend.tsx`, `ViewerPage.tsx`): new pure `formatOverflowNote(hyphaeOmitted)`
+helper (tested: null at 0/negative, singular at 1, plural otherwise) renders
+a quiet note under the Legend ("+N pull requests not drawn") whenever
+`NetworkModel.overflow.hyphaeOmitted` is non-zero. Neither bundled fixture
+hits the render cap (623/826 hyphae vs. the ~1000 cap, per M3's own
+measurement), so this is inert for the demo but no longer silent for a
+1000+-hypha repo.
+
+**Visual iteration (4 rounds, `pnpm shot` both fixtures × desktop/mobile ×
+end/mid/selected-merged/selected-closed + a new selected-mushroom shot,
+20–24 screenshots/round, reviewed with Read, 0 console errors every round;
+draw calls re-measured at 26/frame via a temporary `drawArrays`/
+`drawElements` monkeypatch, same as M3's own count, removed before commit
+— the P12 "~40" budget still holds even with 2 more lights and 1 more
+instanced glow mesh, since postprocessing's own bloom/tonemap passes
+dominate the count, not scene object count):**
+
+- **Round 1** (`crossU` falloff + `tipTaperFactor` + soil monotonic-gradient
+  fix + mobile header icon-buttons + overflow note, all committed-code
+  state, no in-flight edits during the shot run): filaments read as
+  noticeably finer wispy curved threads, a real improvement over flat
+  ribbons, though dense rim bundles (many hyphae terminating at similar
+  radii) still read as a solid bright fringe. The soil's hard "coin edge"
+  band was visibly gone, replaced by a smooth dark navy-teal disc fading
+  into the black background with no sharp ring. Mushrooms were still tiny
+  and essentially flat (unlit `MeshBasicMaterial`, no scene lights yet) —
+  small white/cream dot clusters, not yet legible as mushrooms. The mobile
+  header showed the full `expressjs/express` name with icon-only buttons.
+  Selection contrast was present but subtle: `pr#1`/`pr#645` (the original
+  shot.ts fixture ids) are both ~1-commit PRs, drawing only a few pixels
+  long regardless of brightness — flagged for investigation, not yet
+  understood as a fixture-id problem at this point.
+
+- **Round 2** (orchestrator relayed a direct review of
+  `mobile-express-selected-mushroom.png`): confirmed 4 concrete problems at
+  full mobile resolution — the disc was cropped left/right (camera panned
+  too far toward the selected mushroom), filaments still had bright
+  rectangular ends at the rim despite the round-1 taper (root-caused to
+  full-alpha near-tip segments still blooming), mushrooms were still "a
+  gray clump, no silhouettes" (confirmed: `MeshStandardMaterial` had just
+  been swapped in with no lights added yet — an incomplete intermediate
+  state, not a finished attempt), and the soil still showed a rim band
+  (root-caused afterward to the background-gradient edge-contrast issue,
+  item 4 above). Fixed all four: camera pan clamp, alpha-tied taper +
+  narrower `RIBBON_WIDTH_SCALE`, mushroom lights + bigger scale + softer
+  glow, flat matching background.
+
+- **Round 3** (all four round-2 fixes applied): the mobile disc now sits
+  fully within the viewport with margin on both sides, confirmed on both a
+  non-selected and a mushroom-selected shot. Mushrooms read as distinct
+  cream-white lumpy cap clusters with real shading gradients (lighter/
+  darker patches across the caps) — a clear, literal improvement from flat
+  dots, though individual stems still aren't legible as separate from the
+  cap at this scale and the cluster still reads as one fused blob rather
+  than clearly-separate mushrooms. The soil disc's silhouette now blends
+  seamlessly into the background with no visible edge anywhere around the
+  circumference. A throwaway debug screenshot (PR #2554, 504 commits,
+  `hypha-pr2554`) confirmed the selection shader itself was already working
+  correctly — the earlier "hard to see" impression was the fixture-id
+  problem (item 3 above), not a shader bug; fixed by swapping
+  `scripts/shot.ts`'s ids to each fixture's largest PR.
+
+- **Round 4** (final confirmation, full clean run + a selection-ring
+  visibility bump since the mushroom-selected shot's ring was present in
+  the uniform data but too subtle to see at the old always-on-many-rings
+  constants): `desktop-express-selected-merged.png` (PR #2554) shows an
+  unmistakably bright near-white arm running from the spore out to the
+  mushroom cluster while the rest of the galaxy has visibly dimmed;
+  `desktop-valtio-selected-closed.png` (PR #962, 77 commits, closed) shows
+  a clear curved chain of small bright white hair-ticks (one per commit)
+  tracing the selected hypha's path, exactly matching "hairs/commits
+  visible as fine bright ticks." `desktop-valtio-selected-mushroom.png`
+  (v1.0.0, an early/small-radius release) shows a faint but genuinely
+  visible cyan hairline arc around the spore at the mushroom's own ring
+  radius. Landing page and both product-state screens (token-required,
+  not-found) were re-checked for regressions from the flat-background
+  change and showed none.
+
+**Draw calls**: 26/frame (measured via a temporary `requestAnimationFrame`-
+bracketed monkeypatch of `drawArrays`/`drawElements`/the instanced variants
+around the express fixture, removed before commit) — unchanged from M3's
+own 26, comfortably under the "~40" budget; postprocessing's own multi-pass
+bloom/tonemap dominates the count, so 2 more lights + 1 more instanced
+mushroom-glow mesh didn't move it. fps not benchmarked on real GPU hardware
+(same residual pattern as every earlier rendering task in this doc — only
+verified via headless SwiftShader software rendering).
+
+Checks (foreground, run independently for EACH commit by stashing the
+later, not-yet-committed changes first, not just once at the end): `pnpm
+typecheck`: pass (all 3 commits) · `pnpm lint`: pass (all 3 commits) ·
+`pnpm test`: 382 tests total (+13 for M3b: `tipTaperFactor` 6,
+`hashNoise` 3, `formatOverflowNote` 4), pass at every commit when run
+standalone · `pnpm build`: pass at every commit (`Scene` chunk ~1037 kB /
+gzip ~277 kB, essentially unchanged from M3) · `pnpm shot`: 0 console
+errors at every commit and every round (20/20 before the mushroom-selected
+shot was added in commit 2, 24/24 after).
+
+**Known pre-existing flake, reconfirmed, not introduced here** (same one
+M3 already flagged): `buildNetwork.test.ts`'s 1000-PR colony-layout
+performance test (600ms budget) intermittently failed under full-suite
+parallel worker load in 4 separate `pnpm test` runs during this task
+(605–720ms observed), always passed standalone
+(`pnpm vitest run src/domain/network/buildNetwork.test.ts`, run 5 times,
+0 failures). Untouched here (no perf-sensitive code changed).
+
+**P1–P12 polish-bar status, honestly reassessed**:
+- **P1 Palette** — holds; no token changes, only how the existing tokens
+  are used (soil gradient monotonicity, mushroom lighting doesn't add new
+  hues).
+- **P2 Light & glow** — holds, extended: bloom is still purely selective;
+  mushroom lighting is a new but fully isolated (mushroom-only-material)
+  addition, not a scene-wide haze regression.
+- **P3 Organic form** — much improved, not fully closed: filaments now
+  taper to true points with a real cross-ribbon glow falloff instead of a
+  flat rectangle; a genuinely dense bundle of many hyphae terminating near
+  the same rim radius still reads as a thicker fringe than a single
+  isolated strand would (an aggregate-density effect, not an unfixed
+  per-strand taper — see round 1/2 notes above).
+- **P4 Motion** — holds, unchanged by this task.
+- **P5 UI craft** — improved: the mobile header no longer starves the repo
+  name of width.
+- **P6–P8** — unchanged by this task (not in scope).
+- **P9 Legibility** — holds and is meaningfully stronger: the legend's
+  claims (spore/filament/knot/mushroom/etc.) are now visually true at a
+  glance, not just technically true in the data.
+- **P10 Share** — unchanged.
+- **P11 A11y** — the two header buttons now expose real `aria-label`s when
+  collapsed (previously always had visible text, arguably equivalent or
+  better for a screen reader either way) — not independently re-audited
+  beyond this, same residual as M3 (no automated contrast-ratio check, no
+  screen-reader walkthrough).
+- **P12 Perf & robustness** — holds: draw calls unchanged (26), 0 console
+  errors across every round/commit, `NetworkModel.overflow` is no longer
+  silently dropped.
+
+**Weaknesses, honestly reported**:
+- A genuinely dense bundle of same-direction hyphae (the galaxy's own
+  "arms") still reads as a thicker bright fringe at the rim than any single
+  strand's own taper would suggest — an aggregate-density effect from many
+  overlapping additive strands, not a leftover per-strand square-cap bug.
+  Reducing it further would mean either thinning `RIBBON_WIDTH_SCALE`
+  again (already tuned down twice, risks the opposite "spidery/wispy" if
+  reduced further) or reducing hypha density itself (a data/layout
+  decision, out of this task's scope).
+- Mushroom clusters (still real fan-out data, not a straight line) read as
+  one fused lumpy cap-cluster shape rather than clearly-separate individual
+  mushrooms at the full-disc zoom level used for visual QA — legible as
+  "mushrooms growing here," not yet legible as "N distinct mushrooms."
+  Zooming in (camera focus on a selected mushroom, e.g. via a closer
+  `CameraFocus` distance override for mushroom selections specifically) was
+  considered but not implemented — time-boxed out, flagging for a possible
+  future pass.
+- The selection ring hairline is faint by design (a single ring, not meant
+  to compete with the galaxy) — genuinely visible in a full-resolution
+  screenshot for an early/small-radius release (`v1.0.0` in the valtio
+  fixture) but not independently re-verified for a large-radius (recent)
+  release, where it would trace a much bigger circle closer to the rim's
+  own dense fringe and could be harder to distinguish.
+- fps not benchmarked on real GPU hardware (same residual as every prior
+  rendering task).
+- Touch/real mobile-device interaction still not manually verified (same
+  residual as M3/T6).
+- The mobile disc-cropping fix (camera pan clamp) was verified fixed via
+  screenshots at the one viewport width this project tests (390px) — not
+  verified across a wider range of real device widths.
+
 ## Next step
 M4 (cleanup: remove the now-fully-superseded `src/domain/tree/` and
 `src/ui/scene/tree/` code and the tree-specific `Scene.tsx`/`TreeScene.tsx`
@@ -1791,11 +2087,18 @@ contrast audit, the residuals listed above) and the final independent
 design/product review against P1–P12.
 
 **Decisions/gaps for the product owner (M4/T8 planning)**:
-- `NetworkModel.overflow` still isn't surfaced in the UI — worth a small
-  M4/T8 pass (e.g. an honest "+N more" note near the Legend), or acceptable
-  to leave silent given neither fixture hits the cap?
-- The soil shader's now-unused ring machinery — wire up the "hover/select a
-  mushroom reveals its own ring" idea, or delete it as dead code?
+- `NetworkModel.overflow` is now surfaced (M3b) — confirm the wording/
+  placement ("+N pull requests not drawn", a quiet line under the Legend)
+  reads correctly, or wants a different treatment.
+- The soil shader's ring machinery is now wired up for mushroom selection
+  (M3b) — confirm the current single-ring-on-select behavior is the wanted
+  scope, or whether hovering (not just selecting) a mushroom should also
+  reveal it.
+- Mushroom clusters still read as one fused shape rather than clearly-
+  separate individuals at full-disc zoom (see Weaknesses) — worth a
+  dedicated close-up treatment (e.g. camera zooms closer specifically for a
+  selected mushroom), or acceptable as "reads as fruiting here" for the
+  MVP?
 - `src/domain/network/layout.ts`'s spiral layout and its own SVG/tests are
   now fully superseded by colony for the shipped product — confirm M4 should
   delete `layoutNetwork`/the spiral path through `buildNetwork` too, not
