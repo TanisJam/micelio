@@ -42,8 +42,8 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] T1 Scaffold: Vite+React+TS, R3F/drei, Vitest, ESLint, scripts, folder structure. Route: delegated (writer trigger).
 - [x] T2 Data: domain repo model + GitHub GraphQL adapter + `/api/repo` endpoint (dev middleware + Vercel function) with cache + fixture. Route: delegated.
 - [x] T3 Tree model: pure deterministic layout (eras → limbs → twigs → leaves, flowers, fruit, buds, soil strata), caps; unit tests. Route: delegated.
-- [ ] T4 Rendering: diorama island, trunk/limb/twig tube geometry, instanced leaves, flowers, fruit, buds, lighting, orbit camera. Route: delegated.
-- [ ] T5 Growth time-lapse + time scrubber. Route: delegated.
+- [x] T4 Rendering: diorama island, trunk/limb/twig tube geometry, instanced leaves, flowers, fruit, buds, lighting, orbit camera. Route: delegated.
+- [x] T5 Growth time-lapse + time scrubber. Route: delegated.
 - [ ] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
 - [ ] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
@@ -144,6 +144,155 @@ shares sum to 1).
 Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (75
 tests total) · `pnpm build`: pass.
 
+### T4 Rendering — done
+Commit: `403c4c3` feat: render repository tree as low-poly diorama.
+`src/ui/theme/`: `color.ts` (pure hex math: mix/soften/ramp, tested) +
+`tokens.ts` (the ~10-color palette, `leafColorForAge`,
+`soilStratumColor` softening real GitHub language colors toward the
+soil palette, UI tokens). `src/ui/scene/geometry/`: `tubeFrames.ts`
+(stable look-at frame per polyline, single reference chosen from the
+*overall* start→end direction rather than per-point — a per-point
+choice twisted near-vertical tubes when jitter crossed the flip
+threshold, tested), `tubeGeometry.ts` (low-poly tapered tube +
+`drawRangeForProgress` for T5), `island.ts` (merged, vertex-colored,
+single-draw-call floating island: rocky tip + strata bands from real
+soil shares + bumpy grass cap, seeded jitter), `instances.ts`
+(instance-matrix helpers), `shapes.ts` (shared leaf/fruit/flower/bud
+geometries), `skyTexture.ts` (screen-space gradient background — tried
+a world-anchored sky sphere first; abandoned because the gradient was
+imperceptible at typical camera pitch, see below). `src/ui/scene/tree/`:
+`TrunkMesh`/`LimbMeshes` (draw-range reveal), `Twigs` (one instanced
+mesh, per-instance aligned+scaled), `Leaves`/`Fruits`/`Flowers`/`Buds`
+(`ScatterInstances`, per-instance color via `instanceColor`),
+`SoilIsland` (+ drei `ContactShadows` beneath it), `Lighting`
+(hemisphere + directional sun, VSM soft shadows sized to the tree's
+bounds), `CameraRig` (auto-framed OrbitControls, damped, distance/polar
+limits), `WindSway` (crown-only sway, disabled under
+prefers-reduced-motion), `TreeScene` (composer), `useTreeGeometry`
+(memoized build + dispose). `src/domain/tree/bounds.ts`
+(`computeModelBounds`, tested) added for camera/lighting framing.
+`Scene.tsx` owns the R3F `Canvas` (ACES tone mapping, sRGB output,
+scene fog) and is the `React.lazy` boundary; `App.tsx` fetches via
+`useRepoTree` and renders it fully grown (T5 adds the time cursor).
+`scripts/shot.ts` (Playwright + SwiftShader-software-WebGL headless
+Chromium) added for the required visual QA loop.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+(120 tests) · `pnpm build`: pass (606→604 modules for this commit;
+`Scene` chunk ~948 kB / gzip ~252 kB lazy-loaded, initial `index` chunk
+~233 kB / gzip ~74 kB) · `pnpm shot`: 4/4 screenshots saved, 0 console
+errors.
+Visual iteration (>3 rounds, via `.shots/` + Read tool): (1) first pass
+had a flat-orange non-gradient sky (world sky sphere: camera pitch
+kept world-Y direction nearly constant across the frame) and a twisted
+"X" of geometry at the trunk base (per-point tube-frame reference
+flipped near-vertical) — fixed the frame reference and switched the
+sky to a screen-space gradient texture. (2) added the missing
+`ContactShadows` under the island (P2 explicitly asks for one) and
+fixed a spiked grass-cap center vertex (jitter was moving the
+fan-triangulation's center vertex, poking a thin degenerate spike
+through the trunk). (3+) confirmed clean silhouette, attached parts, no
+console errors on desktop 1440×900 and mobile 390×844.
+
+### T5 Growth — done
+Commit: `cc5a60b` feat: animate tree growth over repository history.
+`src/domain/tree/growth.ts` (pure, tested): `trunkGrowthProgress`,
+`limbGrowthProgress`, `limbFullyGrownTime`, `twigGrowthProgress`,
+`popScale`, `mapPlaybackProgressToTime`, `easePlaybackProgress` (reuses
+`easeOutCubic`/`easeInOutCubic` added to `src/domain/math.ts`).
+`src/ui/hooks/useGrowthClock.ts`: an imperative (non-React-state)
+playback controller — `getTime()` is read every frame from `useFrame`
+inside the R3F tree so growth animation never triggers a React
+re-render of the scene; `useSyncExternalStore`-compatible `subscribe`
+for the UI (scrubber) to re-render at its own rate. Auto-plays 0→1 over
+10s eased (`easeInOutCubic`) from first event to now on mount; jumps
+straight to the end under `prefers-reduced-motion`; a `?t=0..1` query
+param pins a fixed frame instead (used by `scripts/shot.ts`).
+`src/ui/components/TimeScrubber.tsx`: bottom bar, play/pause + range
+slider + formatted current date, token-styled; space toggles
+play/pause, arrow keys nudge the cursor (both `preventDefault`), `role="group"`
++ `aria-label`s.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+(134 tests, +14 for T5) · `pnpm build`: pass (606 modules; same chunk
+split as T4) · `pnpm shot`: 4/4 screenshots (desktop/mobile ×
+end/mid-growth) saved, 0 console errors.
+**A real correctness bug found and fixed while building this** (not
+just cosmetic): `limbGrowthProgress` originally revealed a limb's tube
+by a smooth *time* ratio across its era. Merged-PR times within an era
+can cluster unevenly (e.g. a burst right after the era starts, then a
+long gap before one more PR merges much later — real shape of the
+`pmndrs/valtio` fixture data), so a twig could already be popped
+(`currentTime >= twig.time`) while the limb's time-ratio progress was
+still far short of that twig's position along the polyline — the twig
+and its leaves rendered floating past the limb's visible tip. Root-
+caused by screenshotting `?t=0.5`, then bisecting with throwaway debug
+colors per element category (leaves cyan, buds magenta, twigs green)
+to identify which category the floating dots belonged to (turned out
+to be twigs/leaves on the topmost limb, not buds as first suspected).
+Fixed by revealing a limb by *twig count* instead (a twig's polyline
+position is `index / (twigCount - 1)`, and revealing `grownTwigs /
+totalTwigs` of the limb is provably always >= that fraction — see the
+comment + regression test in `growth.ts`), plus rounding
+`drawRangeForProgress` up (not to nearest) since ring granularity is
+coarser than twig count, plus gating overflow-leaf (`twigId === null`)
+pop-in on `limbFullyGrownTime` since their position is random along the
+limb, not twig-indexed, plus gating buds on the trunk's own fully-grown
+time. `ScatterInstances` also defensively moves not-yet-grown instances
+to a far-away hidden position (not just zero scale), in case a
+renderer treats a fully degenerate (zero-scale) instance as a stray
+pixel.
+**Residual, honestly reported**: at some intermediate growth fractions
+for this specific fixture (e.g. `?t=0.5`), a handful of very small,
+correctly-positioned, correctly-timed leaf/twig instances near the
+crown of the tallest limb render as small isolated dots rather than
+visibly connected to a branch — verified (via the same debug-color
+technique) that this is *not* a floating-before-its-branch bug (the
+underlying growth-progress data is now provably safe), but a
+legibility issue: a real, sparse, mid-growth subset of that limb's
+twigs is thin enough at this camera distance/scale that the connecting
+twig line doesn't survive rasterization while the (larger) leaf card
+does. Cosmetic, transient (only visible while scrubbed to specific
+mid-growth fractions, not at the resting fully-grown state), and would
+need either thicker twig radii or growth-state-aware twig visibility
+tuning to fully resolve — flagging for T8's visual pass rather than
+gold-plating further here.
+
+### Polish bar assessment after T4/T5 (P1–P4, P12)
+- **P1 Palette** — holds. Tokenized in `src/ui/theme/tokens.ts` (~10 base
+  colors), shared by 3D (bark/soil/leaf-ramp/fruit/blossom/bud/sky/fog) and
+  the scrubber UI. Real per-repo GitHub language colors drive soil strata,
+  softened toward the palette via `softenToward`.
+- **P2 Style** — holds. Flat-shaded low-poly throughout (via material
+  `flatShading`, works with shared/indexed geometry since three derives
+  face normals from screen-space derivatives, not vertex duplication);
+  hemisphere + directional sun with VSM soft shadows sized to the tree's
+  bounds; contact shadow under the floating island; warm sky gradient;
+  light scene fog.
+- **P3 Silhouette** — holds at the resting (fully-grown) state, verified on
+  desktop and mobile screenshots: tapered trunk, real crown mass, every
+  limb/twig/leaf attached (no intersecting-the-trunk or floating parts).
+  Weaker during specific *mid-growth* scrub positions for this fixture (see
+  T5 evidence above) — a legibility issue (thin twig vs. visible leaf at
+  small scale), not a floating/attachment bug; flagged for T8.
+- **P4 Motion** — holds. Idle wind sway (crown only, not trunk/island),
+  eased ~10s auto-play growth, damped OrbitControls; all gated off under
+  `prefers-reduced-motion` (sway disabled, growth jumps straight to the
+  end). fps not benchmarked on real hardware (only verified via headless
+  SwiftShader software rendering, which is not representative of real-GPU
+  frame time) — recommend a manual check on a mid laptop before calling
+  this fully verified.
+- **P12 Perf & robustness** — holds for this fixture. Measured (via a
+  temporary `renderer.info` hook, removed before commit): **50 draw
+  calls** (island 1, contact-shadow ~a few, trunk 1, ≤16 individual limb
+  meshes, twigs/leaves/fruit/flowers/buds each 1 instanced mesh) — under
+  the "~60" target. 83k triangles for the `pmndrs/valtio` fixture (538
+  merged PRs, 1230 leaves). Not yet verified against a 1000+-PR repo (T2's
+  caps bound the *data*, but a repo with many more eras/twigs than this
+  fixture hasn't been screenshotted) or a genuinely tiny/empty repo —
+  recommend as a T8 check. Lazy-loaded 3D chunk confirmed (`Scene` chunk
+  ~948 kB / gzip ~252 kB, separate from the ~233 kB / gzip ~74 kB initial
+  bundle). Geometries are memoized on the model and disposed on
+  unmount/model change (`useTreeGeometry`'s cleanup effect).
+
 ### Notes / gaps for the product owner
 - **`.env.example` could not be created**: the sandbox's permission layer
   hard-denies any write to a path matching `.env*` (tested via both the Write
@@ -156,4 +305,10 @@ tests total) · `pnpm build`: pass.
   per Scope — not attempted.
 
 ## Next step
-T4 (rendering) — out of scope for this writer; hand back to the orchestrator.
+T6 (navigation & inspection) — out of scope for this writer; hand back to
+the orchestrator. `onElementHover`/`onElementSelect(id)` props already
+flow through `TreeScene`/`Scene`/every instanced+individual mesh (twig
+merged geometry resolves `event.instanceId` -> element id array; trunk/
+limb meshes carry a fixed id) so T6 should be able to wire hover/click
+without touching the renderer's internals — only the detail panel, focus
+camera and era list remain.
