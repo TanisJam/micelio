@@ -6,9 +6,11 @@ export { getNetworkElementFocusPosition } from './focus'
 export {
   assignLanes,
   buildActivityCdf,
+  discRadius,
   DISC_MAX_RADIUS,
   localSpiralPitch,
   NESTED_MAX_LANE_DEPTH,
+  pointOnHyphaAtRadius,
   pointOnHyphaAtTime,
   radiusForCommitCount,
   radiusForFrac,
@@ -21,6 +23,6 @@ export {
 } from './layout'
 export { findNetworkElement } from './lookup'
 export { buildMushrooms, buildMushroomsOnRings, computeReleaseSequence, MUSHROOM_CLUSTER_ANGLE_SCATTER, MUSHROOM_CLUSTER_SCATTER } from './mushrooms'
-export { assignAngularSlots, assignSlotsWithinGroup, authorKeyOf, buildAuthorSectors, resolveSectorKey, type AngularSlot, type AuthorSector } from './sectors'
+export { authorKeyOf, buildAuthorHueIndex, MAX_AUTHOR_HUES, resolveAuthorHueKey } from './sectors'
 export { buildHyphaTopology, DEFAULT_TOPOLOGY_OPTIONS, type HyphaDraft, type TopologyOptions, type TopologyResult } from './topology'
 export * from './types'

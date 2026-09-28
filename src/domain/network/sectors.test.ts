@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HyphaDraft } from './topology'
-import { assignAngularSlots, assignSlotsWithinGroup, authorKeyOf, buildAuthorSectors, resolveSectorKey } from './sectors'
+import { authorKeyOf, buildAuthorHueIndex, MAX_AUTHOR_HUES, resolveAuthorHueKey } from './sectors'
 
 function stubDraft(overrides: Partial<HyphaDraft>): HyphaDraft {
   return {
@@ -16,109 +16,66 @@ function stubDraft(overrides: Partial<HyphaDraft>): HyphaDraft {
     url: 'https://x',
     author: { login: null, avatarUrl: null },
     commitCount: 1,
+    workLines: null,
     commits: [],
     ...overrides,
   }
 }
 
-describe('buildAuthorSectors', () => {
-  it('gives every top contributor a sector proportional to their merged-PR count', () => {
+describe('buildAuthorHueIndex', () => {
+  it('ranks contributors by merged-PR count, most first', () => {
     const hyphae: HyphaDraft[] = [
       ...Array.from({ length: 5 }, (_, i) => stubDraft({ id: `a${i}`, author: { login: 'alice', avatarUrl: null }, splitTime: i * 1000, kind: 'merged' })),
       ...Array.from({ length: 2 }, (_, i) => stubDraft({ id: `b${i}`, author: { login: 'bob', avatarUrl: null }, splitTime: 500 + i * 1000, kind: 'merged' })),
     ]
-    const sectors = buildAuthorSectors(hyphae)
-    expect(sectors.has('alice')).toBe(true)
-    expect(sectors.has('bob')).toBe(true)
-    expect(sectors.get('alice')!.angleWidth).toBeGreaterThan(sectors.get('bob')!.angleWidth)
+    const index = buildAuthorHueIndex(hyphae)
+    expect(index.get('alice')).toBe(0)
+    expect(index.get('bob')).toBe(1)
   })
 
-  it('sector widths always sum to exactly 2*pi', () => {
-    const hyphae: HyphaDraft[] = Array.from({ length: 30 }, (_, i) =>
-      stubDraft({ id: `pr${i}`, author: { login: `author${i % 8}`, avatarUrl: null }, splitTime: i * 1000, kind: i % 3 === 0 ? 'closed' : 'merged' }),
+  it('always reserves a community index, even for a zero-merged-PR-only population', () => {
+    const hyphae: HyphaDraft[] = [stubDraft({ id: 'c1', author: { login: 'casual', avatarUrl: null }, splitTime: 500, kind: 'closed' })]
+    const index = buildAuthorHueIndex(hyphae)
+    expect(index.has('casual')).toBe(false)
+    expect(index.get('community')).toBe(MAX_AUTHOR_HUES)
+  })
+
+  it('caps individual indices at MAX_AUTHOR_HUES, pushing the long tail to community', () => {
+    const hyphae: HyphaDraft[] = Array.from({ length: MAX_AUTHOR_HUES + 10 }, (_, i) =>
+      stubDraft({ id: `pr${i}`, author: { login: `author${i}`, avatarUrl: null }, splitTime: i * 1000, kind: 'merged' }),
     )
-    const sectors = buildAuthorSectors(hyphae)
-    const total = [...sectors.values()].reduce((sum, s) => sum + s.angleWidth, 0)
-    expect(total).toBeCloseTo(Math.PI * 2, 6)
+    const index = buildAuthorHueIndex(hyphae)
+    const individualIndices = [...index.entries()].filter(([key]) => key !== 'community')
+    expect(individualIndices).toHaveLength(MAX_AUTHOR_HUES)
+    for (const [, value] of individualIndices) expect(value).toBeLessThan(MAX_AUTHOR_HUES)
+    expect(index.get('community')).toBe(MAX_AUTHOR_HUES)
   })
 
-  it('groups long-tail (non-top, or zero-merged) authors into a shared community sector', () => {
-    const hyphae: HyphaDraft[] = [
-      ...Array.from({ length: 10 }, (_, i) => stubDraft({ id: `a${i}`, author: { login: 'alice', avatarUrl: null }, splitTime: i * 1000, kind: 'merged' })),
-      stubDraft({ id: 'c1', author: { login: 'casual', avatarUrl: null }, splitTime: 500, kind: 'closed' }), // 0 merged PRs
-    ]
-    const sectors = buildAuthorSectors(hyphae)
-    expect(sectors.has('casual')).toBe(false)
-    expect(sectors.has('community')).toBe(true)
-  })
-
-  it('is deterministic and covers every hypha with a resolvable sector', () => {
+  it('is deterministic', () => {
     const hyphae: HyphaDraft[] = Array.from({ length: 20 }, (_, i) =>
       stubDraft({ id: `pr${i}`, author: { login: i % 4 === 0 ? null : `author${i % 5}`, avatarUrl: null }, splitTime: i * 1000, kind: 'merged' }),
     )
-    const a = buildAuthorSectors(hyphae)
-    const b = buildAuthorSectors(hyphae)
-    expect([...a.entries()]).toEqual([...b.entries()])
-    for (const draft of hyphae) {
-      const key = resolveSectorKey(draft.author.login, a)
-      expect(a.has(key)).toBe(true)
-    }
-  })
-
-  it('falls back to one full-circle community sector for an empty hypha list', () => {
-    const sectors = buildAuthorSectors([])
-    expect(sectors.size).toBe(1)
-    expect(sectors.get('community')!.angleWidth).toBeCloseTo(Math.PI * 2, 6)
-  })
-})
-
-describe('assignAngularSlots', () => {
-  it('assigns every hypha an angle strictly within its own sector', () => {
-    const hyphae: HyphaDraft[] = Array.from({ length: 25 }, (_, i) =>
-      stubDraft({ id: `pr${i}`, author: { login: `author${i % 6}`, avatarUrl: null }, splitTime: i * 1000, endTime: i * 1000 + 500, kind: 'merged' }),
-    )
-    const sectors = buildAuthorSectors(hyphae)
-    const slots = assignAngularSlots(hyphae, sectors, 'o/r')
-    for (const draft of hyphae) {
-      const slot = slots.get(draft.id)!
-      const twoPi = Math.PI * 2
-      const relative = (((slot.angle - slot.sector.angleStart) % twoPi) + twoPi) % twoPi
-      expect(relative).toBeGreaterThanOrEqual(-1e-9)
-      expect(relative).toBeLessThanOrEqual(slot.sector.angleWidth + 1e-9)
-    }
-  })
-
-  it('is deterministic for the same seed', () => {
-    const hyphae: HyphaDraft[] = Array.from({ length: 10 }, (_, i) => stubDraft({ id: `pr${i}`, author: { login: 'alice', avatarUrl: null }, splitTime: i * 1000 }))
-    const sectors = buildAuthorSectors(hyphae)
-    const a = assignAngularSlots(hyphae, sectors, 'o/r')
-    const b = assignAngularSlots(hyphae, sectors, 'o/r')
+    const a = buildAuthorHueIndex(hyphae)
+    const b = buildAuthorHueIndex(hyphae)
     expect([...a.entries()]).toEqual([...b.entries()])
   })
-})
 
-describe('assignSlotsWithinGroup', () => {
-  it('assigns non-overlapping lanes to overlapping-time items', () => {
-    const items = [
-      { id: 'a', splitTime: 0, endTime: 10 },
-      { id: 'b', splitTime: 2, endTime: 8 }, // overlaps a
-      { id: 'c', splitTime: 20, endTime: 30 }, // no overlap with a
-    ]
-    const slots = assignSlotsWithinGroup(items)
-    expect(slots.get('a')!.slot).not.toBe(slots.get('b')!.slot)
-    expect(slots.get('a')!.slot).toBe(slots.get('c')!.slot) // c can reuse a's lane, a already ended
-    expect(slots.get('a')!.slotCount).toBe(slots.get('b')!.slotCount)
+  it('falls back to just the community index for an empty hypha list', () => {
+    const index = buildAuthorHueIndex([])
+    expect(index.size).toBe(1)
+    expect(index.get('community')).toBe(MAX_AUTHOR_HUES)
   })
 })
 
-describe('authorKeyOf / resolveSectorKey', () => {
+describe('authorKeyOf / resolveAuthorHueKey', () => {
   it('maps a null login to the community key', () => {
     expect(authorKeyOf(null)).toBe('community')
     expect(authorKeyOf('alice')).toBe('alice')
   })
 
   it('resolves an unlisted author to community', () => {
-    const sectors = buildAuthorSectors([stubDraft({ author: { login: 'alice', avatarUrl: null } })])
-    expect(resolveSectorKey('someone-else', sectors)).toBe('community')
+    const index = buildAuthorHueIndex([stubDraft({ author: { login: 'alice', avatarUrl: null } })])
+    expect(resolveAuthorHueKey('someone-else', index)).toBe('community')
+    expect(resolveAuthorHueKey('alice', index)).toBe('alice')
   })
 })

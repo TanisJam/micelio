@@ -182,6 +182,16 @@ export interface Mushroom {
   scale: number
   /** Groups close-in-time releases so they render as one small cluster; `null` if standalone. */
   clusterId: string | null
+  /**
+   * Colony layout only (M2d): the merged PR whose hypha this mushroom sits
+   * on -- the merged PR that landed closest before the release, when its own
+   * hypha's real work-driven length actually reaches the release's ring
+   * radius. `null` when no such real data link exists (the mushroom still
+   * sits exactly on its ring, anchored to the nearest crossing hypha purely
+   * visually, or -- lacking even that -- an arbitrary seeded angle); always
+   * `null` for the spiral layout.
+   */
+  nearPr: NetworkRef | null
 }
 
 export interface Spore {

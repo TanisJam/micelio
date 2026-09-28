@@ -44,6 +44,14 @@ export interface HyphaDraft {
   commitCount: number
   /** Ascending by time, clamped into `[splitTime, endTime]`. */
   commits: HyphaCommitDraft[]
+  /**
+   * Real `additions + deletions`, when known -- only merged PRs fetch diff
+   * stats (see M1/`queries.ts`; the closed/open PR fragments stay cheap and
+   * don't include them). `null` for closed/open PRs, live branches and
+   * `main` -- the colony layout's (M2d) work-based length formula treats a
+   * missing value as 0 work-lines rather than fabricating one.
+   */
+  workLines: number | null
 }
 
 export interface TopologyOptions {
@@ -88,6 +96,8 @@ interface PrSource {
   commits: { oid: string; authoredDate: string }[]
   /** `mergedAt` (merged), `closedAt` (closed), or `null` (open -- still growing). */
   endAt: string | null
+  /** See `HyphaDraft.workLines` -- only ever real for a merged PR. */
+  workLines: number | null
 }
 
 function fromMerged(pr: MergedPullRequest): PrSource {
@@ -103,6 +113,7 @@ function fromMerged(pr: MergedPullRequest): PrSource {
     commitCount: pr.commitCount,
     commits: pr.commits,
     endAt: pr.mergedAt,
+    workLines: pr.additions + pr.deletions,
   }
 }
 
@@ -119,6 +130,7 @@ function fromClosed(pr: ClosedPullRequest): PrSource {
     commitCount: pr.commitCount,
     commits: pr.commits,
     endAt: pr.closedAt,
+    workLines: null,
   }
 }
 
@@ -135,6 +147,7 @@ function fromOpen(pr: OpenPullRequest): PrSource {
     commitCount: pr.commitCount,
     commits: pr.commits,
     endAt: null,
+    workLines: null,
   }
 }
 
@@ -167,6 +180,7 @@ export function buildHyphaTopology(
     url: snapshot.meta.url,
     author: { login: null, avatarUrl: null },
     commitCount: snapshot.directCommits.length,
+    workLines: null,
     commits: snapshot.directCommits.map((commit) => ({
       time: clampTime(toEpochMs(commit.authoredDate), bounds.firstEventTime, bounds.lastEventTime),
       ref: { type: 'commit', id: commit.oid },
@@ -218,6 +232,7 @@ export function buildHyphaTopology(
       url: source.url,
       author: source.author,
       commitCount: source.commitCount,
+      workLines: source.workLines,
       commits: source.commits
         .map((commit) => ({
           time: clampTime(toEpochMs(commit.authoredDate), splitTime, endTime),
@@ -268,6 +283,7 @@ export function buildHyphaTopology(
       url: `${snapshot.meta.url}/tree/${branch.name}`,
       author: { login: null, avatarUrl: null },
       commitCount: 0,
+      workLines: null,
       commits: [],
     })
   }

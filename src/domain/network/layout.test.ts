@@ -38,6 +38,7 @@ function stubDraft(overrides: Partial<HyphaDraft>): HyphaDraft {
     url: 'https://x',
     author: { login: null, avatarUrl: null },
     commitCount: 1,
+    workLines: null,
     commits: [],
     ...overrides,
   }

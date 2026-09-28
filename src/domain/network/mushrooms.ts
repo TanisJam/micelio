@@ -1,8 +1,8 @@
 import type { ReleaseInfo } from '../repo'
 import { addVec3, polarToVec3, vec3, type Vec3 } from '../tree/vector'
-import { createPrng, randRange } from '../tree/prng'
-import { pointOnHyphaAtTime } from './layout'
-import type { HyphaPoint, Mushroom, NetworkRef } from './types'
+import { createPrng, randJitter, randRange } from '../tree/prng'
+import { discRadius, pointOnHyphaAtRadius, pointOnHyphaAtTime } from './layout'
+import type { Hypha, HyphaPoint, Mushroom, NetworkRef } from './types'
 
 /**
  * One mushroom per release, fruiting on the soil surface above its point on
@@ -18,7 +18,7 @@ const MUSHROOM_CLUSTER_GAP_MS = 1000 * 60 * 60 * 24 * 3 // releases within 3 day
 /** Exported for tests: a clustered mushroom's XZ position is real-data-anchored -- offset from its anchor point by at most this much. */
 export const MUSHROOM_CLUSTER_SCATTER = 0.05
 /** Colony layout only: angular scatter (radians) for a clustered mushroom around its ring anchor angle. */
-export const MUSHROOM_CLUSTER_ANGLE_SCATTER = 0.12
+export const MUSHROOM_CLUSTER_ANGLE_SCATTER = 0.24
 const MUSHROOM_SCALE_PATCH = 0.55
 const MUSHROOM_SCALE_MINOR = 0.75
 const MUSHROOM_SCALE_MAJOR = 1.05
@@ -108,24 +108,43 @@ export function buildMushrooms(releases: ReleaseInfo[], mainPoints: HyphaPoint[]
       clusterAnchor = anchor
     }
 
-    mushrooms.push(makeMushroom(entry, addVec3(anchor, scatter), clusterId))
+    mushrooms.push(makeMushroom(entry, addVec3(anchor, scatter), clusterId, null))
   }
 
   return mushrooms
 }
 
 /**
- * Colony layout (M2c): places each mushroom on its release's own growth
- * ring -- `radiusForTime(entry.time)` is the exact same time -> radius
+ * Colony layout (M2c/M2d): places each mushroom exactly on its release's own
+ * growth ring -- `radiusForTime(entry.time)` is the exact same time -> radius
  * mapping the colony's hyphae use, so "mushrooms sit on their release ring"
- * holds exactly. The ring itself carries no inherent angle (a growth ring is
- * rotationally symmetric), so each cluster gets one seeded anchor angle;
- * clustered releases scatter angularly around it instead of overlapping.
+ * holds exactly (`polarToVec3` always sets XZ magnitude to the given
+ * radius). The ring's ANGLE is a true data link when possible
+ * (`findRingAnchor`, M2d): the merged PR that landed closest before the
+ * release, at the point where *that PR's own hypha* actually crosses the
+ * ring radius -- recorded honestly as `Mushroom.nearPr`. Falls back to
+ * whichever hypha (any kind) happens to cross the ring, then to a seeded
+ * angle, when no real link is available -- `nearPr` is `null` in both
+ * fallback cases, mirroring `Hypha.attachment`'s honesty framing. Clustered
+ * releases share one anchor angle (scattered around it) but each still gets
+ * its own honestly-computed `nearPr`.
  */
-export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (time: number) => number, seed: string): Mushroom[] {
+export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (time: number) => number, hyphae: Hypha[], seed: string): Mushroom[] {
   if (releases.length === 0) return []
   const prng = createPrng(`${seed}:mushrooms-colony`)
   const sequence = computeReleaseSequence(releases)
+
+  // A busy release train can chain many entries into one cluster (item 5:
+  // "cluster close releases") -- independently-random per-member scatter
+  // (the original approach) can by chance pile several members into nearly
+  // the same spot ("a pile of overlapping mushrooms", round 2 orchestrator
+  // feedback), especially for a large cluster. Fanning members evenly
+  // across the scatter window by their own position in the cluster (plus a
+  // little jitter) keeps every member visually distinct while the cluster
+  // as a whole still reads as one small, tightly-grouped patch.
+  const clusterSizes = new Map<number, number>()
+  for (const entry of sequence) clusterSizes.set(entry.clusterIndex, (clusterSizes.get(entry.clusterIndex) ?? 0) + 1)
+  const clusterMemberSeen = new Map<number, number>()
 
   const mushrooms: Mushroom[] = []
   let clusterId: string | null = null
@@ -134,9 +153,18 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
   for (const entry of sequence) {
     if (!entry.isClustered) clusterId = null
 
-    const angle: number = clusterAngle ?? randRange(prng, 0, Math.PI * 2)
-    const scatterAngle = clusterAngle !== null ? randRange(prng, -MUSHROOM_CLUSTER_ANGLE_SCATTER, MUSHROOM_CLUSTER_ANGLE_SCATTER) : 0
     const radius = radiusForTime(entry.time)
+    const anchor = findRingAnchor(hyphae, entry.time, radius)
+    const angle: number = clusterAngle ?? anchor.angle ?? randRange(prng, 0, Math.PI * 2)
+
+    let scatterAngle = 0
+    if (clusterAngle !== null) {
+      const clusterSize = clusterSizes.get(entry.clusterIndex) ?? 1
+      const memberIndex = clusterMemberSeen.get(entry.clusterIndex) ?? 0
+      clusterMemberSeen.set(entry.clusterIndex, memberIndex + 1)
+      const fanFraction = clusterSize > 1 ? memberIndex / (clusterSize - 1) - 0.5 : 0
+      scatterAngle = fanFraction * 2 * MUSHROOM_CLUSTER_ANGLE_SCATTER + randJitter(prng, MUSHROOM_CLUSTER_ANGLE_SCATTER * 0.15)
+    }
     const position = polarToVec3(angle + scatterAngle, radius, MUSHROOM_LIFT)
 
     if (entry.isClustered && clusterId === null) {
@@ -148,13 +176,59 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
       clusterAngle = angle
     }
 
-    mushrooms.push(makeMushroom(entry, position, clusterId))
+    mushrooms.push(makeMushroom(entry, position, clusterId, anchor.nearPr))
   }
 
   return mushrooms
 }
 
-function makeMushroom(entry: ReleaseSequenceEntry, position: Vec3, clusterId: string | null): Mushroom {
+interface RingAnchor {
+  angle: number | null
+  nearPr: NetworkRef | null
+}
+
+/** A hypha's own start/end disc radius (ignores tube thickness), from its already-grown points. */
+function hyphaRadiusSpan(hypha: Hypha): { start: number; end: number } {
+  return { start: discRadius(hypha.points[0]!.position), end: discRadius(hypha.points[hypha.points.length - 1]!.position) }
+}
+
+/** See `buildMushroomsOnRings`'s doc comment for the two-step (real link, then honest visual fallback) strategy. */
+function findRingAnchor(hyphae: Hypha[], releaseTime: number, ringRadius: number): RingAnchor {
+  let closestMergedBefore: Hypha | null = null
+  for (const hypha of hyphae) {
+    if (hypha.kind === 'main' || hypha.status !== 'fused') continue
+    if (hypha.endTime > releaseTime) continue
+    if (!closestMergedBefore || hypha.endTime > closestMergedBefore.endTime) closestMergedBefore = hypha
+  }
+  if (closestMergedBefore) {
+    const span = hyphaRadiusSpan(closestMergedBefore)
+    if (ringRadius >= span.start - 1e-6 && ringRadius <= span.end + 1e-6) {
+      const at = pointOnHyphaAtRadius(closestMergedBefore.points, ringRadius)
+      return { angle: Math.atan2(at.position.z, at.position.x), nearPr: closestMergedBefore.ref }
+    }
+  }
+
+  let nearestCrossing: Hypha | null = null
+  let nearestDelta = Number.POSITIVE_INFINITY
+  for (const hypha of hyphae) {
+    if (hypha.kind === 'main') continue
+    const span = hyphaRadiusSpan(hypha)
+    if (ringRadius < span.start - 1e-6 || ringRadius > span.end + 1e-6) continue
+    const delta = Math.abs(hypha.time - releaseTime)
+    if (delta < nearestDelta) {
+      nearestDelta = delta
+      nearestCrossing = hypha
+    }
+  }
+  if (nearestCrossing) {
+    const at = pointOnHyphaAtRadius(nearestCrossing.points, ringRadius)
+    return { angle: Math.atan2(at.position.z, at.position.x), nearPr: null }
+  }
+
+  return { angle: null, nearPr: null }
+}
+
+function makeMushroom(entry: ReleaseSequenceEntry, position: Vec3, clusterId: string | null, nearPr: NetworkRef | null): Mushroom {
   const ref: NetworkRef = { type: 'release', id: entry.release.tag }
   return {
     id: `mushroom-${entry.release.tag}`,
@@ -164,5 +238,6 @@ function makeMushroom(entry: ReleaseSequenceEntry, position: Vec3, clusterId: st
     position,
     scale: entry.scale,
     clusterId,
+    nearPr,
   }
 }

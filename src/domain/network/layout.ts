@@ -275,6 +275,61 @@ export function radiusForCommitCount(commitCount: number): number {
   return lerp(SIDE_MIN_RADIUS, SIDE_MAX_RADIUS, logScale(commitCount, 0, 200))
 }
 
+/** Disc (XZ-plane) distance from the origin, ignoring `y` -- the colony layout's (M2d) notion of "radius" for gap-finding/growth, distinct from a `HyphaPoint.radius` (tube thickness). */
+export function discRadius(position: Vec3): number {
+  return Math.hypot(position.x, position.z)
+}
+
+/**
+ * Locates the position/disc-radius/tangent-angle of a positioned hypha's
+ * curve at an arbitrary DISC RADIUS (not time), clamped into its own
+ * start/end radius range -- the M2d colony layout's radius-keyed counterpart
+ * of `pointOnHyphaAtTime`. Points are assumed non-decreasing in disc radius
+ * along the array (true for every colony-grown hypha by construction). When
+ * `targetRadius` falls outside the hypha's own span (e.g. a real
+ * branch-from-branch child whose time-based attach radius outruns its real
+ * parent's own, shorter, work-driven length), the result clamps to the
+ * nearest end -- an honest "as far as this hypha actually reaches", not a
+ * fabricated extrapolation.
+ */
+export function pointOnHyphaAtRadius(points: HyphaPoint[], targetRadius: number): { position: Vec3; radius: number; tangentAngle: number | null } {
+  if (points.length === 0) {
+    return { position: vec3(0, 0, 0), radius: 0, tangentAngle: null }
+  }
+  if (points.length === 1) {
+    return { position: points[0]!.position, radius: discRadius(points[0]!.position), tangentAngle: null }
+  }
+
+  // Deliberately avoids `points.map(discRadius)` (an allocation-per-call
+  // that showed up in the colony layout's perf budget for large repos, see
+  // `buildNetwork.test.ts`'s 1000-PR case): a plain forward scan, since
+  // radius is guaranteed non-decreasing along `points` by construction.
+  const firstRadius = discRadius(points[0]!.position)
+  const lastRadius = discRadius(points[points.length - 1]!.position)
+  const clamped = clamp(targetRadius, firstRadius, lastRadius)
+
+  let index = 1
+  let ra = firstRadius
+  let rb = discRadius(points[1]!.position)
+  while (rb < clamped && index < points.length - 1) {
+    index += 1
+    ra = rb
+    rb = discRadius(points[index]!.position)
+  }
+  const a = points[index - 1]!
+  const b = points[index]!
+  const span = rb - ra
+  const localT = span > 1e-9 ? (clamped - ra) / span : 0
+
+  const position = {
+    x: a.position.x + (b.position.x - a.position.x) * localT,
+    y: a.position.y + (b.position.y - a.position.y) * localT,
+    z: a.position.z + (b.position.z - a.position.z) * localT,
+  }
+  const tangent = normalizeVec3(subVec3(b.position, a.position))
+  return { position, radius: discRadius(position), tangentAngle: Math.atan2(tangent.z, tangent.x) }
+}
+
 /** sin(pi*t): 0 at both ends, peak at the middle -- used so a fused loop leaves and rejoins its parent tangent-continuously. */
 function symmetricEnvelope(t: number): number {
   return Math.sin(Math.PI * clamp(t, 0, 1))

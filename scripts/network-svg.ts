@@ -14,7 +14,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { buildNetwork } from '../src/domain/network/buildNetwork.ts'
-import type { Fusion, GrowthRing, Hair, Hypha, HyphaKind, Mushroom, NetworkLayoutMode, NetworkModel, NetworkNode, Tip } from '../src/domain/network/types.ts'
+import type { Fusion, GrowthRing, Hair, Hypha, HyphaKind, Mushroom, NetworkLayoutMode, NetworkModel, Tip } from '../src/domain/network/types.ts'
 import expressFixture from '../src/server/fixtures/expressjs-express.json' with { type: 'json' }
 import valtioFixture from '../src/server/fixtures/pmndrs-valtio.json' with { type: 'json' }
 import type { RepoSnapshot } from '../src/domain/repo.ts'
@@ -73,14 +73,17 @@ function buildSvg(model: NetworkModel, title: string): string {
     // render-time legibility dedupe, visually merging rings that are
     // indistinguishably close, the same idea `mushrooms.ts` already applies
     // to clustered mushrooms.
-    const RING_DEDUPE_EPSILON = 0.03
+    const RING_DEDUPE_EPSILON = 0.04
     const sortedRings = [...model.rings].sort((a, b) => a.radius - b.radius)
     let lastDrawnRadius = Number.NEGATIVE_INFINITY
     for (const ring of sortedRings) {
       if (ring.radius - lastDrawnRadius < RING_DEDUPE_EPSILON) continue
       lastDrawnRadius = ring.radius
-      const opacity = ring.ringKind === 'release' ? 0.28 : 0.1
-      parts.push(`<circle cx="${SIZE / 2}" cy="${SIZE / 2}" r="${ring.radius * scale}" fill="none" stroke="#4fa8c9" stroke-width="1" stroke-opacity="${opacity}" />`)
+      // "rings extremely faint" (M2d visual spec) -- much lower than a
+      // hypha's own opacity so the growth rings read as a background
+      // reference, never competing with the mycelium itself.
+      const opacity = ring.ringKind === 'release' ? 0.1 : 0.04
+      parts.push(`<circle cx="${SIZE / 2}" cy="${SIZE / 2}" r="${ring.radius * scale}" fill="none" stroke="#4fa8c9" stroke-width="0.75" stroke-opacity="${opacity}" />`)
     }
   } else {
     // Reference rings every full spiral turn, to visually check "loops
@@ -91,52 +94,49 @@ function buildSvg(model: NetworkModel, title: string): string {
     }
   }
 
-  // Hairs first (bottom layer): thin, low-opacity, additive-ish (mix-blend
-  // "screen") so overlapping strands brighten exactly where the mycelium is
-  // dense -- a cheap stand-in for the eventual selective-bloom glow (M3).
-  parts.push('<g stroke="#7fd6c9" stroke-width="0.55" stroke-opacity="0.4" stroke-linecap="round" style="mix-blend-mode: screen">')
+  // Hairs first (bottom layer): very thin, low-opacity (M2d visual spec:
+  // "hairs very thin, opacity 0.35"), additive-ish (mix-blend "screen") so
+  // overlapping strands brighten exactly where the mycelium is dense -- a
+  // cheap stand-in for the eventual selective-bloom glow (M3).
+  parts.push('<g stroke="#7fd6c9" stroke-width="0.5" stroke-opacity="0.35" stroke-linecap="round" style="mix-blend-mode: screen">')
   for (const hair of model.hairs) parts.push(hairLine(hair, scale))
   parts.push('</g>')
 
+  // Hyphae: thin tapered strokes, opacity 0.55-0.9, thicker for an older
+  // (earlier-split) hypha and for one backed by more real work (its own
+  // base thickness, `HyphaPoint.radius`) -- no fixed per-kind width, per the
+  // M2d visual spec ("main/older thicker"). NO node dots (M2d visual spec) --
+  // the hairs already carry the commit texture.
   parts.push('<g style="mix-blend-mode: screen">')
   for (const hypha of model.hyphae) {
     if (hypha.kind === 'main' && model.layout === 'colony') continue // colony's main is a degenerate lookup-only stub, not drawn as a line
     if (hypha.points.length < 2) continue
-    parts.push(
-      `<polyline points="${polylinePoints(hypha, scale)}" fill="none" stroke="${HYPHA_COLOR[hypha.kind]}" stroke-width="${HYPHA_WIDTH[hypha.kind]}" stroke-opacity="${hypha.kind === 'main' ? 0.95 : 0.6}" />`,
-    )
+    const age = model.layout === 'colony' ? 1 - (hypha.splitTime - model.bounds.time.firstEventTime) / Math.max(1, model.bounds.time.lastEventTime - model.bounds.time.firstEventTime) : hypha.kind === 'main' ? 1 : 0
+    const baseThickness = hypha.points[0]!.radius
+    const width = hypha.kind === 'main' ? HYPHA_WIDTH.main : Math.min(3.2, 0.7 + baseThickness * 30 + age * 0.9)
+    const opacity = hypha.kind === 'main' ? 0.95 : 0.55 + age * 0.3
+    parts.push(`<polyline points="${polylinePoints(hypha, scale)}" fill="none" stroke="${HYPHA_COLOR[hypha.kind]}" stroke-width="${width.toFixed(2)}" stroke-opacity="${opacity.toFixed(2)}" />`)
   }
   parts.push('</g>')
 
-  const nodeSample: NetworkNode[] = model.nodes.filter((_, i) => i % 3 === 0) // thin out for legibility
-  parts.push('<g style="mix-blend-mode: screen">')
-  for (const node of nodeSample) {
-    const [x, y] = projectSvg(node.position.x, node.position.z, scale)
-    parts.push(`<circle cx="${x}" cy="${y}" r="${node.isMergePoint ? 2.2 : 1.1}" fill="${node.isMergePoint ? '#ffe9a8' : '#4fa8c9'}" fill-opacity="0.7" />`)
-    if (node.isMergePoint) {
-      // Fusion "knot": a small contrasting halo ring around a real merge
-      // commit's own node -- backed by the same `isMergePoint` real data,
-      // not a fabricated extra element.
-      parts.push(`<circle cx="${x}" cy="${y}" r="4.2" fill="none" stroke="#ffe9a8" stroke-width="0.8" stroke-opacity="0.85" />`)
-    }
-  }
-  parts.push('</g>')
-
-  // Colony-only: fusion knots + anastomosis bridges (see `Fusion` in types.ts).
+  // Colony-only: fusion knots + anastomosis bridges (see `Fusion` in
+  // types.ts) -- knots are tiny (M2d visual spec: "fusion knots tiny, r <= 1.5px").
   const fusions: Fusion[] = model.fusions
   parts.push('<g style="mix-blend-mode: screen">')
   for (const fusion of fusions) {
     const [x1, y1] = projectSvg(fusion.position.x, fusion.position.z, scale)
     const [x2, y2] = projectSvg(fusion.bridgeTo.x, fusion.bridgeTo.z, scale)
-    parts.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="#ffe9a8" stroke-width="1" stroke-opacity="0.55" />`)
-    parts.push(`<circle cx="${x1}" cy="${y1}" r="3.4" fill="#ffe9a8" fill-opacity="0.9" />`)
+    parts.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="#ffe9a8" stroke-width="0.6" stroke-opacity="0.5" />`)
+    parts.push(`<circle cx="${x1}" cy="${y1}" r="1.5" fill="#ffe9a8" fill-opacity="0.9" />`)
   }
   parts.push('</g>')
 
+  // Mushrooms: small cream dots with a thin cyan-rim outline (M2d visual
+  // spec), never a bare flat-cyan fill.
   const mushrooms: Mushroom[] = model.mushrooms
   for (const mushroom of mushrooms) {
     const [x, y] = projectSvg(mushroom.position.x, mushroom.position.z, scale)
-    parts.push(`<circle cx="${x}" cy="${y}" r="${2 + mushroom.scale * 3}" fill="#b9f5ff" fill-opacity="0.85" />`)
+    parts.push(`<circle cx="${x}" cy="${y}" r="${1.6 + mushroom.scale * 2}" fill="#f5ead0" fill-opacity="0.92" stroke="#b9f5ff" stroke-width="0.6" stroke-opacity="0.8" />`)
   }
 
   const tips: Tip[] = model.tips
