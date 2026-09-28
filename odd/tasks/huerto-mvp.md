@@ -44,7 +44,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] T3 Tree model: pure deterministic layout (eras → limbs → twigs → leaves, flowers, fruit, buds, soil strata), caps; unit tests. Route: delegated.
 - [x] T4 Rendering: diorama island, trunk/limb/twig tube geometry, instanced leaves, flowers, fruit, buds, lighting, orbit camera. Route: delegated.
 - [x] T5 Growth time-lapse + time scrubber. Route: delegated.
-- [ ] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
+- [x] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
 - [ ] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
 
@@ -293,6 +293,165 @@ gold-plating further here.
   bundle). Geometries are memoized on the model and disposed on
   unmount/model change (`useTreeGeometry`'s cleanup effect).
 
+### V1 visual pass — done
+Commit: `9f8de91` fix: shape a believable broadleaf crown.
+Problem: the tree read as a tall conifer/pole with a visible flat cut at
+the trunk top, a flat green disc for the island, and near-invisible fruit
+(a real double-scaling bug, see below) on flat leaf "pancakes."
+`src/domain/tree/buildTree.ts`: shorter/stouter trunk (height 1.7–4.6,
+was 2.2–9) tapering to a near-point radius instead of a visible cut
+cylinder cap; limbs now only emerge from a canopy zone (42%–90% of trunk
+height, was 15%–92%) leaving a clear bole below; each limb's polyline now
+*arcs* (a shallow near-level start easing to a steep upward end, per
+point via `easeInOutCubic`, not one straight ray from the base) and is
+softly pulled (`pullTowardCrownEnvelope`, blend 0.75) toward an ellipsoid
+crown envelope (width ≈1.3× height) so the silhouette reads as a rounded
+dome; reduced `LIMB_AZIMUTH_JITTER` (0.35 → 0.06) since jitter on top of
+the golden-angle spacing was occasionally clumping limbs into a lopsided
+fan for this seed (verified via a throwaway inspection script printing
+each limb's azimuth/gap before tuning).
+**Real bug found while doing this** (not just cosmetic): `FRUIT_SCALE`/
+`FLOWER_SCALE`/`BUD_SCALE` were being multiplied against an
+already-similarly-sized shared instance geometry radius (e.g. fruit:
+0.11-radius geometry × 0.11 scale ≈ 0.012 world-unit radius — an order of
+magnitude smaller than a leaf), making fruit/flowers/buds nearly
+invisible regardless of color. Fixed by rebalancing both sides (geometry
+radii comparable to a leaf's, scale constants as ~1-centered multipliers,
+matching how the leaf scale already worked) — fruit now reads clearly,
+with a more saturated color token (`palette.fruit` → `#ff6a12`).
+`src/ui/scene/geometry/shapes.ts`: `leafGeometry` is now a merged 3-lobe
+cluster (three offset/rotated icosahedra via `BufferGeometryUtils`), not
+one flat disc; `src/ui/scene/geometry/instances.ts` +
+`src/ui/scene/tree/Leaves.tsx` add a small deterministic per-leaf tilt
+(hashed from the leaf's own id) for canopy volume.
+`src/ui/scene/geometry/island.ts`: thicker/chunkier proportions (depth
+1.75 vs. top-radius 1.95, was 1.3 vs. 1.7) with a raised, irregular
+grass-edge rim (`GRASS_RIM_HEIGHT`), so it reads as a crafted diorama
+chunk with a visible strata cross-section instead of a flat plate.
+`src/ui/scene/tree/CameraRig.tsx`: frames using both vertical *and*
+horizontal FOV (previously only vertical) so a narrow mobile viewport no
+longer crops the crown's width; slightly lower 3/4 viewing angle.
+Iterated with `pnpm shot` across **6 rounds** (desktop + mobile, end
+growth each time, comparing against the prior conifer-pole shots): (1)
+baseline conifer/flat-disc/invisible-fruit; (2) first stout-trunk +
+envelope pass — fruit suddenly huge/dominant (the double-scale fix
+overshot) and the crown read as a "weeping willow" sag (limb start angle
+dipped below horizontal); (3) fixed fruit scale down, removed the
+downward dip, crown still an open "V"/bowl shape with the bare trunk tip
+poking through a gap directly above the trunk axis (a structural property
+of radial "spoke" limbs — none of them pass *through* the center-top,
+only outward from it); (4) shortened the trunk further and raised the
+limb-emergence ceiling to 90% so the bare exposed tip became short enough
+to be covered by the nearest limbs; (5) steepened the limb end-angles
+(especially for lower limbs) to pull the crown's sides up and mostly
+close the top notch; (6) final confirmation pass, desktop + mobile.
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+(134 tests, unchanged — V1 touched only shape/color constants and camera
+math, no new pure logic beyond the crown-envelope helper, which the
+existing `buildTree` determinism/invariant tests already exercise) ·
+`pnpm build`: pass · `pnpm shot`: 4/4 screenshots (desktop/mobile ×
+end/mid), 0 console errors.
+**Residual, honestly reported**: a small negative-space notch is still
+sometimes visible directly above the trunk axis at certain camera angles
+(no limb polyline ever passes through the exact vertical center, only
+outward from it, since limbs are radial "spokes" — a structural property
+of the generation approach, not a bug) — meaningfully reduced (short
+exposed tip, steep limb closing angles) but not fully eliminated. Every
+click-inspectable element must map to real data (P8, tightened further by
+T6), which ruled out papering over it with fake non-interactive filler
+foliage. Flagging for a possible T8 pass (e.g. a "topper" cluster tied to
+the *newest* limb's own real twigs/leaves, positioned to lean back over
+the axis) rather than gold-plating further here. Mid-growth silhouette
+legibility (thin twig vs. visible leaf, noted in T5) is unchanged by V1
+and remains flagged for T8.
+
+### T6 Navigation & inspection — done
+Commit: `0d00bd0` feat: inspect commits, pull requests and releases in
+the tree.
+Domain (pure, unit-tested): `src/domain/format.ts` (Intl-backed
+date/number/signed-number/short-oid formatting, fixed `en-US` locale so
+output is deterministic regardless of the runtime's system locale);
+`src/domain/tree/lookup.ts` (`findTreeElement`, linear scan across
+limbs/twigs/fruits/leaves/flowers/buds — only called on click/hover-
+resolve, never per frame); `src/domain/tree/focus.ts`
+(`getElementFocusPosition`, id → the 3D point the camera should fly to);
+`src/domain/elementDetail.ts` (`resolveElementDetail`: id → a typed
+view-model — repo/era/pull_request/commit/release/branch — built by
+cross-referencing the real `RepoSnapshot`, dispatching on element *kind*
+rather than `ref.type` since a leaf can be either a commit or, for an
+overflow leaf with no matching commit, a pull request, and both a limb
+and a flower can carry `ref.type === 'release'`; `summarizeElementDetail`
+reduces any detail to a short kind/title/date summary for the tooltip and
+the Explore list rows). `Limb`'s "era" detail derives its end time from
+the *next* limb's start time (limbs are already stored in era-index
+order) and its commit count from summing the real `commitCount` of each
+represented (twig-capped) PR — both honestly labeled, since overflow PRs
+beyond the per-limb twig cap aren't individually tracked in the model.
+Hover/select highlighting reuses existing per-instance machinery instead
+of a shared-material rewrite: leaves/fruit/flowers/buds tint the matching
+instance's `instanceColor` toward white (mild for hover, stronger for
+select) inside the existing per-frame `ScatterInstances` loop; twigs
+scale the matching instance's radius up (1.35×/1.7×); the trunk and each
+individual limb mesh set `emissive`/`emissiveIntensity` on their own
+material. `src/ui/scene/tree/CameraFocus.tsx`: eases the camera position
+and `OrbitControls` target toward the selected element's focus point over
+0.9s (`easeInOutCubic`, keeping the camera's current offset/distance so
+it reads as "re-center on this" rather than a zoom), snapping instantly
+under `prefers-reduced-motion`. `src/ui/hooks/useSelection.ts`:
+hover (ephemeral) + selection (mirrored to `?sel=<id>` via
+`history.replaceState`, not `pushState`, so hovering/clicking around
+doesn't spam browser back-history) state, Esc deselects globally.
+`src/ui/components/`: `Tooltip.tsx` + `TooltipLayer.tsx` (pointer-
+following, kind+title+date; the pointermove listener only attaches while
+something is hovered, and lives in its own leaf component so it doesn't
+re-render the 3D scene on every mouse move); `DetailPanel.tsx` (desktop
+right side / mobile bottom sheet via a `.detail-panel` CSS media query in
+`index.css`, real PR/commit/release/branch fields, formatted dates/
+numbers, a clickable commit list inside a PR detail that focuses the
+matching leaf if one is rendered, "View on GitHub" `target=_blank
+rel="noopener noreferrer"` links); `Legend.tsx` (compact, collapsible,
+same palette tokens as the scene); `ExploreList.tsx` (era → pull requests
+→ commits, every row a plain `<button>` that both toggles its disclosure
+and selects — keyboard-operable and focus-ringed for free, no bespoke
+ARIA tree-role plumbing; only lists commits that have a matching rendered
+leaf, so "selects the same elements the 3D view would" holds exactly).
+The detail panel and the Explore list are kept mutually distinct rather
+than fighting over the same screen region: opening the list clears the
+selection and the list's own row-selects don't reopen the detail panel
+while it's open (so browsing era → PR → commit doesn't collapse the list
+after one click), closing the list reveals the detail panel for whatever
+ended up selected; `Scene.tsx` also gained `onPointerMissed` (click empty
+space deselects) and a pointer-cursor-on-hover canvas style.
+`scripts/shot.ts`: added an `end-selected` growth state (`?sel=<twig id
+from the fixture>`) so the visual QA loop captures a PR-selected
+screenshot on both viewports, per this task's instruction.
+Tests (35 new, all pure domain logic): `format.test.ts`,
+`tree/lookup.test.ts`, `tree/focus.test.ts`, `elementDetail.test.ts`
+(covers every detail kind, including the twig/fruit-same-PR case, the
+first-commit-always-has-a-clickable-leaf-id case, and the open-PR vs.
+merged-PR disambiguation for a bud).
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+(**169 tests total**, +35 for T6/format) · `pnpm build`: pass (`Scene`
+chunk ~951 kB / gzip ~253 kB, initial `index` chunk ~256 kB / gzip ~80 kB)
+· `pnpm shot`: 6/6 screenshots (desktop/mobile × end/mid/end-selected)
+saved, 0 console errors. The Explore list itself is never opened by the
+automated screenshot script (it only pins `?t=`/`?sel=` on load), so it
+was additionally exercised with a throwaway Playwright script (not
+committed): opened it, expanded an era then a PR down to a real commit
+row, 0 console errors — screenshots reviewed and matched the expected
+real PR titles/commit headline.
+**Residual, honestly reported**: the avatar `<img>` in the detail panel
+has no explicit fallback UI for a broken/blocked image load (just an
+empty `alt=""`, so it fails silently rather than showing an initial or
+placeholder) — cosmetic, not attempted here. The commit-count shown on an
+era detail only sums the *represented* (twig-capped) PRs' real
+`commitCount`, not overflow PRs beyond the cap — labeled "Commits (shown
+pull requests)" rather than claimed as a true era-wide total, to keep
+P8's "every visible element maps to real data" honest rather than
+inventing a number. `?sel=` round-trips correctly (verified via the
+`end-selected` shot and its initial-mount `readSelectionFromUrl`), but no
+"copy link" affordance exists yet (explicitly P10 scope, T7/T8).
+
 ### Notes / gaps for the product owner
 - **`.env.example` could not be created**: the sandbox's permission layer
   hard-denies any write to a path matching `.env*` (tested via both the Write
@@ -304,11 +463,58 @@ gold-plating further here.
 - Remote GitHub repo creation, `git push`, and deploy remain un-authorized
   per Scope — not attempted.
 
+### Polish bar re-assessment after V1 + T6 (P3, P6–P9, P11)
+- **P3 Silhouette** — much improved, not fully closed. Reads as a
+  stylized broadleaf tree on a floating island at first glance now
+  (stout tapered trunk, wide rounded crown, chunky island); a small
+  negative-space notch directly above the trunk axis can still appear at
+  some angles (structural to the radial-limb approach) — see the V1
+  entry above for detail and the proposed T8 fix direction.
+- **P6 States designed** — still not attempted (unchanged from T5): the
+  MVP has only a "loading"/"error" text state (`App.tsx`) and the fixed
+  demo repo, no rate-limit/token-required/empty-repo states. T7/T8 scope.
+- **P7 Interaction** — holds. Hover highlight (emissive tint / instance
+  tint / thicker twig per element type) + pointer cursor + tooltip; click
+  → detail panel; camera eases to the selection; Esc closes; keyboard
+  works via the Explore list (native `<button>`s); touch was not
+  separately verified on a real touch device (only Playwright's
+  synthetic pointer events via the desktop/mobile *viewport* shots, which
+  don't exercise real touch/pointer-type quirks) — recommend a manual
+  phone check before calling this fully verified.
+- **P8 Truth** — holds. Every clickable element (limb/twig/fruit/leaf/
+  flower/bud/trunk) resolves through `resolveElementDetail` to real
+  `RepoSnapshot` data with a "View on GitHub" link; dates via
+  `Intl.DateTimeFormat`, numbers via `Intl.NumberFormat`. The one
+  intentionally-approximate field (an era's commit count, capped-PRs-only)
+  is labeled as such rather than presented as an exact total.
+- **P9 Legibility** — holds. `Legend.tsx` is compact, collapsible, and
+  uses the same color tokens as the 3D scene for every mapped element.
+- **P10 Share** — prep only (unchanged scope for this task): `?sel=<id>`
+  round-trips via `history.replaceState`; no `/owner/repo` route, no
+  OG/meta tags, no "copy link"/"save image" affordance yet. T7/T8 scope.
+- **P11 A11y** — largely holds, not independently audited. `ExploreList`
+  gives a full non-3D era → PR → commit path to every selectable element,
+  built from native `<button>`s (keyboard-operable, focusable, no custom
+  ARIA tree role to get subtly wrong) with `aria-label`/`aria-expanded`/
+  `aria-current`; a global `:focus-visible` outline rule was added in
+  `index.css`. Not verified: an automated contrast-ratio check against
+  the actual rendered panel backgrounds (the tokens were chosen for
+  contrast by eye, e.g. `ui.text` on `ui.panelBg`, but no tool ran a real
+  AA check), and no screen-reader was used to walk the flow end-to-end —
+  recommend both as a T8 check.
+- **P12 Perf & robustness** — holds for this fixture, not re-measured
+  after V1/T6 (draw-call count is essentially unchanged: highlighting
+  reuses existing instanced meshes' `instanceColor`/scale, no new draw
+  calls; `resolveElementDetail`/`findTreeElement` only run on
+  click/hover-resolve, never per frame). Same T8 recommendation as
+  before (1000+-PR repo, tiny/empty repo) still stands.
+
 ## Next step
-T6 (navigation & inspection) — out of scope for this writer; hand back to
-the orchestrator. `onElementHover`/`onElementSelect(id)` props already
-flow through `TreeScene`/`Scene`/every instanced+individual mesh (twig
-merged geometry resolves `event.instanceId` -> element id array; trunk/
-limb meshes carry a fixed id) so T6 should be able to wire hover/click
-without touching the renderer's internals — only the detail panel, focus
-camera and era list remain.
+T7 (product shell: landing input, `/owner/repo` routing, loading/error/
+rate-limit states, meta/OG, README) — out of scope for this writer; hand
+back to the orchestrator. T6 left hooks worth reusing: `useSelection`'s
+`?sel=` URL sync is a natural extension point for `?owner=/repo=`-style
+routing state, and `resolveElementDetail`/`DetailPanel` don't assume the
+fixed demo repo anywhere (they're driven entirely by whatever
+`RepoSnapshot`/`TreeModel` they're given), so T7's routing/product-shell
+work shouldn't need to touch them.
