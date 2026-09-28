@@ -57,6 +57,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
 - [x] M1 Data for topology: extend adapter/snapshot with PR `baseRefName`/`headRefName`, first-commit time, closed-unmerged PRs (capped), default-branch merge commits if cheap; regenerate fixture(s). Route: delegated.
 - [x] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
+- [x] M2b Layout iteration: fix chord-crossing loops, far-flung dead ends/mushrooms, empty inter-turn space, and add mycelial hair texture, per orchestrator visual review of `.shots/network-*.png`. Route: delegated (writer).
 - [ ] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
 - [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
 (T8 polish now applies to the mycelium build.)
@@ -866,6 +867,155 @@ element kind. Both fixtures additionally smoke-tested for bounds sanity
 ids) as part of `buildNetwork.test.ts`.
 Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (277
 tests total, +71 for M1+M2 combined) · `pnpm build`: pass.
+
+### M2b Layout iteration — done
+Commit: `00ecc85` fix: grow a denser, crossing-free mycelium layout.
+Trigger: the orchestrator reviewed `.shots/network-pmndrs-valtio.png` and
+`.shots/network-expressjs-express.png` and reported six problems: (1) mostly
+empty disc between spiral turns, tiny loop ticks; (2) long-lived PRs drawing
+straight chords across turns; (3) closed-PR dead ends and mushrooms flung far
+outside the disc on long stems; (4) loop size not weight/space-driven; (5) no
+mycelial hair texture; (6) overall not reading as fairy-ring mycelium.
+
+**Root causes found** (`src/domain/network/layout.ts`): (2)/(3) were the same
+bug — a dead-end/open hypha's endpoint was offset laterally by a fixed
+`length * 0.9` independent of its lane, *and* the per-point loop then added
+an independent lane-aware `bow` on top at the free end (`envelope(1) === 1`),
+double-counting the lateral offset and blowing past any cap; separately nested
+non-main-parent hyphae had no "next turn" concept, so a chain of them could
+still stray far in absolute terms even though each individual hop was small.
+(1)/(4) were a sizing bug, not a layout bug: `BASE_LANE_DEPTH`/`LANE_SPACING`
+were tiny fixed constants (0.07/0.045) while the *available* room
+(`localSpiralPitch(frac) * SPIRAL_PITCH_SAFETY`) was routinely 1–2 world
+units — loops used a tiny fraction of the room they were allowed.
+
+**Fixes**:
+- `computeLoopDepth` (new): a loop/dead-end/open hypha's lateral "depth" is
+  now `min(minBulge + weightBulge + laneGrowth, roomCap)`, where `roomCap` is
+  the actual available room (local spiral pitch for a main-parented hypha,
+  a fixed nested cap otherwise, both also hard-capped by a new
+  `ABSOLUTE_MAX_LOOP_DEPTH` so the naturally huge first-turn pitch near the
+  spore can't blow a loop up into a "sea urchin" burst — a round-1/2 visual
+  finding), `minBulge` guarantees a visible bulge even for a single-commit
+  PR, `weightBulge` scales with the PR's own commit count (log-saturating),
+  `laneGrowth` fans concurrent same-side siblings into their own room. Used
+  uniformly for fused/dead-end/open hyphae (previously only fused loops were
+  depth-capped at all).
+- Dead-end/open hyphae: `endAnchorPosition` no longer bakes in a lateral
+  offset — the lateral distance is carried *entirely* by the same
+  envelope-shaped `bow` term a fused loop uses (0 at the split, `depth` at
+  the free tip), fixing the double-counting bug. Only a small forward
+  (tangential) `forwardReach`, itself capped relative to `depth`, remains.
+  This is what fixed both the chord-crossing dead ends (express) and the
+  far-flung mushroom-adjacent stems (valtio) — both were actually stray
+  open/dead-end hyphae, not a mushroom-positioning bug (mushrooms.ts's XZ
+  placement was already correct; added a regression test for it anyway).
+- Added a small per-hypha `bowAngleJitter` rotation of the bow direction
+  (round-3 finding: even with capped depth, many concurrent same-side loops
+  with near-identical geometry read as a rigid parallel "comb" rather than
+  organic mycelium; one fixed random rotation per hypha fans them out).
+- Radius mapping (`radiusForFrac`/`localSpiralPitch`/new `buildActivityCdf`):
+  blends the existing eased time fraction (58%) with a cumulative-activity
+  fraction (42%) built from every real commit/split-time event in the
+  drafts — both components are individually monotonically non-decreasing in
+  time and the blend is a positively-weighted sum, so the result stays
+  monotonically non-decreasing outward. This gives more inter-turn room
+  exactly where commit/PR activity is dense (since loop depth is capped by
+  local spiral pitch), addressing "use the space between turns" without an
+  unbounded/chaotic result. **Decision, honestly flagged**: "distance from
+  center ≈ time" (P9's planned legend copy) is now density-weighted, not
+  purely linear — still order-preserving (later always means farther out)
+  but not proportional. P9's legend copy (owned by M3, doesn't exist yet)
+  should say "distance from center ≈ time, weighted by activity density" or
+  similar when written.
+- `SPIRAL_TURNS` 2.4 → 2.1 (tuned during iteration, see below).
+- Mycelial hair texture (new `Hair` element kind, `src/domain/network/
+  types.ts` + `buildHairs` in `layout.ts`): exactly one hair per rendered
+  commit node (`NetworkModel.hairs.length === NetworkModel.nodes.length`,
+  tested), branching from the node's own real position, alternating side by
+  node order with a small seeded angle jitter, length scaled from the
+  node's own (already data-driven) radius since no per-commit diff-size
+  data is threaded through yet (clamped constant range + seeded jitter
+  otherwise, per the task brief), longer for a merge-point commit. Not
+  independently selectable (decorates its already-lookupable `NetworkNode`
+  via `nodeId`), so intentionally excluded from `LookupableNetworkElement`
+  — a deliberate scope decision, not an oversight. `NetworkSummary.hairCount`
+  added alongside the others. A merge-point node's SVG "fusion knot" is
+  rendered purely from the existing real `isMergePoint` field (a halo ring
+  in `network-svg.ts`), not a new domain element — no data to back a
+  separate knot kind beyond what the node already carries.
+- `scripts/network-svg.ts`: renders hairs (thin, low-opacity, `stroke-
+  linecap: round`) and hyphae/nodes inside `<g style="mix-blend-mode:
+  screen">` groups so overlapping strands brighten where the mycelium is
+  dense — a cheap stand-in for M3's eventual selective bloom.
+
+**Visual iteration (4 rounds, `pnpm network-svg` + `Read` on both PNGs each
+round)**: **(1)** baseline with hairs + the new depth/endpoint logic: the
+double-counting/chord bugs were visibly gone (no more far-flung stems), but
+loops near the spore's first turn ballooned into a chaotic "sea urchin"
+burst — the sub-linear radius ease front-loads a huge amount of radius into
+the first turn, so its `localSpiralPitch` (and thus uncapped `roomCap`) was
+enormous; express's outermost turn also swung into a lopsided "comet tail"
+(58/42 time/activity blend was too activity-heavy for express's very bursty
+recent history). **(2)** rebalanced the blend to 58% time / 42% activity
+(was 42/58) and `SPIRAL_TURNS` 1.9 → 2.1 for more even turn spacing —
+confirmed (via a targeted debug script walking each hypha's parent chain and
+recomputing max absolute radius) that an apparent "escapee" stray line was
+actually just the main hypha's own outermost turn arcing across the canvas,
+not a bug; the real remaining problem was the still-chaotic center burst.
+**(3)** added `ABSOLUTE_MAX_LOOP_DEPTH` (hard ceiling regardless of local
+pitch) and the per-hypha `bowAngleJitter` — center burst calmed into
+recognizable lens-shaped loops, but fill was now a little sparse (depth
+constants had been cut aggressively to fight the burst). **(4)** raised
+`MIN_BULGE_FRACTION`/`WEIGHT_BULGE_FRACTION`/`LANE_GROWTH_FRACTION`/
+`ABSOLUTE_MAX_LOOP_DEPTH` back up moderately for better fill while the
+angle-jitter kept it organic — both fixtures now read as a fairy-ring mat of
+lens-shaped loops hugging the main hypha with a fine hair texture, dead ends
+and mushrooms compact and on-line, no chord crossings. Final images:
+`.shots/network-pmndrs-valtio.png`, `.shots/network-expressjs-express.png`
+(both gitignored, regenerate with `pnpm network-svg`).
+
+**Weaknesses, honestly reported**:
+- A visible band of empty space remains between the second and outer turns
+  on both fixtures — an inherent tension between "loops must never cross the
+  next turn" and "use the inter-turn space," not resolved further given the
+  chaos that resulted from pushing loop size higher in rounds 1–2. Flagging
+  for a possible T8/M3-side pass (e.g. very-low-opacity ambient fill
+  strokes in genuinely empty regions) rather than gold-plating the pure
+  layout further here.
+- The radius mapping is no longer purely time-linear (see the P9 legend
+  decision above) — an honest tradeoff, not a bug, but M3's legend copy
+  needs to reflect it.
+- Hair length is scaled from the node's own render radius (itself
+  commit-count/weight-driven), not literal per-commit diff size, since PR
+  commit objects don't carry additions/deletions in the current domain
+  model (`src/domain/repo.ts`'s `PrCommit` has no size field) — matches the
+  task brief's "or constant with seeded jitter" fallback, but a true
+  per-commit-diff-size hair would need `PrCommit` extended first (M1-adjacent
+  follow-up, out of scope here).
+- Not independently re-verified against a genuinely tiny/empty repo or a
+  1000+-hypha-capped repo beyond the existing `buildNetwork.test.ts` unit
+  cases (both real fixtures used here are mid-sized, hundreds of PRs) —
+  recommend as a T8 check alongside the existing tree-side one.
+
+Tests (`src/domain/network/layout.test.ts`, `buildNetwork.test.ts`): the
+"loops never cross the next turn" fixture check is generalized from
+fused-only to every main-parented hypha (fused/dead-end/open alike, since
+all three now share the same depth cap); a new "fused loops follow their
+parent within a bounded lateral offset" check; a new "dead-end/open hypha
+length is bounded" check (distance from its own fixed attach point, not a
+same-time parent lookup — dead-end/open geometry deliberately doesn't chase
+the parent through time, only a fused loop does, a distinction found while
+debugging an initially-too-strict combined test); a new "mushroom XZ stays
+within epsilon of the main hypha at release time" check; a new "exactly one
+hair per rendered commit node" check (both a synthetic-snapshot unit test
+and a per-fixture smoke test); `MUSHROOM_CLUSTER_SCATTER`,
+`buildActivityCdf`, `SPIRAL_TURNS`, `SPIRAL_PITCH_SAFETY`,
+`NESTED_MAX_LANE_DEPTH`, `SIDE_JITTER_MAX` exported for test reuse. Existing
+determinism/non-finite/id-uniqueness tests cover the new `hairs` field for
+free (full-model `toEqual`).
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (286
+tests total, +9 for M2b) · `pnpm build`: pass.
 
 ## Next step
 M3 (network rendering + growth + interaction wiring), then M4 (cleanup,
