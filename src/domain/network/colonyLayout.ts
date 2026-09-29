@@ -304,7 +304,111 @@ const MIN_FORK_SAMPLES = 8
  * its own neighbors already describe.
  */
 const MAX_HYPHA_TURN_RAD = (60 * Math.PI) / 180
+/** Tiny per-sample vertical wobble (zero at both ends of a hypha) layered on top of the lineage elevation below -- kept so the main PRNG's draw sequence (and therefore every X/Z decision) is unchanged by the galaxy-3d feature. */
 const Y_JITTER = 0.015
+
+// --- Galaxy-3d: lineage elevation inside a galactic envelope ----------------
+/**
+ * Half-thickness of the colony at the spore (the "bulge"): old, dense
+ * history sits in a thick central lens. The envelope allows ~32% of the
+ * disc radius, but the gradual (slope-limited) rise means real fixtures
+ * peak around ~15-18% (max |y| ~0.85-1.0 at r ~1-2), so orbiting the colony
+ * shows real volume instead of a sheet. The spore itself stays at y=0 (the
+ * nucleus every spore-started strand arcs out of).
+ */
+export const ELEVATION_BULGE_HALF_HEIGHT = 0.32 * DISC_MAX_RADIUS
+/** Half-thickness far from the spore (the thin disc toward the recent rim), ~3% of the disc radius. */
+export const ELEVATION_RIM_HALF_HEIGHT = 0.03 * DISC_MAX_RADIUS
+/** Radius (world units) over which the bulge falls off toward the thin disc (Gaussian scale). */
+const ELEVATION_BULGE_SCALE_RADIUS = 0.42 * DISC_MAX_RADIUS
+/** Base normalized tilt range (fraction of the local envelope half-thickness) a hypha departs from its parent's height by. */
+const ELEVATION_TILT_MIN = 0.2
+const ELEVATION_TILT_MAX = 0.5
+/** Each extra fork generation increases the normalized tilt by this fraction of the base amount -- deeper branches leave the plane further. */
+const ELEVATION_GENERATION_GAIN = 0.35
+/** A hypha sprouting straight from the spore may leave in any direction: its normalized tilt spans this range (so the old, central history fills the whole bulge rather than hugging the plane). */
+const ELEVATION_SPORE_TILT_MIN = 0.15
+const ELEVATION_SPORE_TILT_MAX = 1
+/**
+ * Radial distance (world units) over which a hypha completes its tilt,
+ * as a fraction of its own radial span, clamped to
+ * `[ELEVATION_RISE_MIN, ELEVATION_RISE_MAX]`. Independent of total length so a
+ * long, spore-started arm lifts off near the center (filling the bulge)
+ * instead of spreading its rise across the whole disc. A short hypha
+ * simply ends before completing its tilt (it departs less).
+ */
+const ELEVATION_RISE_FRACTION = 0.7
+const ELEVATION_RISE_MIN = 0.5
+const ELEVATION_RISE_MAX = 2
+/**
+ * The rise is also never shorter than this multiple of the height change it
+ * has to cover -- with the sine ease's peak slope of pi/2, `1.05` keeps the
+ * steepest climb under ~60deg, so a strand leaving the nucleus arcs up
+ * rather than shooting out as a vertical spike.
+ */
+const ELEVATION_RISE_PER_HEIGHT = 1.05
+/** Generation depth past which the tilt stops growing (long closed-PR chains would otherwise always pin to the envelope). */
+const ELEVATION_GENERATION_CAP = 6
+
+/**
+ * Galactic envelope: the half-thickness (world units) the colony may occupy
+ * above/below the plane at disc radius `radius` -- a thick central bulge
+ * decaying (Gaussian) into a thin disc. Pure, exported for tests.
+ */
+export function galacticHalfThickness(radius: number): number {
+  const r = Math.max(0, radius) / ELEVATION_BULGE_SCALE_RADIUS
+  return ELEVATION_RIM_HALF_HEIGHT + (ELEVATION_BULGE_HALF_HEIGHT - ELEVATION_RIM_HALF_HEIGHT) * Math.exp(-r * r)
+}
+
+/**
+ * A hypha's target NORMALIZED height (fraction of the local envelope, in
+ * `[-1, 1]`) given its start's normalized height `h0`, its fork
+ * `generation` (0 = sprouted from the spore), and two uniform draws
+ * (`fromSpore` uses the wider spore tilt range instead),
+ * (`signDraw` picks up/down, `amountDraw` the base tilt). If the preferred
+ * direction would leave the envelope, the hypha tilts the other way instead
+ * (whichever stays inside, or the one that overshoots less), then clamps.
+ * Pure, exported for tests.
+ */
+export function lineageTargetHeight(h0: number, generation: number, signDraw: number, amountDraw: number, fromSpore = false): number {
+  const gen = clamp(generation, 0, ELEVATION_GENERATION_CAP)
+  const u = clamp(amountDraw, 0, 1)
+  const amount = fromSpore
+    ? lerp(ELEVATION_SPORE_TILT_MIN, ELEVATION_SPORE_TILT_MAX, u)
+    : lerp(ELEVATION_TILT_MIN, ELEVATION_TILT_MAX, u) * (1 + ELEVATION_GENERATION_GAIN * gen)
+  const sign = signDraw < 0.5 ? -1 : 1
+  const preferred = h0 + sign * amount
+  const alternate = h0 - sign * amount
+  const chosen = Math.abs(preferred) <= 1 || Math.abs(alternate) > Math.abs(preferred) ? preferred : alternate
+  return clamp(chosen, -1, 1)
+}
+
+/**
+ * Lifts a grown (flat) hypha polyline into 3D: normalized height eases from
+ * the start's own `h0` (so `points[0]` stays exactly on the parent) to
+ * `h1`, and is scaled by the galactic envelope at each sample's own disc
+ * radius -- so even a constant `h` sinks toward the plane as the hypha
+ * reaches the thin rim. The existing tiny wobble (`point.position.y`) is
+ * kept on top. X/Z are untouched.
+ */
+function applyLineageElevation(points: HyphaPoint[], h0: number, h1: number): HyphaPoint[] {
+  if (points.length === 0) return points
+  const r0 = discRadius(points[0]!.position)
+  const rEnd = discRadius(points[points.length - 1]!.position)
+  const span = rEnd - r0
+  const heightChange = Math.abs(h1 - h0) * galacticHalfThickness(r0)
+  const rise = Math.max(clamp(span * ELEVATION_RISE_FRACTION, ELEVATION_RISE_MIN, ELEVATION_RISE_MAX), heightChange * ELEVATION_RISE_PER_HEIGHT)
+  return points.map((point, i) => {
+    if (i === 0) return point
+    const radius = discRadius(point.position)
+    const t = span > 1e-9 ? clamp((radius - r0) / rise, 0, 1) : i / (points.length - 1)
+    // Sine ease: zero slope at the fork (leaves the parent tangentially in
+    // height) with a gentler peak slope than a cubic ease.
+    const h = lerp(h0, h1, (1 - Math.cos(Math.PI * t)) / 2)
+    const y = galacticHalfThickness(radius) * h + point.position.y
+    return { ...point, position: { x: point.position.x, y, z: point.position.z } }
+  })
+}
 const SAMPLES_MIN = 12
 const SAMPLES_MAX = 40
 /**
@@ -739,9 +843,12 @@ function nearestRingOrSpore(rings: GrowthRing[], radius: number, angle: number):
 function findFusionAnchor(grid: RadiusGrid, selfHyphaId: string, tip: Vec3, radius: number, rings: GrowthRing[]): { position: Vec3; kind: 'hypha' | 'ring' | 'spore' } {
   let bestHypha: RadiusBinEntry | null = null
   let bestHyphaDist = Infinity
+  // Galaxy-3d: true 3D distance, so a fusion bridge never jumps between
+  // two layers of the (now thick) colony -- the bridge stays <= the search
+  // radius in 3D and the fused hypha genuinely meets its target.
   for (const candidate of grid.nearby(radius, FUSION_SEARCH_BIN_SPREAD)) {
     if (candidate.hyphaId === selfHyphaId) continue
-    const dist = Math.hypot(candidate.position.x - tip.x, candidate.position.z - tip.z)
+    const dist = Math.hypot(candidate.position.x - tip.x, candidate.position.y - tip.y, candidate.position.z - tip.z)
     if (dist < bestHyphaDist) {
       bestHyphaDist = dist
       bestHypha = candidate
@@ -750,7 +857,7 @@ function findFusionAnchor(grid: RadiusGrid, selfHyphaId: string, tip: Vec3, radi
 
   const angle = Math.atan2(tip.z, tip.x)
   const ringFallback = nearestRingOrSpore(rings, radius, angle)
-  const ringDist = Math.hypot(ringFallback.position.x - tip.x, ringFallback.position.z - tip.z)
+  const ringDist = Math.hypot(ringFallback.position.x - tip.x, ringFallback.position.y - tip.y, ringFallback.position.z - tip.z)
 
   const useHypha = bestHypha !== null && bestHyphaDist <= ringDist
   const bestDist = useHypha ? bestHyphaDist : ringDist
@@ -1123,6 +1230,11 @@ export function layoutNetworkColony(
   const hairs: Hair[] = []
   const nodesOmittedByHypha: Record<string, number> = {}
   const hairPrng = createPrng(`${seed}:network-colony-hairs`)
+  // Galaxy-3d: a SEPARATE stream for elevation, so adding height never
+  // shifts the main PRNG's sequence (every X/Z decision stays identical).
+  const elevationPrng = createPrng(`${seed}:network-colony-elevation`)
+  /** Fork generation per placed hypha: 0 when sprouted from the spore, parent's + 1 otherwise. */
+  const generationById = new Map<string, number>()
 
   for (const draft of orderedDrafts) {
     const r0 = radiusForTime(draft.splitTime)
@@ -1154,16 +1266,19 @@ export function layoutNetworkColony(
     let startPosition: Vec3
     let attachment: 'colony' | 'parent-branch'
     let startedAtSpore = false
+    let generation = 0
 
     if (isBranchFromBranch) {
       const parentHypha = positionedById.get(draft.parentHyphaId!) ?? mainHypha
       startPosition = pointOnHyphaAtRadius(parentHypha.points, r0).position
       attachment = 'parent-branch'
+      generation = (generationById.get(parentHypha.id) ?? -1) + 1
     } else {
       const closest = closestSpanningByAngle(spanning, targetAngleRaw)
       const naturalFit = closest !== null && angularDistance(closest.angleAtR0, targetAngleRaw) <= maxTurnRadians(r0, length, FORK_LATERAL_BUDGET_FRACTION)
       if (naturalFit) {
         startPosition = pointOnHyphaAtRadius(closest!.hypha.points, r0).position
+        generation = (generationById.get(closest!.hypha.id) ?? -1) + 1
       } else {
         startPosition = spore.position
         startedAtSpore = true
@@ -1209,7 +1324,7 @@ export function layoutNetworkColony(
     // independent).
     const rimCurl = recentGrowthFactor(draft.splitTime, bounds)
 
-    const points = growHyphaPoints({
+    const flatPoints = growHyphaPoints({
       startPosition,
       startRadius,
       targetAngleRaw,
@@ -1221,6 +1336,13 @@ export function layoutNetworkColony(
       prng,
       rimCurl,
     })
+    // Galaxy-3d: the hypha leaves its parent at the parent's exact height,
+    // then tilts up/down (more for deeper forks) inside the envelope.
+    const startHalfThickness = galacticHalfThickness(startRadius)
+    const h0 = startedAtSpore || startHalfThickness <= 0 ? 0 : startPosition.y / startHalfThickness
+    const h1 = lineageTargetHeight(h0, generation, elevationPrng(), elevationPrng(), startedAtSpore)
+    const points = applyLineageElevation(flatPoints, h0, h1)
+    generationById.set(draft.id, generation)
 
     const hypha: Hypha = {
       id: draft.id,

@@ -13,7 +13,11 @@ import {
   COLONY_LENGTH_MAX,
   COLONY_LENGTH_MIN,
   computeWorkLength,
+  ELEVATION_BULGE_HALF_HEIGHT,
+  ELEVATION_RIM_HALF_HEIGHT,
+  galacticHalfThickness,
   layoutNetworkColony,
+  lineageTargetHeight,
   softenRimOvershoot,
   swirlAngleForRadius,
   unswirlPosition,
@@ -813,6 +817,129 @@ describe('softenRimOvershoot (Unit 1b: no radial clamp compression)', () => {
         .filter((h) => h.kind !== 'main' && h.points.length >= 2)
         .some((h) => discRadius(h.points[h.points.length - 1]!.position) > CAP + 1e-6)
       expect(overCap).toBe(true)
+    }
+  })
+})
+
+describe('galaxy-3d: lineage elevation inside a galactic envelope', () => {
+  /** p95 of |y| over every hypha sample whose disc radius falls in [minR, maxR). */
+  function p95AbsHeight(snapshot: RepoSnapshot, minR: number, maxR: number): number {
+    const { colony } = buildColonyModel(snapshot)
+    const heights: number[] = []
+    for (const hypha of colony.hyphae) {
+      for (const point of hypha.points) {
+        const r = discRadius(point.position)
+        if (r >= minR && r < maxR) heights.push(Math.abs(point.position.y))
+      }
+    }
+    heights.sort((a, b) => a - b)
+    return heights[Math.floor(0.95 * (heights.length - 1))] ?? 0
+  }
+
+  it('galacticHalfThickness is a thick bulge at the spore thinning monotonically toward the rim', () => {
+    expect(galacticHalfThickness(0)).toBeCloseTo(ELEVATION_BULGE_HALF_HEIGHT, 6)
+    let previous = Infinity
+    for (let r = 0; r <= DISC_MAX_RADIUS * 1.2; r += 0.1) {
+      const h = galacticHalfThickness(r)
+      expect(h).toBeLessThanOrEqual(previous + 1e-12)
+      expect(h).toBeGreaterThanOrEqual(ELEVATION_RIM_HALF_HEIGHT - 1e-12)
+      previous = h
+    }
+    expect(galacticHalfThickness(DISC_MAX_RADIUS)).toBeLessThan(ELEVATION_RIM_HALF_HEIGHT * 1.1)
+  })
+
+  it('lineageTargetHeight stays inside the envelope and departs further for deeper fork generations', () => {
+    for (const h0 of [-1, -0.6, 0, 0.4, 1]) {
+      for (const gen of [0, 1, 3, 10]) {
+        for (const draw of [0, 0.3, 0.7, 0.999]) {
+          const h1 = lineageTargetHeight(h0, gen, draw, draw)
+          expect(h1).toBeGreaterThanOrEqual(-1)
+          expect(h1).toBeLessThanOrEqual(1)
+        }
+      }
+    }
+    const shallow = Math.abs(lineageTargetHeight(0, 0, 0.9, 0.5))
+    const deep = Math.abs(lineageTargetHeight(0, 3, 0.9, 0.5))
+    expect(deep).toBeGreaterThan(shallow)
+    // Would leave the envelope going up -> tilts down instead.
+    expect(lineageTargetHeight(0.9, 2, 0.9, 1)).toBeLessThan(0.9)
+  })
+
+  it('is deterministic in 3D on real fixtures (identical heights on every build)', () => {
+    const snapshot = FIXTURES[1]![1]
+    const a = buildColonyModel(snapshot).colony
+    const b = buildColonyModel(snapshot).colony
+    expect(a.hyphae.map((h) => h.points.map((p) => p.position.y))).toEqual(b.hyphae.map((h) => h.points.map((p) => p.position.y)))
+  })
+
+  it('starts every branch-from-branch hypha at its parent\'s exact 3D position (including height) at the fork point', () => {
+    // Checked on the pre-swirl geometry (the growth invariant's own
+    // subject, like the segment-length test above): the swirl only rotates
+    // around Y and never touches height -- see the next test.
+    for (const [, snapshot] of FIXTURES) {
+      const bounds = computeTimeBounds(snapshot)
+      const topology = buildHyphaTopology(snapshot, bounds)
+      const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+      const colony = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, { swirl: 0 })
+      const byId = new Map(colony.hyphae.map((h) => [h.id, h]))
+      let checked = 0
+      for (const hypha of colony.hyphae) {
+        if (hypha.kind === 'main' || hypha.parentHyphaId === null) continue
+        const parent = byId.get(hypha.parentHyphaId)
+        if (!parent || parent.kind === 'main') continue
+        const start = hypha.points[0]!.position
+        // True 3D distance to the parent's own polyline (x, y AND z): the fork
+        // starts exactly on the parent, at the parent's own height there.
+        expect(pointToPolylineDistance(start, parent.points)).toBeLessThanOrEqual(1e-6)
+        // Continuity: no vertical jump right after the fork.
+        expect(Math.abs(hypha.points[1]!.position.y - start.y)).toBeLessThan(0.1)
+        checked += 1
+      }
+      expect(checked).toBeGreaterThan(0)
+    }
+  })
+
+  it('never changes any height when the swirl is applied (swirl, relax and rigid rotation all preserve Y)', () => {
+    const snapshot = FIXTURES[0]![1]
+    const plain = buildNetwork(snapshot, { swirl: 0 })
+    const swirled = buildNetwork(snapshot)
+    expect(swirled.hyphae.map((h) => h.points.map((p) => p.position.y))).toEqual(plain.hyphae.map((h) => h.points.map((p) => p.position.y)))
+    expect(swirled.nodes.map((n) => n.position.y)).toEqual(plain.nodes.map((n) => n.position.y))
+  })
+
+  it('gives real fixtures a bulge clearly thicker than the rim', () => {
+    for (const [, snapshot] of FIXTURES) {
+      const bulge = p95AbsHeight(snapshot, 0, 1.5)
+      const rim = p95AbsHeight(snapshot, 4, 6)
+      expect(bulge).toBeGreaterThan(0.08 * DISC_MAX_RADIUS)
+      expect(rim).toBeLessThanOrEqual(ELEVATION_RIM_HALF_HEIGHT * 1.2)
+      expect(bulge).toBeGreaterThan(rim * 3)
+    }
+  })
+
+  it('keeps every fusion bridge short in true 3D, so a fused hypha meets its target', () => {
+    for (const [, snapshot] of FIXTURES) {
+      const { colony } = buildColonyModel(snapshot)
+      for (const fusion of colony.fusions) {
+        expect(vec3Length(subVec3(fusion.bridgeTo, fusion.position))).toBeLessThanOrEqual(0.25 + 1e-6)
+      }
+    }
+  })
+
+  it('never produces NaN/non-finite coordinates on real fixtures', () => {
+    for (const [, snapshot] of FIXTURES) {
+      const { colony } = buildColonyModel(snapshot)
+      const positions = [
+        ...colony.hyphae.flatMap((h) => h.points.map((p) => p.position)),
+        ...colony.nodes.map((n) => n.position),
+        ...colony.hairs.map((h) => h.position),
+        ...colony.tips.map((t) => t.position),
+        ...colony.fusions.flatMap((f) => [f.position, f.bridgeTo]),
+        ...colony.mushrooms.map((m) => m.position),
+      ]
+      for (const p of positions) {
+        expect(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)).toBe(true)
+      }
     }
   })
 })
