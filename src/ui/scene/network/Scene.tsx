@@ -22,6 +22,8 @@ export interface NetworkSceneProps {
   model: NetworkModel
   getCurrentTime: () => number
   reducedMotion: boolean
+  /** Unit 4: reads the growth clock's own play state once per frame -- see `CameraRig`'s doc comment for the gentle auto-orbit this drives. */
+  isReplayPlaying?: () => boolean
   onElementHover?: (id: string | null) => void
   onElementSelect?: (id: string | null) => void
   hoveredId?: string | null
@@ -50,6 +52,7 @@ export default function Scene({
   model,
   getCurrentTime,
   reducedMotion,
+  isReplayPlaying,
   onElementHover,
   onElementSelect,
   hoveredId = null,
@@ -98,6 +101,7 @@ export default function Scene({
         model={model}
         getCurrentTime={getCurrentTime}
         reducedMotion={reducedMotion}
+        isReplayPlaying={isReplayPlaying}
         onElementHover={onElementHover}
         onElementSelect={onElementSelect}
         hoveredId={hoveredId}

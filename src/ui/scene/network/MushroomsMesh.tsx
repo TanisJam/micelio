@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { applyGrowthToInstances } from './geometry/applyGrowth'
+import { applyGrowthToInstances, MUSHROOM_SPROUT_WINDOW_MS } from './geometry/applyGrowth'
 import { getMushroomGeometry } from './geometry/mushroomGeometry'
 
 export interface MushroomsMeshProps {
@@ -48,7 +48,7 @@ export function MushroomsMesh({ matrices, birthTimes, ids, getCurrentTime, hover
     // instead scales up just its own instance (`HIGHLIGHT_SCALE`).
     const targetId = selectedId ?? hoveredId
     const highlightIndex = targetId && ids ? ids.indexOf(targetId) : -1
-    applyGrowthToInstances(mesh, matrices, birthTimes, getCurrentTime(), highlightIndex)
+    applyGrowthToInstances(mesh, matrices, birthTimes, getCurrentTime(), highlightIndex, MUSHROOM_SPROUT_WINDOW_MS)
   })
 
   if (matrices.length === 0) return null

@@ -6,6 +6,7 @@ import { buildMushroomInstances } from './geometry/mushroomInstances'
 import { buildFilamentsGeometry } from './geometry/filamentsGeometry'
 import { buildHyphaeGeometry } from './geometry/hyphaeGeometry'
 import { createGrowthMaterial, type GrowthMaterial } from './geometry/growthMaterial'
+import { FUSION_FLASH_WINDOW_MS } from './geometry/applyGrowth'
 import { buildPickGrid, queryNearest, type PickTarget } from './picking/pickingGrid'
 import { CameraFocus } from './CameraFocus'
 import { CameraRig } from './CameraRig'
@@ -22,6 +23,8 @@ export interface NetworkSceneContentProps {
   /** Reads the current growth-replay time (epoch ms) once per frame; not a React prop that re-renders the scene. */
   getCurrentTime: () => number
   reducedMotion: boolean
+  /** Unit 4: reads the growth clock's own play state once per frame -- forwarded to `CameraRig`'s gentle auto-orbit. */
+  isReplayPlaying?: () => boolean
   onElementHover?: (id: string | null) => void
   onElementSelect?: (id: string | null) => void
   hoveredId?: string | null
@@ -48,6 +51,7 @@ export function NetworkSceneContent({
   model,
   getCurrentTime,
   reducedMotion,
+  isReplayPlaying,
   onElementHover,
   onElementSelect,
   hoveredId = null,
@@ -205,7 +209,7 @@ export function NetworkSceneContent({
 
   return (
     <>
-      <CameraRig radius={substrateRadiusFor(model)} />
+      <CameraRig radius={substrateRadiusFor(model)} isReplayPlaying={isReplayPlaying} reducedMotion={reducedMotion} />
       <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
       <SubstrateHaze model={model} getCurrentTime={getCurrentTime} ringRadius={selectedMushroomRingRadius} />
@@ -250,6 +254,7 @@ export function NetworkSceneContent({
         color={mycelium.fusion}
         radius={FUSION_RADIUS}
         getCurrentTime={getCurrentTime}
+        flashWindowMs={FUSION_FLASH_WINDOW_MS}
       />
       <PointGlowInstances
         matrices={tipInstances.matrices}

@@ -1,6 +1,22 @@
 export { buildNetwork, DEFAULT_NETWORK_BUILD_OPTIONS, type NetworkBuildOptions } from './buildNetwork'
 export { layoutNetworkColony, type ColonyLayoutResult } from './colonyLayout'
 export { buildDensityField, DENSITY_FIELD_MARGIN, DENSITY_FIELD_RESOLUTION, substrateRadiusFor, type DensityField } from './densityField'
+export {
+  collectActivityEventTimes,
+  DEFAULT_LINEAR_BLEND_FRACTION,
+  eventPacedTimeAtProgress,
+  mapProgressToEventPacedTime,
+  sortedActivityEventTimes,
+} from './eventPacing'
+export {
+  buildTickerData,
+  buildTickerEvents,
+  currentTickerEvent,
+  tickerCountsAt,
+  type TickerCounts,
+  type TickerData,
+  type TickerEvent,
+} from './tickerEvents'
 export { resolveNetworkElementDetail } from './elementDetail'
 export { buildNetworkExploreGroups, type NetworkExploreCommitEntry, type NetworkExplorePrEntry, type NetworkExploreYearGroup } from './exploreGroups'
 export { getNetworkElementFocusPosition } from './focus'

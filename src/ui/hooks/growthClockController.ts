@@ -1,6 +1,13 @@
-import { easePlaybackProgress, mapPlaybackProgressToTime, type TimeBounds } from '../../domain/shared'
+import { easePlaybackProgress, type TimeBounds } from '../../domain/shared'
+import { mapProgressToEventPacedTime } from '../../domain/network/eventPacing'
 
-const AUTOPLAY_DURATION_MS = 10_000
+/**
+ * Unit 4 ("replay history event by event"): lengthened from 10s so an
+ * activity-paced replay (see `mapProgressToEventPacedTime`) has enough real
+ * time for individual events to actually register, per the task's own
+ * "~15-20s" target.
+ */
+const AUTOPLAY_DURATION_MS = 18_000
 
 export interface GrowthClock {
   /** Reads the current epoch-ms time. Safe to call every frame from `useFrame`; never triggers a React re-render. */
@@ -65,6 +72,13 @@ export function createGrowthClockController(
   initialProgress: number,
   shouldAutoPlay: boolean,
   scheduler: GrowthClockScheduler = defaultScheduler,
+  /**
+   * Unit 4: ascending real event times (see `sortedActivityEventTimes`) to
+   * pace `getTime()` by instead of pure linear calendar time -- omitted or
+   * empty falls back to pure linear time unchanged (`mapProgressToEventPacedTime`'s
+   * own fallback).
+   */
+  sortedEventTimes: number[] = [],
 ): GrowthClock {
   let progress = initialProgress
   let playing = shouldAutoPlay
@@ -97,7 +111,7 @@ export function createGrowthClockController(
   }
 
   return {
-    getTime: () => mapPlaybackProgressToTime(easePlaybackProgress(progress), bounds),
+    getTime: () => mapProgressToEventPacedTime(sortedEventTimes, bounds, easePlaybackProgress(progress)),
     getProgress: () => progress,
     isPlaying: () => playing,
     play: () => {

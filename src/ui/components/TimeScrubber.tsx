@@ -1,11 +1,9 @@
 import { useSyncExternalStore, type KeyboardEvent } from 'react'
-import { mapPlaybackProgressToTime, type TimeBounds } from '../../domain/shared'
 import type { GrowthClock } from '../hooks/useGrowthClock'
 import { ui } from '../theme/tokens'
 
 export interface TimeScrubberProps {
   clock: GrowthClock
-  bounds: TimeBounds
 }
 
 const SEEK_STEP = 0.01
@@ -17,10 +15,15 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', mont
  * date. Keyboard accessible (space toggles play/pause, arrow keys scrub);
  * T7/T8 will restyle, this just needs to work and use the shared tokens.
  */
-export function TimeScrubber({ clock, bounds }: TimeScrubberProps) {
+export function TimeScrubber({ clock }: TimeScrubberProps) {
   const progress = useSyncExternalStore(clock.subscribe, clock.getProgress)
   const playing = useSyncExternalStore(clock.subscribe, clock.isPlaying)
-  const currentTime = mapPlaybackProgressToTime(progress, bounds)
+  // Unit 4: the REAL time the clock is at (activity-paced + eased, see
+  // `mapProgressToEventPacedTime`), not a plain linear recompute from
+  // `progress` -- the scrubber's own date label must always agree with
+  // what the 3D scene is actually showing this frame, both driven by the
+  // exact same `clock.getTime()`.
+  const currentTime = useSyncExternalStore(clock.subscribe, clock.getTime)
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === ' ' || event.key === 'Spacebar') {

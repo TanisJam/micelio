@@ -81,4 +81,51 @@ describe('applyGrowthToInstances', () => {
     applyGrowthToInstances(mesh, [matrix], [0], 100)
     expect(readScale(mesh, 0).toArray()).toEqual([3, 3, 3])
   })
+
+  describe('flashWindowMs (Unit 4: mushroom sprout / fusion flash)', () => {
+    const matrix = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, 0), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1))
+
+    it('renders bigger than real scale right at birth, with flashWindowMs set', () => {
+      const mesh = makeMesh(1)
+      applyGrowthToInstances(mesh, [matrix], [1000], 1000, -1, 500)
+      expect(readScale(mesh, 0).x).toBeGreaterThan(1)
+    })
+
+    it('decays back to exactly real scale once the flash window has fully elapsed', () => {
+      const mesh = makeMesh(1)
+      applyGrowthToInstances(mesh, [matrix], [1000], 1000 + 500, -1, 500)
+      expect(readScale(mesh, 0).x).toBeCloseTo(1, 5)
+    })
+
+    it('is strictly monotonically decreasing across the flash window', () => {
+      const mesh = makeMesh(1)
+      let previous = Infinity
+      for (let age = 0; age <= 500; age += 50) {
+        applyGrowthToInstances(mesh, [matrix], [1000], 1000 + age, -1, 500)
+        const scale = readScale(mesh, 0).x
+        expect(scale).toBeLessThanOrEqual(previous)
+        previous = scale
+      }
+    })
+
+    it('has no effect at all when flashWindowMs is 0 (the default)', () => {
+      const mesh = makeMesh(1)
+      applyGrowthToInstances(mesh, [matrix], [1000], 1000)
+      expect(readScale(mesh, 0).x).toBeCloseTo(1, 5)
+    })
+
+    it('never flashes a not-yet-grown (hidden) instance', () => {
+      const mesh = makeMesh(1)
+      applyGrowthToInstances(mesh, [matrix], [1000], 500, -1, 500)
+      expect(readXAxisLength(mesh, 0)).toBe(0)
+    })
+
+    it('combines with the highlight scale multiplicatively', () => {
+      const mesh = makeMesh(1)
+      applyGrowthToInstances(mesh, [matrix], [1000], 1000, 0, 500)
+      // At age 0 the flash is at its peak (FLASH_PEAK_SCALE), stacked on top
+      // of HIGHLIGHT_SCALE -- strictly bigger than either alone.
+      expect(readScale(mesh, 0).x).toBeGreaterThan(HIGHLIGHT_SCALE)
+    })
+  })
 })

@@ -1,6 +1,6 @@
-import { lazy, Suspense, useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
-import { formatOverflowNote, resolveNetworkElementDetail, type NetworkModel } from '../../domain/network'
+import { formatOverflowNote, resolveNetworkElementDetail, sortedActivityEventTimes, type NetworkModel } from '../../domain/network'
 import { formatFetchTruncationNote } from '../../domain/fetchTruncation'
 import { mapErrorToViewState } from '../../domain/repoRequestState'
 import type { RepoSnapshot } from '../../domain/repo'
@@ -8,6 +8,7 @@ import { validateRepoIdentity } from '../../domain/validateRepoIdentity'
 import { ContextLossBanner } from '../components/ContextLossBanner'
 import { DetailPanel } from '../components/DetailPanel'
 import { GrowthCaption } from '../components/GrowthCaption'
+import { GrowthTicker } from '../components/GrowthTicker'
 import { Legend } from '../components/Legend'
 import { NetworkExploreList } from '../components/NetworkExploreList'
 import { StateScreen } from '../components/StateScreen'
@@ -167,8 +168,14 @@ function ErrorState({
 
 function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; snapshot: RepoSnapshot; reducedMotion: boolean }) {
   const debugProgress = readDebugProgressOverride()
-  const clock = useGrowthClock(model.bounds.time, reducedMotion, debugProgress)
+  // Unit 4: paces growth replay by real activity (PR splits/merges/closes,
+  // direct-commit bursts, commits, releases) instead of pure linear
+  // calendar time -- computed once per model (recomputing it doesn't move
+  // the already-created clock's own reference to it).
+  const sortedEventTimes = useMemo(() => sortedActivityEventTimes(model), [model])
+  const clock = useGrowthClock(model.bounds.time, reducedMotion, debugProgress, sortedEventTimes)
   const getCurrentTime = useCallback(() => clock.getTime(), [clock])
+  const isReplayPlaying = useCallback(() => clock.isPlaying(), [clock])
   const selection = useSelection()
   const [exploreOpen, setExploreOpen] = useState(false)
   const isMobile = useMediaQuery(MOBILE_QUERY)
@@ -248,6 +255,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
           model={model}
           getCurrentTime={getCurrentTime}
           reducedMotion={reducedMotion}
+          isReplayPlaying={isReplayPlaying}
           onElementHover={selection.setHovered}
           onElementSelect={selectAndCloseExplore}
           hoveredId={selection.hoveredId}
@@ -269,7 +277,8 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
       )}
       {!mobileSheetOpen && (
         <>
-          <TimeScrubber clock={clock} bounds={model.bounds.time} />
+          <TimeScrubber clock={clock} />
+          <GrowthTicker model={model} snapshot={snapshot} clock={clock} reducedMotion={reducedMotion} />
           <GrowthCaption clock={clock} reducedMotion={reducedMotion} />
         </>
       )}

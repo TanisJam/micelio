@@ -57,12 +57,12 @@ describe('createGrowthClockController', () => {
     // data (`bounds`) is ready -- mirrored here.
     clock.play()
 
-    advance(2500) // first frame: no previous frame time, dt=0
-    advance(2500) // 2.5s of a 10s duration
+    advance(4500) // first frame: no previous frame time, dt=0
+    advance(4500) // 4.5s of the 18s duration
     expect(clock.getProgress()).toBeCloseTo(0.25, 5)
     expect(clock.isPlaying()).toBe(true)
 
-    advance(7500)
+    advance(13_500)
     expect(clock.getProgress()).toBe(1)
     expect(clock.isPlaying()).toBe(false)
   })
@@ -73,7 +73,7 @@ describe('createGrowthClockController', () => {
     clock.play()
     expect(clock.getTime()).toBe(BOUNDS.firstEventTime)
     advance(0)
-    advance(10_000)
+    advance(18_000)
     expect(clock.getProgress()).toBe(1)
     expect(clock.getTime()).toBe(BOUNDS.lastEventTime)
   })
@@ -109,7 +109,7 @@ describe('createGrowthClockController', () => {
     const clock = createGrowthClockController(BOUNDS, 0, true, scheduler)
     clock.play()
     advance(0)
-    advance(10_000)
+    advance(18_000)
     expect(clock.getProgress()).toBe(1)
     expect(clock.isPlaying()).toBe(false)
     clock.toggle()
@@ -181,7 +181,26 @@ describe('createGrowthClockController', () => {
     advance(0)
     advance(3000)
     expect(clock.getProgress()).toBeGreaterThan(0)
-    advance(7000)
+    advance(15_000)
     expect(clock.getProgress()).toBe(1)
+  })
+
+  it('Unit 4: getTime paces by the given event times, not pure linear time, when sortedEventTimes is provided', () => {
+    const { scheduler } = createFakeScheduler()
+    // Every event crammed into the first half of the real calendar span --
+    // a linear clock would show most events "already passed" by progress
+    // 0.5, while an event-paced clock spreads them evenly across the whole
+    // 0..1 progress range.
+    const events = [0, 100, 200, 300, 10_000_000]
+    const clock = createGrowthClockController(BOUNDS, 0.5, false, scheduler, events)
+    const linearMidTime = (BOUNDS.firstEventTime + BOUNDS.lastEventTime) / 2
+    expect(clock.getTime()).toBeLessThan(linearMidTime)
+  })
+
+  it('Unit 4: falls back to pure linear time when sortedEventTimes is omitted', () => {
+    const { scheduler } = createFakeScheduler()
+    const clock = createGrowthClockController(BOUNDS, 0.5, false, scheduler)
+    const linearMidTime = (BOUNDS.firstEventTime + BOUNDS.lastEventTime) / 2
+    expect(Math.abs(clock.getTime() - linearMidTime)).toBeLessThan(1)
   })
 })

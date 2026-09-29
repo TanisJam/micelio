@@ -1,11 +1,22 @@
 import { useEffect, useRef, type ComponentRef } from 'react'
 import { OrbitControls } from '@react-three/drei'
-import { useThree } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import { chooseCameraFraming, computeFramingDistance } from './cameraFraming'
+
+/** Unit 4: how fast the camera gently auto-orbits while growth replay is actively playing -- slow enough to read as "staying with the colony", never a distracting spin. `OrbitControls.autoRotateSpeed`'s own units: degrees per second at 60fps, roughly. */
+const REPLAY_AUTO_ROTATE_SPEED = 0.35
 
 export interface CameraRigProps {
   /** The colony disc's bounding radius (`NetworkModel.bounds.radius`). */
   radius: number
+  /**
+   * Unit 4: reads the growth clock's own play state once per frame (never a
+   * reactive prop -- the clock deliberately stays outside React state, see
+   * `useGrowthClock`'s doc comment) to gate a gentle auto-orbit while replay
+   * is actively playing. Omitted (or `reducedMotion`) disables it entirely.
+   */
+  isReplayPlaying?: () => boolean
+  reducedMotion?: boolean
 }
 
 /**
@@ -13,11 +24,18 @@ export interface CameraRigProps {
  * (accounting for both vertical and horizontal FOV, so a narrow mobile
  * viewport doesn't crop the disc's width), and sets up damped
  * `OrbitControls` with polar/distance limits so the viewer can never orbit
- * below the soil or clip through the spore.
+ * below the substrate or clip through the spore.
+ *
+ * Unit 4: while growth replay is actively playing (and the viewer hasn't
+ * yet touched the camera themselves), a slow auto-orbit keeps the growing
+ * colony gently in view rather than sitting static -- the FIRST manual
+ * interaction (drag/zoom/pan) permanently hands control back for the rest
+ * of this mount, per the task's own "returns control on interaction".
  */
-export function CameraRig({ radius }: CameraRigProps) {
+export function CameraRig({ radius, isReplayPlaying, reducedMotion = false }: CameraRigProps) {
   const { camera, size } = useThree()
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
+  const hasInteracted = useRef(false)
   const target: [number, number, number] = [0, 0, 0]
 
   const verticalFov = 'fov' in camera ? (camera.fov * Math.PI) / 180 : Math.PI / 4
@@ -49,6 +67,13 @@ export function CameraRig({ radius }: CameraRigProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radius, size.width, size.height])
 
+  useFrame(() => {
+    const controls = controlsRef.current
+    if (!controls) return
+    controls.autoRotate = !reducedMotion && !hasInteracted.current && (isReplayPlaying?.() ?? false)
+    controls.autoRotateSpeed = REPLAY_AUTO_ROTATE_SPEED
+  })
+
   return (
     <OrbitControls
       ref={controlsRef}
@@ -57,11 +82,17 @@ export function CameraRig({ radius }: CameraRigProps) {
       dampingFactor={0.08}
       minDistance={Math.max(radius * 0.5, 1)}
       maxDistance={maxDistance}
-      // Never dip below the soil (a small positive floor), and never go
+      // Never dip below the substrate (a small positive floor), and never go
       // fully overhead either -- keeps the 3/4 read intact while orbiting.
       minPolarAngle={0.35}
       maxPolarAngle={1.45}
       target={target}
+      // Unit 4: the first real user interaction hands control back for
+      // good (`hasInteracted`, read by the `useFrame` above) -- `onStart`
+      // fires on drag/zoom/pan start, never on the auto-rotate itself.
+      onStart={() => {
+        hasInteracted.current = true
+      }}
       makeDefault
     />
   )

@@ -19,6 +19,8 @@ export interface PointGlowInstancesProps {
   ids?: string[]
   hoveredId?: string | null
   selectedId?: string | null
+  /** Unit 4: a just-grown instance briefly renders bigger than its real scale, easing back down -- a fusion knot's "brief warm flash" on merge. Default 0 (no flash), see `applyGrowthToInstances`'s own doc. */
+  flashWindowMs?: number
 }
 
 /**
@@ -39,6 +41,7 @@ export function PointGlowInstances({
   ids,
   hoveredId = null,
   selectedId = null,
+  flashWindowMs = 0,
 }: PointGlowInstancesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const geometry = useMemo(() => new THREE.SphereGeometry(radius, 10, 10), [radius])
@@ -59,7 +62,7 @@ export function PointGlowInstances({
     if (!mesh || matrices.length === 0) return
     const targetId = selectedId ?? hoveredId
     const highlightIndex = targetId && ids ? ids.indexOf(targetId) : -1
-    applyGrowthToInstances(mesh, matrices, birthTimes, getCurrentTime(), highlightIndex)
+    applyGrowthToInstances(mesh, matrices, birthTimes, getCurrentTime(), highlightIndex, flashWindowMs)
     if (breathe && !reducedMotion) {
       const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.2) * 0.15
       mesh.scale.setScalar(pulse)

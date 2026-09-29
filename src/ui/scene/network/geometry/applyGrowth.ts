@@ -5,6 +5,21 @@ import { isGrown } from '../../../../domain/network'
 export const HIGHLIGHT_SCALE = 1.4
 
 /**
+ * Unit 4 ("replay history event by event"): how much bigger a just-grown
+ * instance renders right at its own birth time, decaying back to its real
+ * scale over `flashWindowMs` -- a mushroom's "sprouts (scale-up) with a
+ * soft pulse" and a fusion knot's "brief warm flash", both driven by the
+ * SAME mechanism (an instance's own recorded birth time), not a separate
+ * one-shot animation system.
+ */
+export const FLASH_PEAK_SCALE = 1.8
+
+/** A mushroom's own sprout window -- long enough to read as a deliberate scale-up, not a snap. */
+export const MUSHROOM_SPROUT_WINDOW_MS = 900
+/** A fusion knot's own flash window -- shorter and snappier than a mushroom's sprout, reading as a brief pulse rather than a growth. */
+export const FUSION_FLASH_WINDOW_MS = 450
+
+/**
  * Per-frame growth reveal for an `InstancedMesh` (mushrooms, fusion knots,
  * growing tips): a not-yet-grown instance is moved far away AND scaled to
  * zero (not just one or the other -- a renderer can treat a fully
@@ -16,6 +31,11 @@ export const HIGHLIGHT_SCALE = 1.4
  * instance up by `HIGHLIGHT_SCALE` -- the hover/select affordance for
  * point-like elements (A3/T8) that aren't part of a hypha ribbon, so can't
  * use the shared growth shader's hypha-highlight uniforms.
+ *
+ * `flashWindowMs` (default 0, meaning no flash) makes a JUST-grown instance
+ * (`currentTime` within `flashWindowMs` of its own `birthTime`) render
+ * bigger than its real scale, easing back down to it -- combines
+ * multiplicatively with the highlight scale on the rare frame both apply.
  */
 export function applyGrowthToInstances(
   mesh: THREE.InstancedMesh,
@@ -23,13 +43,26 @@ export function applyGrowthToInstances(
   birthTimes: number[],
   currentTime: number,
   highlightIndex = -1,
+  flashWindowMs = 0,
 ): void {
   const scratch = new THREE.Matrix4()
   for (let i = 0; i < matrices.length; i++) {
-    if (isGrown(birthTimes[i]!, currentTime)) {
-      if (i === highlightIndex) {
+    const birthTime = birthTimes[i]!
+    if (isGrown(birthTime, currentTime)) {
+      let scale = i === highlightIndex ? HIGHLIGHT_SCALE : 1
+
+      if (flashWindowMs > 0) {
+        const age = currentTime - birthTime
+        if (age >= 0 && age < flashWindowMs) {
+          const t = age / flashWindowMs // 0 (just born) .. 1 (flash over)
+          const eased = 1 - t * t // decays faster at first, settling smoothly
+          scale *= 1 + (FLASH_PEAK_SCALE - 1) * eased
+        }
+      }
+
+      if (scale !== 1) {
         scratch.copy(matrices[i]!)
-        scratch.scale(new THREE.Vector3(HIGHLIGHT_SCALE, HIGHLIGHT_SCALE, HIGHLIGHT_SCALE))
+        scratch.scale(new THREE.Vector3(scale, scale, scale))
         mesh.setMatrixAt(i, scratch)
       } else {
         mesh.setMatrixAt(i, matrices[i]!)
