@@ -103,7 +103,7 @@ function useTokenConfigured(): boolean | null {
  * GitHub URL), example chips, a real hero render, and credit links (P10).
  */
 export function LandingPage() {
-  useDocumentTitle('Huerto — every repository grows a mycelium galaxy')
+  useDocumentTitle('Micelio — every repository grows a mycelium galaxy')
   const [, navigate] = useLocation()
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -143,7 +143,7 @@ export function LandingPage() {
         }}
       >
         <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: ui.space(3), maxWidth: 520 }}>
-          <h1 style={{ margin: 0, fontFamily: ui.fontDisplay, fontSize: '2.4rem', fontWeight: 600 }}>Huerto</h1>
+          <h1 style={{ margin: 0, fontFamily: ui.fontDisplay, fontSize: '2.4rem', fontWeight: 600 }}>Micelio</h1>
           <p style={{ margin: 0, color: ui.textMuted, fontSize: '1.05rem' }}>Every repository grows a mycelium galaxy.</p>
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: ui.space(2), marginTop: ui.space(3) }}>

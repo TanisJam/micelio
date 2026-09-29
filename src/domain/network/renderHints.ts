@@ -6,7 +6,7 @@ import { clamp, lerp } from '../math'
 /**
  * M3 (rendering) pure honesty/growth helpers. No React, no three.js.
  *
- * TIME HONESTY (see `odd/tasks/huerto-mvp.md`'s M3 brief): a colony hypha can
+ * TIME HONESTY (see `odd/tasks/micelio-mvp.md`'s M3 brief): a colony hypha can
  * visually sprout fresh from the spore (disc radius 0) for continuity, even
  * though its real `splitTime` corresponds to a later, nonzero disc radius
  * (see M2d's "spore-started colony hypha" case in `colonyLayout.ts`). Drawing

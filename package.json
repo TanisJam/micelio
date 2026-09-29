@@ -1,9 +1,9 @@
 {
-  "name": "huerto",
+  "name": "micelio",
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "A git repository, grown as a stylized 3D tree.",
+  "description": "Every repository grows a mycelium galaxy.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

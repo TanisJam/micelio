@@ -1,9 +1,11 @@
-# Huerto
+# Micelio
 
 Every repository grows a mycelium galaxy. Enter a GitHub `owner/repo` and watch
 its history unfold as a bioluminescent colony of hyphae, spiraling outward
 from a central spore — the same repository always grows the same shape,
 seeded deterministically from its name.
+
+**Live demo:** https://micelio.vercel.app (will be confirmed at deploy)
 
 ![A bioluminescent mycelium galaxy grown from expressjs/express's real commit history -- cyan and white filaments spiral outward from a central spore, with small cream mushrooms marking releases](docs/screenshot.png)
 
@@ -114,6 +116,10 @@ and only the bundled sample repository renders (any other repo shows a
 `.env.example` to `.env`) to a personal access token with no special scopes
 for public repositories to browse any public GitHub repository. Real
 credentials are never committed; only `.env.example` is tracked.
+
+Browsing a live (non-fixture) repository needs a server-side `GITHUB_TOKEN`
+(fine-grained, public repositories, read-only) — the bundled sample repo
+works without one.
 
 ## Deploy on Vercel
 

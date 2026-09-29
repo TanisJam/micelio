@@ -8,7 +8,7 @@ import * as THREE from 'three'
  * uniforms once per frame.
  *
  * Dimming a non-selected element is done via ALPHA, never an RGB multiply
- * (a real bug found during the tree's V2 pass, see `odd/tasks/huerto-mvp.md`:
+ * (a real bug found during the tree's V2 pass, see `odd/tasks/micelio-mvp.md`:
  * ACES filmic tonemapping's shadow toe compressed a wide range of per-
  * instance color multipliers into nearly the same too-dark output).
  * Highlighting is additive brightening, which also pushes the element above

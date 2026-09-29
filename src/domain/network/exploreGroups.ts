@@ -7,7 +7,7 @@ import type { NetworkModel } from './types'
  * Era-free "Explore list" data for the network model: grouped by (UTC)
  * year -> pull requests -> commits, instead of the tree model's
  * era-boundary grouping (mycelium has no eras -- see the pivot notes in
- * `odd/tasks/huerto-mvp.md`). Resolves real titles/headlines via
+ * `odd/tasks/micelio-mvp.md`). Resolves real titles/headlines via
  * `resolveNetworkElementDetail`/`summarizeElementDetail` (same pattern the
  * tree's `ExploreList.tsx` uses inline), so this is a ready-to-render,
  * always-honest structure -- never a placeholder string. Pure, no React.

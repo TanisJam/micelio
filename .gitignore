@@ -20,8 +20,8 @@ pnpm-debug.log*
 # vitest / coverage
 coverage
 
-# huerto on-disk snapshot cache (dev only)
-.huerto-cache
+# micelio on-disk snapshot cache (dev only)
+.micelio-cache
 
 # codegraph index
 .codegraph

@@ -1,5 +1,5 @@
 /**
- * Huerto's design tokens: the bioluminescent-mycelium-on-dark-loam palette
+ * Micelio's design tokens: the bioluminescent-mycelium-on-dark-loam palette
  * (P1) shared by the 3D network scene and the UI chrome -- no other hex
  * literal should appear outside this module and `color.ts`. M4 removed the
  * earlier tree-metaphor palette once the tree code that used it was deleted.

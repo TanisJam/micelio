@@ -9,7 +9,7 @@ const ONE_HOUR_MS = 60 * 60 * 1000
 
 // Vercel's production filesystem is read-only outside of /tmp; only persist
 // the on-disk cache in a normal (non-Vercel) environment, i.e. local dev.
-const diskCacheDir = process.env.VERCEL ? null : new URL('../../.huerto-cache', import.meta.url).pathname
+const diskCacheDir = process.env.VERCEL ? null : new URL('../../.micelio-cache', import.meta.url).pathname
 
 const cache = new SnapshotCache(ONE_HOUR_MS, diskCacheDir)
 

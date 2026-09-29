@@ -61,7 +61,7 @@ export function ViewerPage({ owner, repo }: ViewerPageProps) {
     }
   })()
 
-  useDocumentTitle(identity ? `${identity.owner}/${identity.repo} — Huerto` : 'Invalid repository — Huerto')
+  useDocumentTitle(identity ? `${identity.owner}/${identity.repo} — Micelio` : 'Invalid repository — Micelio')
 
   if (!identity) {
     return (
@@ -114,7 +114,7 @@ function ErrorState({
   const [now] = useState(() => Date.now())
   const retryAt = errorInfo.retryAfterSeconds !== undefined ? now + errorInfo.retryAfterSeconds * 1000 : undefined
   const [, navigate] = useLocation()
-  const home = { label: 'Back to Huerto', onClick: () => navigate('/') }
+  const home = { label: 'Back to Micelio', onClick: () => navigate('/') }
   const retry = { label: 'Retry', onClick: onRetry }
 
   switch (state) {
@@ -127,7 +127,7 @@ function ErrorState({
     case 'private_or_forbidden':
       return (
         <StateScreen eyebrow="403" title="This repository is private" action={home}>
-          Huerto only reads public repositories in this deployment.
+          Micelio only reads public repositories in this deployment.
         </StateScreen>
       )
     case 'rate_limited':
@@ -140,7 +140,7 @@ function ErrorState({
       return (
         <StateScreen eyebrow="Sample data only" title="No GitHub token configured" action={home}>
           This deployment has no <code>GITHUB_TOKEN</code>, so only the bundled sample repository (pmndrs/valtio)
-          works. Self-host Huerto and set <code>GITHUB_TOKEN</code> (see the README) to browse any public repository.
+          works. Self-host Micelio and set <code>GITHUB_TOKEN</code> (see the README) to browse any public repository.
         </StateScreen>
       )
     case 'network_error':
@@ -231,7 +231,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
       }
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      link.download = `huerto-${snapshot.meta.owner}-${snapshot.meta.name}.png`
+      link.download = `micelio-${snapshot.meta.owner}-${snapshot.meta.name}.png`
       link.href = url
       link.click()
       URL.revokeObjectURL(url)

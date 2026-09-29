@@ -1,6 +1,15 @@
-# Huerto MVP — a git repository grown as a living mycelium network
+# Micelio MVP — a git repository grown as a living mycelium network
 
-Locator: `odd/tasks/huerto-mvp.md` · Engram mirror: `odd/huerto-mvp/tasks`
+Locator: `odd/tasks/micelio-mvp.md` · Engram mirror: `odd/huerto-mvp/tasks`
+
+### Rename (2026-09-29)
+The product was renamed from "Huerto" to "Micelio" (user decision, unrelated
+to the mycelium-vs-tree metaphor pivot above). This file was `git mv`'d from
+`odd/tasks/huerto-mvp.md`; every user-facing "Huerto" string and internal
+`huerto`-branded identifier (`.huerto-cache`, `huertoApiPlugin`, the
+`huerto-app` User-Agent, etc.) was renamed to "Micelio"/`micelio` across the
+codebase. The tagline ("Every repository grows a mycelium galaxy.") and the
+mycelium visual metaphor are unchanged — this is a naming-only change.
 
 ## Objective
 A shareable web app: enter `owner/repo`, watch the repository's history grow as a bioluminescent
@@ -78,6 +87,8 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] M3c Visual fixes: mushroom scale-down + golden-angle spread across the disc, restored brightness/bloom, fixed short-hypha rim taper artifacts, darker soil, mobile disc-fit + header consistency fixes. Route: delegated (writer), per orchestrator screenshot review of `.shots/`.
 - [x] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated (writer).
 (T8 polish now applies to the mycelium build.)
+- [x] Serverless hardening Unit 1: bound cold GitHub fetches to a time budget (real cold-fetch measurement showed 93-94s for large repos, over Vercel's 60s `maxDuration`). Route: direct (existing files, understood scope).
+- [x] Serverless hardening Unit 2: rename the product from "Huerto" to "Micelio" (user decision, naming-only). Route: direct.
 
 ## Polish bar (must all hold before the MVP is called done)
 Visual (mycelium)

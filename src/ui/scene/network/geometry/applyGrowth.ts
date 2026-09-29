@@ -9,7 +9,7 @@ export const HIGHLIGHT_SCALE = 1.4
  * growing tips): a not-yet-grown instance is moved far away AND scaled to
  * zero (not just one or the other -- a renderer can treat a fully
  * degenerate zero-scale instance as a stray pixel, a caution carried over
- * from the tree's own `ScatterInstances`, see `odd/tasks/huerto-mvp.md`
+ * from the tree's own `ScatterInstances`, see `odd/tasks/micelio-mvp.md`
  * T5). Mutates the mesh's `instanceMatrix` in place; no geometry rebuild.
  *
  * `highlightIndex` (default `-1`, meaning none) scales that one grown

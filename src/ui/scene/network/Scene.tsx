@@ -44,7 +44,7 @@ export interface NetworkSceneProps {
  * mapping off, so tone mapping is applied as its own effect instead
  * (`NEUTRAL`, not `ACES_FILMIC` -- the tree's V2 pass found ACES's shadow
  * toe crushes a wide range of dim values into the same too-dark output, see
- * `odd/tasks/huerto-mvp.md`).
+ * `odd/tasks/micelio-mvp.md`).
  */
 export default function Scene({
   model,

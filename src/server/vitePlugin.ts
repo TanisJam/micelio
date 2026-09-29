@@ -8,9 +8,9 @@ import { handleRepoRequest } from './handleRepoRequest.ts'
  * Vercel functions use. This makes `pnpm dev` work without any separate API
  * server.
  */
-export function huertoApiPlugin(): Plugin {
+export function micelioApiPlugin(): Plugin {
   return {
-    name: 'huerto-api',
+    name: 'micelio-api',
     configureServer(server) {
       server.middlewares.use('/api/repo', (req, res) => {
         const url = new URL(req.url ?? '', 'http://localhost')

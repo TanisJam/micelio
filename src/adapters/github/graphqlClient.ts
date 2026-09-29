@@ -51,7 +51,7 @@ export async function graphqlRequest<T>(
       headers: {
         Authorization: `bearer ${token}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'huerto-app',
+        'User-Agent': 'micelio-app',
       },
       body: JSON.stringify({ query, variables }),
     })

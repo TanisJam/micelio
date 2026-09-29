@@ -41,7 +41,7 @@ import type { Fusion, GrowthRing, Hair, Hypha, HyphaPoint, Mushroom, NetworkNode
  *    see `sectors.ts`).
  *
  * Shares `topology.ts` (the DAG) with the spiral layout; only the geometry
- * strategy differs. See the M2d section of `odd/tasks/huerto-mvp.md` for the
+ * strategy differs. See the M2d section of `odd/tasks/micelio-mvp.md` for the
  * full mapping rationale and the per-round visual iteration notes.
  */
 

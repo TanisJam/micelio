@@ -34,7 +34,7 @@ body {
    legibility -- draws the eye while the growth caption (`GrowthCaption.tsx`)
    is guiding a first-time visitor, never a repeating/nagging animation.
    Ends back at rest (no shadow) since the keyframe's own last frame is 0. */
-@keyframes huerto-legend-pulse {
+@keyframes micelio-legend-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(110, 231, 255, 0.5);
   }
@@ -47,7 +47,7 @@ body {
 }
 
 .legend-pulse-once {
-  animation: huerto-legend-pulse 1.5s ease-out 2;
+  animation: micelio-legend-pulse 1.5s ease-out 2;
 }
 
 /* The detail panel: right-side on desktop, a bottom sheet on mobile/narrow viewports (P7). */
