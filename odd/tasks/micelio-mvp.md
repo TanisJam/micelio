@@ -3426,6 +3426,232 @@ Literal descriptions:
   regression test rather than individually clicked/verified in the
   browser -- worth a manual click-through in a future pass.
 
+### Orchestrator review round 2 -- done (Units 1-5)
+
+Five issues from the orchestrator's review of the production-feedback
+round's `.shots/final-*` screenshots, addressed as three commits on `main`
+(local only, never pushed).
+
+**Unit 1: cold-fetch deadline (`448860a` fix: enforce one fetch deadline
+across all paginations).** Root-caused the regression (`facebook/react`
+50.7s vs. the earlier 26.5s): the global `fetchTimeBudgetMs` was already
+shared correctly across all three pagination loops, but a page ALREADY IN
+FLIGHT when the deadline hit had no bound of its own -- once direct-commit
+history became a fourth concurrent stream, its own page cost dominated (see
+below), and one slow page could push total latency arbitrarily far past the
+budget. Two independent fixes:
+- `graphqlRequest` (`graphqlClient.ts`) now takes an optional absolute
+  `deadlineAt`, threaded through every concurrent request (meta, merged/
+  closed/direct-commit pages) from a shared `toDeadlineAt` helper (`undefined`
+  when the budget is `Number.POSITIVE_INFINITY`, so fixture regeneration
+  stays unbounded) -- an `AbortController` cancels the in-flight `fetch` the
+  moment the deadline passes, so the WHOLE fetch, not just the gaps between
+  pages, honors one real wall-clock ceiling. `paginate()`'s catch block now
+  labels a request that failed AT OR AFTER the deadline as `reason:
+  'time_budget'` rather than a generic `'error'`, whichever caused the throw.
+- `DIRECT_COMMITS_PAGE_QUERY` dropped its per-commit `additions`/`deletions`
+  -- unlike a PR's own aggregate `additions`/`deletions` (computed once per
+  PR), a `Commit`'s own diff stat is computed on the fly by GitHub for EVERY
+  node, and this query requests up to 100 commits/page (vs. 10-20/page for
+  PRs), which measurably dominated latency once it ran concurrently with
+  merged/closed-PR pagination. `DirectCommit.additions`/`.deletions` were
+  already nullable for exactly this reason, so `topology.ts`'s work-based
+  hypha length already degrades to its existing commit-count fallback with
+  no further change.
+
+Real-repo verification (`GITHUB_TOKEN` via `gh auth token`, `.micelio-cache/`
+cleared first, real default 22s budget):
+
+| Repo | Cold (before this unit) | Cold (after) |
+|---|---|---|
+| `facebook/react` | 50.7s | **22.0s** |
+| `vitejs/vite` | (not re-measured this round; was 24.9s pre-regression) | **22.0s** |
+| `TanisJam/lime` | 3.3s | **3.3s** |
+
+Both large repos now land at essentially the budget itself (22s), comfortably
+under Vercel's 60s `maxDuration` with real margin. Tests
+(`fetchRepoSnapshot.test.ts`, `graphqlClient.test.ts`, Vitest fake timers):
+a still-in-flight page that never resolves on its own is aborted once the
+shared deadline passes (`vi.advanceTimersByTimeAsync`); a `deadlineAt`-less
+call (fixture regeneration) never aborts. Checks: typecheck/lint/test (476
+tests, +3)/build all pass.
+
+**Unit 2: adaptive direct-commit bursts (`d5c8e91` feat: scale direct-commit
+bursts to repository size).** `TanisJam/lime` (127 commits, 1 PR) rendered
+only ~10 filaments -- the fixed 40-commits-per-burst chunk size collapsed its
+one long solo streak into just 4 `direct` hyphae. `groupDirectCommitBursts`
+now groups into NATURAL runs (author + real time gap, unbounded) first, then
+searches `[DIRECT_BURST_MIN_CHUNK=3, DIRECT_BURST_MAX_COMMITS=40]` for the
+chunk size that, applied to every natural run, lands closest to a target of
+roughly `commits / DIRECT_BURST_TARGET_DIVISOR(3.5)` bursts (clamped to
+`[DIRECT_BURST_MIN_TARGET=8, DIRECT_BURST_MAX_TARGET=300]`). A busy repo's
+natural runs are already short (real author/gap diversity), so the search
+settles on a large chunk size that changes nothing; a solo repo's one long
+run has nothing else to split it, so it fans out into many short, still
+meaningful (same-author, time-contiguous) hyphae.
+
+Verified against real `TanisJam/lime` data: 126 direct commits now group
+into **34 bursts** (was 4), **37 total hyphae** including the repo's one
+real PR and two branches -- squarely in the target ~30-40 range. Tests
+(`directBursts.test.ts`, new file): the 127-commit lime scenario lands in
+`[25, 45]` bursts; a synthetic 60-author/5-commits-each "busy repo" (natural
+runs already short) produces the EXACT SAME 60 bursts adaptive as
+un-adaptive; a 5000-commit solo streak is capped at `DIRECT_BURST_MAX_TARGET`
+(300); existing gap/author-split semantics (topology.test.ts) untouched.
+Checks: typecheck/lint/test (485 tests, +9)/build all pass.
+
+**Units 3-5: disc remnant, framing, counters (`808830a` fix: remove disc
+remnant, frame the real colony and fix counters).**
+
+*Unit 3 (disc remnant).* Diagnosed empirically, not just by reading the
+shader: disabling `SubstrateHaze` entirely removed the disc completely
+(confirming the mesh, not fog/vignette/a residual `SoilDisc`, was the
+source); forcing the WHOLE mesh to output its own `uEdgeColor`
+unconditionally (bypassing density/growth) STILL showed the disc, isolating
+it to color math, not the density field, growth reveal, tone mapping, or
+bloom (each ruled out individually, including a real A/B with Bloom
+disabled). Root cause, confirmed numerically (`new THREE.Color(hex).r` vs.
+the old `.convertSRGBToLinear()`-appended value): `hexToLinearVec3`
+double-applied the sRGB-to-linear decode -- `new THREE.Color(hex)` already
+does it automatically (three's `ColorManagement`, on since r152) -- landing
+roughly 13x too dark in linear terms and visibly mismatching
+`scene.background`. Removing the redundant second conversion was the
+complete fix (confirmed: the forced-`uEdgeColor` disc vanished entirely once
+fixed). Also: `mycelium.substrateNear`/`substrateFar` (`tokens.ts`) were
+assigned backwards -- `substrateNear` ("near real structure") equaled the
+background exactly, `substrateFar` ("far from structure") was the
+barely-different tone -- so dense structure faded TOWARD background (haze
+"barely visible") while sparse coverage leaned on the lighter tone (the
+disc). Corrected, `substrateNear` now a real, perceptible cool-glow color;
+`substrateFar` exactly matches `scene.background`/`ui.bg`. Added a
+threshold/ramp (`DENSITY_GLOW_LOW`/`HIGH` in `substrateMaterial.ts`'s
+fragment shader) so a splat's own faint, wide Gaussian falloff -- nonzero
+across nearly the colony's whole convex extent for a dense repo, not just
+near real structure -- no longer reads as a uniformly-tinted disc; only
+genuinely clustered density glows.
+
+*Unit 4 (framing).* `CameraRig` framed against `substrateRadiusFor(model)`
+(the haze's own 1.6x-padded radius), so the colony only ever filled ~40% of
+the viewport on a real screenshot. Switched to the model's TRUE bounding
+radius (`model.bounds.radius`), retuned `LANDSCAPE_FRAME_MARGIN`/
+`PORTRAIT_FRAME_MARGIN` empirically (screenshot-verified desktop 1440x900
+and mobile 390x844) for a ~85% fill target, and added `computeGrownRadius`
+(`cameraFraming.ts`, new pure function, unit-tested): while replay is
+ACTIVELY PLAYING (and the viewer hasn't taken over), `CameraRig` eases the
+framing distance out toward the colony's CURRENT grown extent each frame
+(`THREE.MathUtils.damp`, preserves whatever azimuth/polar angle the camera
+already has) instead of sitting at the fully-grown distance from frame one.
+A paused/pinned time (`?t=`, scrubbing) always frames against the final
+radius, never the eased one, so a paused view never unexpectedly reframes.
+
+*Unit 5 (counters/caption).* `tickerCountsAt`'s "pull requests" counted
+every non-main hypha's own split time, including `direct` (commit-burst)
+and `liveBranch` (PR-less branch) hyphae -- `TanisJam/lime` showed "12 pull
+requests" for exactly 1 real PR. `buildTickerData`'s `pullRequestTimes` now
+filters to `REAL_PULL_REQUEST_KINDS` (`merged`/`closed`/`open` only).
+`growthCaptionLogic.ts`'s first caption updated to match the Legend's
+existing wording: "Each filament is a pull request or a burst of commits
+&middot; distance from the center is time" (previously omitted bursts
+entirely).
+
+Checks (combined units 3-5 commit): typecheck/lint/test (491 tests, +6)/
+build all pass. `pnpm shot`: 26/26 screenshots, 0 console errors.
+
+**Real-repo re-verification** (`GITHUB_TOKEN` via `gh auth token`,
+`.micelio-cache/` cleared first): desktop (1440x900) end (`?t=1`) + mid
+(`?t=0.5`) for `TanisJam/lime`, `TanisJam/peel`, `pmndrs/valtio`,
+`expressjs/express`, `facebook/react`; mobile (390x844) end for `lime` and
+`react`; a real 4-frame autoplay growth sequence (2s/5s/9s/14s after page
+load, no `?t=` override) for `lime` -- saved under `.shots/final2-*`
+(gitignored, not committed): `final2-lime-{end,mid,end-mobile,growth-2s,
+growth-5s,growth-9s,growth-14s}.png`, `final2-peel-{end,mid}.png`,
+`final2-valtio-{end,mid}.png`, `final2-express-{end,mid}.png`,
+`final2-react-{end,mid,end-mobile}.png`. 0 console errors across all 16
+captures.
+
+Literal descriptions:
+- `final2-lime-end.png`: header "TanisJam/lime &middot; LIVE &middot; 0
+  stars &middot; 0 forks &middot; 26 days old". A visibly richer colony than
+  the earlier round: roughly 8-10 distinct bright cyan arms radiate from the
+  spore, several bundled/overlapping near the center, with a clearly
+  organic (not elliptical) teal haze tracing their real spread and NO
+  visible disc/ellipse against the pure black background beyond it.
+  Counter: "1 pull request &middot; 127 commits &middot; 1 release" --
+  truthful (was "12 pull requests" before Unit 5). Colony fills roughly
+  65-75% of the viewport's limiting dimension, a large increase from the
+  ~40% in the prior round's `final-lime-end.png`.
+- `final2-lime-end-mobile.png` (390x844): same colony, comfortably filling
+  the narrower viewport's width edge-to-edge with headroom above/below for
+  the header and counter -- no cropping.
+- `final2-lime-growth-2s.png`: 2s into real autoplay, caption reads "Each
+  filament is a pull request or a burst of commits &middot; distance from
+  the center is time" (confirms Unit 5's caption fix is live), ticker "2
+  commits pushed to main", counters "0 pull requests &middot; 2 commits
+  &middot; 0 releases". Camera is tightly zoomed on the small amount grown
+  so far -- confirms Unit 4's ease-out-during-replay framing (not sitting at
+  the fully-grown final distance from frame one).
+- `final2-lime-growth-5s.png` / `-9s.png` / `-14s.png`: the camera visibly
+  eases outward across the sequence as more grows (tight at 5s, nearly full
+  by 9s at "1 pull request &middot; 118 commits &middot; 1 release", complete
+  by 14s at "1 pull request &middot; 127 commits &middot; 1 release",
+  matching the end state exactly -- this repo's real event-paced timeline
+  finishes before the full 18s replay duration, the same front-loaded-pacing
+  behavior already documented in the prior round, not a new issue).
+- `final2-peel-end.png` / `-mid.png`: visually identical to each other
+  (peel's real history is short enough that 50% and 100% event-paced
+  progress land on the same grown state) -- a lone spore with a large,
+  deliberately dense teal core (the spore's own wider/stronger density
+  splat, by design) and ~5 short-to-medium filaments, two mushroom caps
+  near the top. Counter: "11 pull requests &middot; 22 commits &middot; 2
+  releases", matching peel's real, previously-documented PR total.
+- `final2-valtio-end.png` / `final2-express-end.png`: visually consistent
+  with the Units 3-5 commit's own verification screenshots -- dense,
+  richly-swirled discs, uniform background, no disc remnant. Counters "618
+  pull requests &middot; 1,887 commits &middot; 80 releases" (valtio) and a
+  (partly hover-obscured but present) "&middot; 1,491 commits &middot; 100
+  releases" (express).
+- `final2-react-end.png`: a dense, richly swirled colony filling most of the
+  viewport, both cold-fetch truncation notes stacked in the Legend panel
+  ("Showing the latest 400 merged pull requests of 13,104 (fetch time
+  budget reached); Showing the latest 300 direct commits to the default
+  branch of 21,709 (fetch time budget reached)"), no disc remnant. Counter:
+  "650 pull requests &middot; 1,176 commits &middot; 100 releases" (truthful
+  given the truncated fetch). Ticker: "#37699 merged &middot; [compiler]
+  Remove unused collections in HIR passes &middot; 1 commit".
+- `final2-react-end-mobile.png`: same colony, fills the narrow viewport's
+  width edge-to-edge, legend/counter/ticker all legible, no cropping.
+
+**Remaining weaknesses, honestly reported:**
+- The camera-framing margin retune (`LANDSCAPE_FRAME_MARGIN`/
+  `PORTRAIT_FRAME_MARGIN`) was tuned empirically against real screenshots,
+  not derived from a closed-form account of the pitched camera's
+  foreshortening of a flat disc (the naive spherical-bounding-radius
+  formula `computeFramingDistance` already used, unchanged in shape,
+  systematically overshoots the true fill fraction at a non-90-degree
+  pitch) -- landed close to the ~85% target on both tested viewports
+  (1440x900, 390x844) but isn't guaranteed exact at other aspect ratios.
+- The disc-remnant root cause (`hexToLinearVec3` double-converting) was a
+  regression already latent in the ORIGINAL Unit 3 commit (`444f2e2`) --
+  that commit's own doc comments describe chasing and "fixing" what turned
+  out to be a different, real bug (the`toneMapped`/description now
+  superseded) while this actual double-conversion sat unnoticed; worth
+  a quick sweep of other `convertSRGBToLinear`-using code for the same
+  mistake in a future pass (none found in this project's other materials,
+  which all use the raw sRGB-byte `hexToVec3` path instead, per a spot
+  check of `colors.ts`).
+- `DENSITY_GLOW_LOW`/`DENSITY_GLOW_HIGH` (substrate shader) and the
+  burst-scaling constants (Unit 2) were both tuned against a small set of
+  real repos (lime, valtio, express, react, peel) -- an even denser repo
+  (tens of thousands of commits) or an even sparser one than lime wasn't
+  separately spot-checked this round.
+- No automated test asserts the substrate shader's actual rendered pixel
+  output (color match against background, glow threshold) -- coverage here
+  is the empirical screenshot A/B testing documented above (forcing
+  `uEdgeColor` unconditionally, disabling Bloom, rendering raw density as
+  grayscale) plus the domain-level `densityField.ts`/`cameraFraming.ts`
+  tests, not a pixel-level regression test that would catch a FUTURE
+  reintroduction of the same double-conversion bug.
+
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
 decision.
