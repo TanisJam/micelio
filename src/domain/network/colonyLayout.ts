@@ -710,6 +710,19 @@ export function applySwirl(result: ColonyLayoutResult, swirl: number, power: num
  * later hypha's gap search and parent search see everything placed so far.
  * Deterministic for a fixed seed. See the module doc above for the mapping.
  */
+/**
+ * Opt-in, zero-cost-when-omitted instrumentation (B3/T8): lets a test count
+ * the algorithm's own dominant per-hypha operation (`computeSpanning`'s scan
+ * over every already-placed hypha) instead of measuring wall-clock time,
+ * which is flaky under CI/parallel-worker load (see `buildNetwork.test.ts`'s
+ * performance suite, which replaced a `performance.now()` budget with this).
+ * Never used by production code -- `buildNetwork` never passes it.
+ */
+export interface ColonyLayoutInstrumentation {
+  /** Called once per hypha placed, with how many already-placed hyphae the placement step's spanning search just scanned. */
+  onSpanningScan: (scannedCount: number) => void
+}
+
 export function layoutNetworkColony(
   main: HyphaDraft,
   hyphae: HyphaDraft[],
@@ -717,6 +730,7 @@ export function layoutNetworkColony(
   seed: string,
   releases: ReleaseInfo[],
   options: Partial<LayoutOptions> = {},
+  instrumentation?: ColonyLayoutInstrumentation,
 ): ColonyLayoutResult {
   const resolved: LayoutOptions = { ...DEFAULT_LAYOUT_OPTIONS, ...options }
   const prng = createPrng(`${seed}:network-colony-layout`)
@@ -766,6 +780,7 @@ export function layoutNetworkColony(
 
   for (const draft of orderedDrafts) {
     const r0 = radiusForTime(draft.splitTime)
+    instrumentation?.onSpanningScan(placedHyphae.length)
     const spanning = computeSpanning(placedHyphae, r0)
     const targetAngleRaw = chooseTargetAngle(spanning, sporeRays, placedHyphae, prng)
 

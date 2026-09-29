@@ -5,7 +5,18 @@ import { ToneMappingMode } from 'postprocessing'
 import * as THREE from 'three'
 import type { NetworkModel } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
+import { silenceThreeClockDeprecationWarning } from '../../silenceThreeClockWarning'
 import { NetworkSceneContent } from './NetworkSceneContent'
+
+// B5/T8: called at MODULE scope (not inside the component, and deliberately
+// not from the eager `main.tsx`) so it runs exactly once, before the first
+// `<Canvas>` below ever mounts, but ONLY as part of this already-`three.js`-
+// heavy chunk -- `Scene.tsx` is the app's `React.lazy` boundary specifically
+// so the landing page never downloads `three`/R3F/postprocessing at all; an
+// eager call from `main.tsx` would import `three` on every page load just
+// for this filter, undoing that split (confirmed via `pnpm build`: it
+// inflated the initial chunk by the same ~370 kB the Scene chunk shrank by).
+silenceThreeClockDeprecationWarning()
 
 export interface NetworkSceneProps {
   model: NetworkModel
@@ -17,6 +28,8 @@ export interface NetworkSceneProps {
   selectedId?: string | null
   /** Hands the underlying `<canvas>` element up once the renderer mounts (P10 "save image"). */
   onCanvasReady?: (canvas: HTMLCanvasElement) => void
+  /** B4/T8: the GPU context died (driver crash, OS reclaiming VRAM, too many contexts open, etc). The caller shows a small recovery UI and remounts this whole component (a fresh `key`) to get a working canvas back -- WebGL context loss is notoriously unreliable to resume in place once three.js/R3F's whole resource graph (textures, buffers, shader programs) has been invalidated mid-session. */
+  onContextLost?: () => void
 }
 
 /**
@@ -42,6 +55,7 @@ export default function Scene({
   hoveredId = null,
   selectedId = null,
   onCanvasReady,
+  onContextLost,
 }: NetworkSceneProps) {
   // A FLAT background (not the tree scene's vertical sky gradient, see
   // `skyTexture.ts` -- deliberately not reused here) matching the soil
@@ -63,6 +77,20 @@ export default function Scene({
         gl.outputColorSpace = THREE.SRGBColorSpace
         scene.background = background
         onCanvasReady?.(gl.domElement)
+        // B4/T8: `preventDefault()` is required by the WebGL spec for the
+        // context to ever be restorable at all (otherwise the browser
+        // treats the loss as permanent) -- but three.js/R3F's whole
+        // resource graph (every texture/buffer/shader program) is
+        // invalidated the instant this fires, so restoring THIS context in
+        // place is unreliable; the caller instead shows a small recovery UI
+        // and remounts the whole `<Scene>` (a fresh `key`) for a clean new
+        // context. No explicit `removeEventListener` -- these listeners are
+        // scoped to this canvas element's own lifetime and are discarded
+        // with it on unmount, same as any other DOM node's own listeners.
+        gl.domElement.addEventListener('webglcontextlost', (event) => {
+          event.preventDefault()
+          onContextLost?.()
+        })
       }}
     >
       <NetworkSceneContent

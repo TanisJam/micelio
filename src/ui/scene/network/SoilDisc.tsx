@@ -29,6 +29,18 @@ export function SoilDisc({ model, ringRadius = null }: SoilDiscProps) {
   const material = useMemo(() => createSoilMaterial(radius, []), [radius])
   const meshRef = useRef<THREE.Mesh>(null)
 
+  // B1/T8: `material` is a `useMemo` keyed on `radius` -- every time `radius`
+  // changes (or the component unmounts on repo->repo navigation, see `App`'s
+  // `key`) a NEW material is created but the OLD one was never disposed,
+  // leaking a GPU shader program each time. `NetworkSceneContent`'s own
+  // `filamentMaterial` already disposes correctly on unmount; this mirrors
+  // that pattern.
+  useEffect(() => {
+    return () => {
+      material.dispose()
+    }
+  }, [material])
+
   // Mutated through the mesh ref (never the bare `useMemo` material value
   // directly), mirroring `NetworkSceneContent`'s own `filamentMaterial`
   // pattern -- a live uniform update, not a material/geometry rebuild, so

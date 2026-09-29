@@ -4,6 +4,7 @@ import { formatOverflowNote, resolveNetworkElementDetail, type NetworkModel } fr
 import { mapErrorToViewState } from '../../domain/repoRequestState'
 import type { RepoSnapshot } from '../../domain/repo'
 import { validateRepoIdentity } from '../../domain/validateRepoIdentity'
+import { ContextLossBanner } from '../components/ContextLossBanner'
 import { DetailPanel } from '../components/DetailPanel'
 import { GrowthCaption } from '../components/GrowthCaption'
 import { Legend } from '../components/Legend'
@@ -174,6 +175,11 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
   const [lastSelectedId, setLastSelectedId] = useState(selection.selectedId)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const toast = useToast()
+  // B4/T8: WebGL context loss recovery -- `sceneKey` changing remounts
+  // `<Scene>` with a fresh GPU context; `contextLost` gates the small
+  // recovery banner, cleared once the visitor asks to reload.
+  const [sceneKey, setSceneKey] = useState(0)
+  const [contextLost, setContextLost] = useState(false)
 
   const selectedDetail =
     !exploreOpen && selection.selectedId ? resolveNetworkElementDetail(model, snapshot, selection.selectedId) : null
@@ -221,6 +227,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
       <ViewerHeader snapshot={snapshot} onCopyLink={handleCopyLink} onSaveImage={handleSaveImage} />
       <Suspense fallback={<StateScreen title="Growing hyphae…" />}>
         <Scene
+          key={sceneKey}
           model={model}
           getCurrentTime={getCurrentTime}
           reducedMotion={reducedMotion}
@@ -231,8 +238,18 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
           onCanvasReady={(canvas) => {
             canvasRef.current = canvas
           }}
+          onContextLost={() => setContextLost(true)}
         />
       </Suspense>
+      {contextLost && (
+        <ContextLossBanner
+          onReload={() => {
+            canvasRef.current = null
+            setSceneKey((value) => value + 1)
+            setContextLost(false)
+          }}
+        />
+      )}
       {!mobileSheetOpen && (
         <>
           <TimeScrubber clock={clock} bounds={model.bounds.time} />
