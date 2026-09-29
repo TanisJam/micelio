@@ -5,12 +5,15 @@ import type { RepoSnapshot } from '../../../domain/repo'
 import { makeSnapshot } from '../../../domain/shared/testHelpers'
 import {
   chooseCameraFraming,
+  clampReplayGrownRadius,
   computeFramingDistance,
   computeGrownRadius,
   LANDSCAPE_FRAME_MARGIN,
   LANDSCAPE_PITCH_RADIANS,
   PORTRAIT_FRAME_MARGIN,
   PORTRAIT_PITCH_RADIANS,
+  REPLAY_MIN_GROWN_RADIUS_FLOOR,
+  REPLAY_MIN_GROWN_RADIUS_FRACTION,
 } from './cameraFraming'
 
 describe('chooseCameraFraming', () => {
@@ -104,5 +107,31 @@ describe('computeGrownRadius', () => {
     })
     const model = buildNetwork(snapshot)
     expect(computeGrownRadius(model, model.bounds.time.firstEventTime - 1_000_000)).toBe(0)
+  })
+})
+
+describe('clampReplayGrownRadius', () => {
+  it('never lets the effective radius fall below the fraction of the final radius (task B: never zoom closer than ~40% of the final extent)', () => {
+    const finalRadius = 10
+    const clamped = clampReplayGrownRadius(0, finalRadius)
+    expect(clamped).toBeCloseTo(finalRadius * REPLAY_MIN_GROWN_RADIUS_FRACTION, 6)
+  })
+
+  it('leaves a grown radius unchanged once it has genuinely grown past the floor', () => {
+    const finalRadius = 10
+    const grown = 8
+    expect(clampReplayGrownRadius(grown, finalRadius)).toBe(grown)
+  })
+
+  it('falls back to the absolute floor for a near-degenerate (tiny) final radius', () => {
+    const clamped = clampReplayGrownRadius(0, 0.01)
+    expect(clamped).toBe(REPLAY_MIN_GROWN_RADIUS_FLOOR)
+  })
+
+  it('is monotonically non-decreasing in the grown radius', () => {
+    const finalRadius = 6
+    const small = clampReplayGrownRadius(1, finalRadius)
+    const large = clampReplayGrownRadius(5, finalRadius)
+    expect(large).toBeGreaterThanOrEqual(small)
   })
 })

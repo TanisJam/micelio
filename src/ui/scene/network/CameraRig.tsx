@@ -3,7 +3,7 @@ import { OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { NetworkModel } from '../../../domain/network'
-import { chooseCameraFraming, computeFramingDistance, computeGrownRadius } from './cameraFraming'
+import { chooseCameraFraming, clampReplayGrownRadius, computeFramingDistance, computeGrownRadius } from './cameraFraming'
 
 /** Unit 4: how fast the camera gently auto-orbits while growth replay is actively playing -- slow enough to read as "staying with the colony", never a distracting spin. `OrbitControls.autoRotateSpeed`'s own units: degrees per second at 60fps, roughly. */
 const REPLAY_AUTO_ROTATE_SPEED = 0.35
@@ -17,8 +17,6 @@ const REPLAY_AUTO_ROTATE_SPEED = 0.35
  * rather than snapping.
  */
 const FRAMING_EASE_TIME_CONSTANT = 0.6
-/** A colony with nothing grown yet (radius 0) still frames at roughly this world-unit radius, so the very first frame isn't a divide-by-zero/degenerate extreme close-up on the spore. */
-const MIN_GROWN_RADIUS = 0.75
 
 export interface CameraRigProps {
   model: NetworkModel
@@ -62,6 +60,12 @@ export interface CameraRigProps {
  * interaction"; a paused/pinned time (`?t=`, scrubbing) always frames
  * against the final `model.bounds.radius`, never the eased/current one, so
  * a paused view never unexpectedly reframes itself.
+ *
+ * Round-3 orchestrator finding (task B): the eased-in distance is itself
+ * floored (`clampReplayGrownRadius`) so early replay never zooms in closer
+ * than framing roughly 40% of the colony's own final extent -- unclamped,
+ * a couple of hyphae near the spore made the spore's halo fill the frame as
+ * a giant disc and the traveling growth-front point read as a huge circle.
  */
 export function CameraRig({ model, getCurrentTime, isReplayPlaying, reducedMotion = false }: CameraRigProps) {
   const { camera, size } = useThree()
@@ -115,7 +119,10 @@ export function CameraRig({ model, getCurrentTime, isReplayPlaying, reducedMotio
     // internal spherical state fresh from `camera.position` every call,
     // rather than caching it independently.
     if (playing) {
-      const grownRadius = Math.max(computeGrownRadius(model, getCurrentTime()), MIN_GROWN_RADIUS)
+      // Task B (round-3 orchestrator finding): never eases in closer than
+      // framing ~40% of the colony's own FINAL extent -- see
+      // `clampReplayGrownRadius`'s doc comment.
+      const grownRadius = clampReplayGrownRadius(computeGrownRadius(model, getCurrentTime()), radius)
       const targetDistance = computeFramingDistance(grownRadius, verticalFov, aspect, frameMargin)
       const offset = camera.position.clone().sub(controls.target as THREE.Vector3)
       const currentDistance = offset.length()

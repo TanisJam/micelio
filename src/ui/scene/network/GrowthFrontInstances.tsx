@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { pointOnHyphaAtTime, type Hypha } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
+import { clampWorldRadiusForScreenSize } from './screenSizeClamp'
 
 export interface GrowthFrontInstancesProps {
   hyphae: Hypha[]
@@ -12,6 +13,8 @@ export interface GrowthFrontInstancesProps {
 }
 
 const FRONT_RADIUS = 0.045
+/** Task B (round-3 orchestrator finding): "a growing tip is a huge cyan circle" at an aggressively close replay zoom -- caps the traveling growth-front point's own on-screen radius, same mechanism as `SporeMesh`'s halo. */
+const FRONT_MAX_PIXEL_RADIUS = 26
 
 /**
  * Unit 3/4: a bright glowing point that travels along each ACTIVELY
@@ -45,6 +48,8 @@ export function GrowthFrontInstances({ hyphae, getCurrentTime, reducedMotion }: 
     const currentTime = getCurrentTime()
     const pulse = reducedMotion ? 1 : 1 + Math.sin(state.clock.elapsedTime * 3.5) * 0.18
     const scratch = new THREE.Matrix4()
+    const camera = state.camera
+    const verticalFov = 'fov' in camera ? THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov) : Math.PI / 4
 
     for (let i = 0; i < growable.length; i++) {
       const hypha = growable[i]!
@@ -55,8 +60,11 @@ export function GrowthFrontInstances({ hyphae, getCurrentTime, reducedMotion }: 
         scratch.makeTranslation(0, -1000, 0)
         scratch.scale(new THREE.Vector3(0, 0, 0))
       } else {
+        const distance = camera.position.distanceTo(new THREE.Vector3(position.x, position.y, position.z))
+        const cappedRadius = clampWorldRadiusForScreenSize(FRONT_RADIUS * pulse, distance, verticalFov, state.size.height, FRONT_MAX_PIXEL_RADIUS)
+        const scale = cappedRadius / FRONT_RADIUS
         scratch.makeTranslation(position.x, position.y, position.z)
-        scratch.scale(new THREE.Vector3(pulse, pulse, pulse))
+        scratch.scale(new THREE.Vector3(scale, scale, scale))
       }
       mesh.setMatrixAt(i, scratch)
     }

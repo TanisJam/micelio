@@ -91,6 +91,24 @@ export function computeFramingDistance(radius: number, verticalFovRadians: numbe
  * point; a hair/mushroom not yet born (`time` before its own `time` field)
  * is excluded entirely rather than counted early.
  */
+/**
+ * Round-3 orchestrator finding (task B): easing the framing distance toward
+ * `computeGrownRadius`'s literal value made early replay (a couple of
+ * hyphae near the spore) zoom in FAR too aggressively -- close enough that
+ * the spore's halo filled the frame as a giant disc and the traveling
+ * growth-front point read as a huge circle. `CameraRig` runs the eased
+ * grown radius through this floor every frame: never closer than framing
+ * roughly `REPLAY_MIN_GROWN_RADIUS_FRACTION` of the colony's OWN final
+ * extent (`finalRadius`, `model.bounds.radius`), plus a small absolute floor
+ * for a near-degenerate colony whose final radius itself is tiny.
+ */
+export const REPLAY_MIN_GROWN_RADIUS_FRACTION = 0.4
+export const REPLAY_MIN_GROWN_RADIUS_FLOOR = 0.5
+
+export function clampReplayGrownRadius(grownRadius: number, finalRadius: number): number {
+  return Math.max(grownRadius, finalRadius * REPLAY_MIN_GROWN_RADIUS_FRACTION, REPLAY_MIN_GROWN_RADIUS_FLOOR)
+}
+
 export function computeGrownRadius(model: NetworkModel, time: number): number {
   let maxRadius = 0
   for (const hypha of model.hyphae) {

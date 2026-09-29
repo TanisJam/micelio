@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { mycelium } from '../../theme/tokens'
+import { clampWorldRadiusForScreenSize } from './screenSizeClamp'
 
 export interface SporeMeshProps {
   reducedMotion: boolean
@@ -11,8 +12,12 @@ export interface SporeMeshProps {
 
 const CORE_RADIUS = 0.05
 const HALO_RADIUS = 0.15
-const HALO_OPACITY = 0.22
-const HALO_OPACITY_HIGHLIGHTED = 0.5
+// Round-3 orchestrator finding (task C): "the green halo ring around the
+// spore is too big/opaque at close zoom" -- both toned down from 0.22/0.5.
+const HALO_OPACITY = 0.14
+const HALO_OPACITY_HIGHLIGHTED = 0.32
+/** Task B/C: the halo's own on-screen radius never exceeds this many pixels, regardless of camera distance -- see `screenSizeClamp.ts`'s module doc. Prevents the halo from ever reading as a "giant disc" at an aggressively close replay zoom. */
+const HALO_MAX_PIXEL_RADIUS = 46
 
 /**
  * The spore (first commit / repo root, P9's legend entry): a small bright
@@ -26,9 +31,18 @@ export function SporeMesh({ reducedMotion, highlighted = false }: SporeMeshProps
   const haloRef = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
-    if (reducedMotion || !haloRef.current) return
-    const pulse = 1 + Math.sin(state.clock.elapsedTime * 1.1) * 0.06
-    haloRef.current.scale.setScalar(highlighted ? pulse * 1.35 : pulse)
+    if (!haloRef.current) return
+    const pulse = reducedMotion ? 1 : 1 + Math.sin(state.clock.elapsedTime * 1.1) * 0.06
+    const desiredScale = highlighted ? pulse * 1.35 : pulse
+    const desiredRadius = HALO_RADIUS * desiredScale
+    // The spore always sits at the world origin (`colonyLayout.ts`'s
+    // `spore.position`) and `CameraRig`'s orbit target is also the origin,
+    // so distance-to-camera is simply the camera's own distance from (0,0,0).
+    const distance = state.camera.position.length()
+    const camera = state.camera
+    const verticalFov = 'fov' in camera ? THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov) : Math.PI / 4
+    const cappedRadius = clampWorldRadiusForScreenSize(desiredRadius, distance, verticalFov, state.size.height, HALO_MAX_PIXEL_RADIUS)
+    haloRef.current.scale.setScalar(cappedRadius / HALO_RADIUS)
   })
 
   return (
