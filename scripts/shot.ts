@@ -86,8 +86,8 @@ function fixtureShots(fixture: Fixture): Shot[] {
     { name: `${fixture.name}-selected-merged`, path: `${base}?t=1&sel=${ids.mergedHyphaId}` },
     { name: `${fixture.name}-selected-closed`, path: `${base}?t=1&sel=${ids.closedHyphaId}` },
     // A selected mushroom (M3b): exercises the release-ring reveal
-    // (`SoilDisc`'s `ringRadius`) and lets visual QA check the mushroom's
-    // own detail-panel fields alongside its 3D glow/silhouette.
+    // (`SubstrateHaze`'s `ringRadius`) and lets visual QA check the
+    // mushroom's own detail-panel fields alongside its 3D glow/silhouette.
     { name: `${fixture.name}-selected-mushroom`, path: `${base}?t=1&sel=${ids.mushroomId}` },
   ]
 }

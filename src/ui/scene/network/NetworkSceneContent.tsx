@@ -6,15 +6,15 @@ import { buildMushroomInstances } from './geometry/mushroomInstances'
 import { buildFilamentsGeometry } from './geometry/filamentsGeometry'
 import { buildHyphaeGeometry } from './geometry/hyphaeGeometry'
 import { createGrowthMaterial, type GrowthMaterial } from './geometry/growthMaterial'
-import { soilRadiusFor } from './geometry/soilRadius'
 import { buildPickGrid, queryNearest, type PickTarget } from './picking/pickingGrid'
 import { CameraFocus } from './CameraFocus'
 import { CameraRig } from './CameraRig'
+import { GrowthFrontInstances } from './GrowthFrontInstances'
 import { MushroomsMesh } from './MushroomsMesh'
 import { PointGlowInstances } from './PointGlowInstances'
-import { SoilDisc } from './SoilDisc'
+import { SubstrateHaze } from './SubstrateHaze'
 import { SporeMesh } from './SporeMesh'
-import { discRadius, type NetworkModel } from '../../../domain/network'
+import { discRadius, substrateRadiusFor, type NetworkModel } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
 
 export interface NetworkSceneContentProps {
@@ -35,11 +35,11 @@ const TIP_RADIUS = 0.05
 const MUSHROOM_GLOW_RADIUS = 0.16
 
 /**
- * The full mycelium colony scene: soil disc, spore, batched hyphae/hair
+ * The full mycelium colony scene: substrate haze, spore, batched hyphae/hair
  * geometry, mushrooms and glowing fusion/tip points, camera, and picking.
  *
  * Picking (P7): the network is nearly flat, so the pointer is raycast onto
- * the y=0 soil plane (not against individual mesh triangles) and the
+ * the y=0 substrate plane (not against individual mesh triangles) and the
  * nearest element is found via a precomputed 2D spatial grid
  * (`pickingGrid.ts`) built once per model from every hypha segment/hair/
  * mushroom/tip -- O(local neighborhood), not a per-frame linear scan.
@@ -126,7 +126,7 @@ export function NetworkSceneContent({
 
   const pickTolerance = Math.max(0.06, model.bounds.radius * 0.016)
 
-  /** Selecting a mushroom reveals its own release ring as a faint hairline (reusing the soil shader's existing ring-uniform machinery, otherwise always empty) -- P-brief item 3: "otherwise no rings". `null` for every other selection kind. */
+  /** Selecting a mushroom reveals its own release ring as a faint hairline (reusing the substrate haze shader's existing ring-uniform machinery, otherwise always empty) -- P-brief item 3: "otherwise no rings". `null` for every other selection kind. */
   const selectedMushroomRingRadius = useMemo(() => {
     if (!selectedId) return null
     const mushroom = model.mushrooms.find((candidate) => candidate.id === selectedId)
@@ -205,14 +205,15 @@ export function NetworkSceneContent({
 
   return (
     <>
-      <CameraRig radius={soilRadiusFor(model)} />
+      <CameraRig radius={substrateRadiusFor(model)} />
       <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
-      <SoilDisc model={model} ringRadius={selectedMushroomRingRadius} />
+      <SubstrateHaze model={model} getCurrentTime={getCurrentTime} ringRadius={selectedMushroomRingRadius} />
       <SporeMesh reducedMotion={reducedMotion} highlighted={hoveredId === model.spore.id || selectedId === model.spore.id} />
 
       <mesh ref={hyphaeMeshRef} geometry={hyphae.geometry} material={filamentMaterial} />
       <lineSegments geometry={filaments.geometry} material={filamentMaterial} />
+      <GrowthFrontInstances hyphae={model.hyphae} getCurrentTime={getCurrentTime} reducedMotion={reducedMotion} />
 
       {/* Mushroom-only lighting (see `MushroomsMesh`'s doc): every other
           material in the scene is unlit, so these lights have no visible
@@ -222,10 +223,10 @@ export function NetworkSceneContent({
           washed the tiny cap back out into flat gray -- real light/shadow
           contrast is what makes a form this small still read as 3D) plus a
           low warm rim light from the opposite side for a lit edge against
-          the dark soil. */}
+          the dark substrate below. */}
       <directionalLight position={[1.6, 3.2, 2.4]} intensity={3.2} color={mycelium.mushroomCap} />
       <directionalLight position={[-2, 0.6, -1.4]} intensity={0.6} color={mycelium.mushroomRim} />
-      <hemisphereLight args={[mycelium.mushroomRim, mycelium.soilNear, 0.16]} />
+      <hemisphereLight args={[mycelium.mushroomRim, mycelium.substrateNear, 0.16]} />
 
       <MushroomsMesh
         matrices={mushroomInstances.matrices}

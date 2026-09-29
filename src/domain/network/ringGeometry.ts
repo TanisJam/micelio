@@ -67,6 +67,37 @@ export function discRadius(position: Vec3): number {
 }
 
 /**
+ * Unit 3/4: locates a positioned hypha's own polyline position at a given
+ * TIME (epoch ms), interpolating between its points' own `.time` values --
+ * the time-keyed counterpart of `pointOnHyphaAtRadius`'s radius-keyed
+ * lookup, used to place a "growth front" glow point that travels outward
+ * along a hypha as it grows, in real (eased) playback time rather than by
+ * radius or commit index. Clamps to the nearest end outside `[splitTime,
+ * endTime]`, an honest "as far as this hypha has grown", not extrapolation.
+ * `null` for a hypha with fewer than 2 points (nothing to travel along).
+ */
+export function pointOnHyphaAtTime(points: HyphaPoint[], time: number): Vec3 | null {
+  if (points.length < 2) return null
+
+  const first = points[0]!
+  const last = points[points.length - 1]!
+  const clamped = clamp(time, Math.min(first.time, last.time), Math.max(first.time, last.time))
+
+  let index = 1
+  while (index < points.length - 1 && points[index]!.time < clamped) index += 1
+  const a = points[index - 1]!
+  const b = points[index]!
+  const span = b.time - a.time
+  const localT = span > 1e-9 ? (clamped - a.time) / span : 0
+
+  return {
+    x: a.position.x + (b.position.x - a.position.x) * localT,
+    y: a.position.y + (b.position.y - a.position.y) * localT,
+    z: a.position.z + (b.position.z - a.position.z) * localT,
+  }
+}
+
+/**
  * Locates the position/disc-radius/tangent-angle of a positioned hypha's
  * curve at an arbitrary DISC RADIUS (not time), clamped into its own
  * start/end radius range -- the M2d colony layout's radius-keyed counterpart

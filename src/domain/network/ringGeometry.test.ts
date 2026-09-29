@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { capEvenly, discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius, radiusForCommitCount, radiusForFrac, timeToFrac } from './ringGeometry'
+import { capEvenly, discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius, pointOnHyphaAtTime, radiusForCommitCount, radiusForFrac, timeToFrac } from './ringGeometry'
 
 describe('radiusForFrac / timeToFrac', () => {
   it('radiusForFrac is 0 at frac 0 and monotonically increasing to frac 1', () => {
@@ -71,6 +71,42 @@ describe('pointOnHyphaAtRadius', () => {
     const at = pointOnHyphaAtRadius([points[0]!], 5)
     expect(Number.isFinite(at.position.x)).toBe(true)
     expect(Number.isFinite(at.radius)).toBe(true)
+  })
+})
+
+describe('pointOnHyphaAtTime', () => {
+  const points = [
+    { position: { x: 1, y: 0, z: 0 }, radius: 0.02, time: 0 },
+    { position: { x: 5, y: 0, z: 0 }, radius: 0.015, time: 50 },
+    { position: { x: 10, y: 0, z: 0 }, radius: 0.01, time: 100 },
+  ]
+
+  it('interpolates position along the polyline at an interior time', () => {
+    const at = pointOnHyphaAtTime(points, 25)!
+    expect(at.x).toBeGreaterThan(1)
+    expect(at.x).toBeLessThan(5)
+  })
+
+  it('is exact at both ends', () => {
+    expect(pointOnHyphaAtTime(points, 0)!.x).toBeCloseTo(1, 6)
+    expect(pointOnHyphaAtTime(points, 100)!.x).toBeCloseTo(10, 6)
+  })
+
+  it('clamps a time outside the hypha`s own span to the nearest end, never extrapolating', () => {
+    expect(pointOnHyphaAtTime(points, -1000)!.x).toBeCloseTo(1, 6)
+    expect(pointOnHyphaAtTime(points, 1_000_000)!.x).toBeCloseTo(10, 6)
+  })
+
+  it('returns null for a hypha with fewer than 2 points', () => {
+    expect(pointOnHyphaAtTime([points[0]!], 0)).toBeNull()
+    expect(pointOnHyphaAtTime([], 0)).toBeNull()
+  })
+
+  it('never returns NaN/Infinity for a real multi-point hypha', () => {
+    const at = pointOnHyphaAtTime(points, 60)!
+    expect(Number.isFinite(at.x)).toBe(true)
+    expect(Number.isFinite(at.y)).toBe(true)
+    expect(Number.isFinite(at.z)).toBe(true)
   })
 })
 

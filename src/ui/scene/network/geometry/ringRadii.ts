@@ -1,7 +1,7 @@
 import type { GrowthRing } from '../../../../domain/network'
 
 /**
- * Sorted, deduplicated ring radii for the soil shader's faint growth-ring
+ * Sorted, deduplicated ring radii for the substrate haze shader's faint growth-ring
  * uniform array -- mirrors `network-svg.ts`'s render-time ring dedupe (M2d):
  * every release still gets its own real `GrowthRing` model entry (no data
  * lost), this only visually merges rings close enough to stack into one

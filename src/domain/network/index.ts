@@ -1,5 +1,6 @@
 export { buildNetwork, DEFAULT_NETWORK_BUILD_OPTIONS, type NetworkBuildOptions } from './buildNetwork'
 export { layoutNetworkColony, type ColonyLayoutResult } from './colonyLayout'
+export { buildDensityField, DENSITY_FIELD_MARGIN, DENSITY_FIELD_RESOLUTION, substrateRadiusFor, type DensityField } from './densityField'
 export { resolveNetworkElementDetail } from './elementDetail'
 export { buildNetworkExploreGroups, type NetworkExploreCommitEntry, type NetworkExplorePrEntry, type NetworkExploreYearGroup } from './exploreGroups'
 export { getNetworkElementFocusPosition } from './focus'
@@ -25,7 +26,7 @@ export {
   rimAgeStyle,
   type RimAgeStyle,
 } from './renderHints'
-export { discRadius, DISC_MAX_RADIUS, type LayoutOptions } from './ringGeometry'
+export { discRadius, DISC_MAX_RADIUS, pointOnHyphaAtTime, type LayoutOptions } from './ringGeometry'
 export { authorKeyOf, buildAuthorHueIndex, MAX_AUTHOR_HUES, resolveAuthorHueKey } from './sectors'
 export { buildHyphaTopology, DEFAULT_TOPOLOGY_OPTIONS, type HyphaDraft, type TopologyOptions, type TopologyResult } from './topology'
 export * from './types'
