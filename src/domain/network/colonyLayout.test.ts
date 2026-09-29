@@ -16,6 +16,7 @@ import {
   layoutNetworkColony,
   swirlAngleForRadius,
   unswirlPosition,
+  WIDTH_TO_LENGTH_CAP_FRACTION,
 } from './colonyLayout'
 import { DEFAULT_LAYOUT_OPTIONS, discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius } from './ringGeometry'
 import { buildHyphaTopology } from './topology'
@@ -265,8 +266,13 @@ describe('layoutNetworkColony', () => {
       // Build the SAME snapshot with swirl off and swirl on, then verify
       // every corresponding spatial value keeps its disc radius exactly and
       // shifts by exactly `swirlAngleForRadius(radius)` -- proof that the
-      // transform is applied uniformly, not per-kind. A fusion bridge's
-      // `bridgeTo` is the one deliberate exception (see the dedicated
+      // transform is applied uniformly, not per-kind, for a NORMAL
+      // (non-rigid) hypha. `makeSnapshot`'s tiny synthetic colony only ever
+      // produces spore-started, longer-than-`COLONY_LENGTH_MAX` hyphae, so
+      // this test never exercises the T10 rigid-swirl exception below -- see
+      // the dedicated "rotates a short hypha rigidly" test (real fixture)
+      // for that. A fusion bridge's
+      // `bridgeTo` is the one other deliberate exception (see the dedicated
       // "rotates a fusion bridge rigidly" test below): it follows its own
       // TIP's swirl angle, not one re-derived from its own (possibly very
       // different) radius, so a short anastomosis bridge never stretches
@@ -561,6 +567,126 @@ describe('layoutNetworkColony', () => {
           expect(consecutiveTinySegments).toBeLessThan(2)
         }
       }
+    })
+
+    // T10 (second-pass rim fix) regression coverage -- see
+    // `WIDTH_TO_LENGTH_CAP_FRACTION`/`FORK_RENDER_LATERAL_BUDGET_FRACTION`/
+    // `rigidSwirlAngleByHyphaId` in `colonyLayout.ts` for the root causes and
+    // fixes (a thick wedge from commit-driven width outliving a rim-clamped
+    // rendered length, and a visible base-hugging "L" bend from the fork's
+    // own turn + the swirl field's own steepest-near-the-rim gradient).
+    // Exercised against the real bundled fixtures, like the T9 tests above,
+    // since the artifact only showed up at real-repo scale.
+    it('caps every hypha\'s base radius at WIDTH_TO_LENGTH_CAP_FRACTION times its own radial span (no thick-relative-to-length wedge)', () => {
+      const model = buildNetwork(snapshot)
+      let checked = 0
+      for (const hypha of model.hyphae) {
+        if (hypha.kind === 'main' || hypha.points.length < 2) continue
+        const startRadius = discRadius(hypha.points[0]!.position)
+        const endRadius = discRadius(hypha.points[hypha.points.length - 1]!.position)
+        const radialSpan = Math.max(0, endRadius - startRadius)
+        if (radialSpan <= 0) continue
+        checked += 1
+        expect(hypha.points[0]!.radius).toBeLessThanOrEqual(radialSpan * WIDTH_TO_LENGTH_CAP_FRACTION + 1e-9)
+      }
+      expect(checked).toBeGreaterThan(100)
+    })
+
+    it('bounds a short hypha\'s max lateral wiggle to a modest fraction of its own length (no base-hugging hook)', () => {
+      // Direct geometric proxy for "cumulative fork turn bounded by length":
+      // the fork's own achievable turn (`maxTurnRadians`, using
+      // `FORK_RENDER_LATERAL_BUDGET_FRACTION`) and the post-fork drift
+      // (`POST_FORK_LATERAL_LENGTH_CAP_FRACTION`) both scale with the
+      // hypha's own length, so their combined visible effect -- how far the
+      // polyline ever strays sideways from its own straight base->tip chord,
+      // as a fraction of its own rendered length -- should stay modest for
+      // a NORMAL (non-spore-started, radial span <= `COLONY_LENGTH_MAX`)
+      // hypha, which is what the rim-hook artifact was actually made of.
+      // Deliberately excludes a genuinely long, spore-started arm (span >
+      // `COLONY_LENGTH_MAX`): visibly meandering over its own much longer
+      // run is an existing, intended design characteristic (see
+      // `growHyphaPoints`'s `lengthScale` doc comment), not the T10 defect
+      // -- those legitimately reach ~26-32% on both bundled fixtures. Before
+      // the T10 fix, a NORMAL short hypha reached ~40% (a visible "L" hook);
+      // 20% is a real, still-generous ceiling for that population that
+      // would have caught it.
+      const model = buildNetwork(snapshot)
+      let checked = 0
+      for (const hypha of model.hyphae) {
+        if (hypha.kind === 'main' || hypha.points.length < 3) continue
+        const startRadius = discRadius(hypha.points[0]!.position)
+        const endRadius = discRadius(hypha.points[hypha.points.length - 1]!.position)
+        if (endRadius - startRadius > COLONY_LENGTH_MAX) continue
+        const base = hypha.points[0]!.position
+        const tip = hypha.points[hypha.points.length - 1]!.position
+        const dx = tip.x - base.x
+        const dz = tip.z - base.z
+        const chordLength = Math.hypot(dx, dz)
+        if (chordLength < 1e-6) continue
+        const ux = dx / chordLength
+        const uz = dz / chordLength
+        let maxLateralDeviation = 0
+        let arcLength = 0
+        for (let i = 1; i < hypha.points.length; i++) {
+          const a = hypha.points[i - 1]!.position
+          const b = hypha.points[i]!.position
+          arcLength += Math.hypot(b.x - a.x, b.z - a.z, b.y - a.y)
+        }
+        for (const point of hypha.points) {
+          const px = point.position.x - base.x
+          const pz = point.position.z - base.z
+          const perp = Math.abs(px * -uz + pz * ux)
+          if (perp > maxLateralDeviation) maxLateralDeviation = perp
+        }
+        if (arcLength < 1e-6) continue
+        checked += 1
+        expect(maxLateralDeviation / arcLength).toBeLessThanOrEqual(0.2)
+      }
+      expect(checked).toBeGreaterThan(100)
+    })
+
+    it('rotates a short hypha (radial span <= COLONY_LENGTH_MAX) rigidly by one fixed angle, not independently per point', () => {
+      // The `makeSnapshot()`-based "rotates every element kind..." test
+      // above only ever produces spore-started, longer-than-`COLONY_LENGTH_
+      // MAX` hyphae, so it never exercises this T10 exception -- exercised
+      // here against a real fixture instead, which does have plenty of
+      // short (real-attach-point) hyphae. A real fixture's own topology
+      // differs slightly with `swirl: 0` vs the real `DEFAULT_LAYOUT_
+      // OPTIONS.swirl` (the topology's own natural-fit search is swirl-
+      // independent by construction, so hypha COUNT and per-hypha radial
+      // span match either way -- only each point's rotated ANGLE differs).
+      const plain = buildNetwork(snapshot, { swirl: 0 })
+      const swirled = buildNetwork(snapshot)
+      let checked = 0
+
+      for (let h = 0; h < plain.hyphae.length; h++) {
+        const plainHypha = plain.hyphae[h]!
+        const swirledHypha = swirled.hyphae[h]!
+        if (plainHypha.kind === 'main' || plainHypha.points.length < 2) continue
+        const startRadius = discRadius(plainHypha.points[0]!.position)
+        const endRadius = discRadius(plainHypha.points[plainHypha.points.length - 1]!.position)
+        if (endRadius - startRadius > COLONY_LENGTH_MAX) continue // long/spore-started: independent per-point swirl, covered by the generic test above
+        checked += 1
+
+        const rigidAngle = startRadius < 1e-6 ? 0 : swirlAngleForRadius(startRadius, DEFAULT_LAYOUT_OPTIONS.swirl, DEFAULT_LAYOUT_OPTIONS.swirlPower)
+        for (let p = 0; p < plainHypha.points.length; p++) {
+          const before = plainHypha.points[p]!.position
+          const after = swirledHypha.points[p]!.position
+          const radius = discRadius(before)
+          expect(discRadius(after)).toBeCloseTo(radius, 7)
+          if (radius < 1e-6) continue
+          // Every point of a short hypha rotates by the SAME fixed angle
+          // (the one at its own real attach-point radius), not by its own
+          // (different) per-point radius-based angle -- that's the whole
+          // point of the fix: an already near-straight short strand stays
+          // near-straight instead of picking up extra curvature from the
+          // swirl field's own gradient.
+          const expectedAngle = Math.atan2(before.z, before.x) + rigidAngle
+          const actualAngle = Math.atan2(after.z, after.x)
+          expect(Math.abs(shortestAngleDelta(expectedAngle, actualAngle))).toBeLessThan(1e-6)
+        }
+      }
+      expect(checked).toBeGreaterThan(50)
     })
   })
 })

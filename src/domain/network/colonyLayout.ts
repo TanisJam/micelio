@@ -99,8 +99,53 @@ const MIN_RADIUS_FOR_ANGLE_CAP = 0.12
  * gap-driven target happened to be far from a real attach point at a large
  * radius. The lateral budget itself scales with the hypha's OWN length, so
  * a short hypha gets a proportionately short, modest turn.
+ *
+ * Used for the TOPOLOGY "is this a natural fit?" decision
+ * (`layoutNetworkColony`'s `naturalFit` check) -- kept at its original,
+ * more permissive value so which hyphae attach to a real neighbor vs. fall
+ * back to sprouting fresh from the spore is UNCHANGED by the T10 rim fix
+ * below (see `FORK_RENDER_LATERAL_BUDGET_FRACTION`'s doc comment for why a
+ * second, render-only constant exists instead of tightening this one
+ * directly -- tightening this one turned out to reclassify hundreds of
+ * hyphae as spore-started, a much bigger, unintended shape change).
  */
 const FORK_LATERAL_BUDGET_FRACTION = 0.5
+/**
+ * T10 (second-pass rim fix). Used ONLY for the fork's actual RENDERED turn
+ * once a hypha has already been placed (`growHyphaPoints`'s own `maxTurn`)
+ * -- deliberately a separate, tighter constant from
+ * `FORK_LATERAL_BUDGET_FRACTION` above. An early version of this fix simply
+ * lowered that shared constant, which also tightened the TOPOLOGY
+ * `naturalFit` check (same function, same input) -- since that check decides
+ * whether a hypha attaches to a real neighbor or falls back to sprouting
+ * fresh from the spore, tightening it reclassified hundreds of hyphae
+ * colony-wide as spore-started, a large, unintended change to the disc's
+ * overall shape rather than a focused rim fix. Splitting the two uses keeps
+ * topology (which hyphae attach where) exactly as before, while shrinking
+ * only how far the fork is allowed to swing sideways once growth actually
+ * draws it.
+ *
+ * `0.5` still let a fork's lateral swing reach up to HALF the hypha's own
+ * length whenever the raw gap-filling target sat far enough from the real
+ * attach point -- proportionate to length by construction, but a fork
+ * consuming up to 50% of a short hypha's own length as sideways motion
+ * before heading outward IS a visible kink/hook near its base, not a subtle
+ * turn, regardless of how gently it's sampled or later smoothed. Confirmed
+ * directly on the express fixture (`scripts/diagnose-rim.ts`, not
+ * committed): with swirl disabled entirely (isolating pure growth), the
+ * worst short rim hyphae's own base->tip straight-chord deviation was up to
+ * ~27% of their own length from the fork's eased turn alone -- e.g.
+ * `hypha-pr6991` (length 0.53) turns barely ~2.4deg in absolute angle, but
+ * at its own real radius (~4.9-5.25) that tiny angle still sweeps ~0.17-0.2
+ * world units sideways, a third of its own length, reading as a
+ * base-hugging "L" bend. Tightened to `0.15`: the same hypha's max lateral
+ * deviation drops to ~11-16% of its own length colony-wide (short+rim
+ * median), a fine taper rather than a hook, while `FORK_ABSOLUTE_MAX_RAD`
+ * (70deg) remains the separate, still generous ceiling for the rare
+ * very-close-to-spore case where the lateral budget alone would otherwise
+ * allow an unnaturally wide turn.
+ */
+const FORK_RENDER_LATERAL_BUDGET_FRACTION = 0.15
 /** Absolute ceiling on the turn regardless of how generous the lateral budget computes to -- keeps even a very short, very central hypha's fork from folding back on itself. */
 const FORK_ABSOLUTE_MAX_RAD = (70 * Math.PI) / 180
 /** How much of the curve after the fork ramps the organic drift in from 0, so the fork's own end (angle == target, no drift) and the post-fork wiggle meet without a kink. */
@@ -141,8 +186,56 @@ const WIGGLE_LENGTH_FRACTION = 0.05
  * ~124deg; 0 after. Only binds below `LATERAL_MAX_WORLD /
  * POST_FORK_LATERAL_LENGTH_CAP_FRACTION` (~0.33 units), so a normal
  * (uncompressed) hypha's wiggle is unchanged.
+ *
+ * T10 (second pass) finding: 0.15 closed the PER-SEGMENT turn ceiling (no
+ * single segment turn > `MAX_HYPHA_TURN_RAD`), but for a SHORT rim hypha
+ * (rendered length ~0.3-0.4, common once `COLONY_RADIUS_CAP` truncates it)
+ * 15% of that length is still a real, visible ABSOLUTE lateral swing
+ * (~0.045-0.06 world units) -- big enough, relative to the hypha's own tiny
+ * length, to read as a wobble/wiggle even though no individual segment turn
+ * exceeds the 60deg ceiling. Confirmed on the express fixture: the worst
+ * offenders' x-coordinate wandered by up to ~0.077 units while their own
+ * total rendered length was only ~0.38-0.41 -- a ~20% lateral excursion.
+ * Tightened to 0.06: for a hypha at or above ~0.83 units long this constant
+ * no longer binds at all (the `LATERAL_MAX_WORLD`-driven `Math.max` above
+ * already returns a smaller value), so ordinary mid/long hyphae are
+ * unaffected; only the short (rim-typical) tail gets a proportionately
+ * tighter wiggle.
  */
-const POST_FORK_LATERAL_LENGTH_CAP_FRACTION = 0.15
+const POST_FORK_LATERAL_LENGTH_CAP_FRACTION = 0.06
+/**
+ * T10 (second pass rim fix): caps a hypha's OWN base radius (`thicknessStart`,
+ * driven purely by `radiusForCommitCount(commitCount)` -- see
+ * `growHyphaPoints`) as a fraction of its own RENDERED length (`endRadius -
+ * startRadius`, after `COLONY_RADIUS_CAP` clamping). Root cause: hypha
+ * THICKNESS has never depended on hypha LENGTH -- a hypha with a handful of
+ * commits gets the same base radius whether it renders 0.05 units long or
+ * 1.4 units long. That mismatch is invisible for a normal-length hypha (the
+ * ribbon's full rendered width, `radius * RIBBON_WIDTH_SCALE`, stays a small
+ * fraction of a >=0.7-unit strand) but becomes a literal wedge once
+ * `COLONY_RADIUS_CAP` truncates a hypha's rendered length well below its
+ * intended reach while leaving its commit-driven thickness untouched.
+ * Measured on the express fixture (`scripts/diagnose-rim.ts`, not committed),
+ * against the hypha's own RADIAL SPAN (`endRadius - startRadius`, the exact
+ * quantity `growHyphaPoints` calls `totalLength` and caps against here --
+ * NOT the longer rendered arc length, which the fork/wiggle's own path
+ * naturally inflates beyond it): the colony-wide ratio of raw (uncapped)
+ * base radius to radial span already has a median of ~0.031 and a p90 of
+ * ~0.062 -- i.e. a fair number of ordinary, perfectly fine-looking hyphae
+ * everywhere on the disc sit in that range by design, so a cap anywhere
+ * near the median (an earlier, wrongly-tuned attempt used `0.03`, measured
+ * against arc length instead of radial span, and ended up clipping roughly
+ * half the entire colony) is NOT rim-specific at all. The real outliers are
+ * a distinct, much higher tail: the worst ~16-50 hyphae (ratio > ~0.075-
+ * 0.065) are 100% at the rim (`endRadius` within 0.15 of `COLONY_RADIUS_
+ * CAP`), topping out at ~0.089 (a rendered full width, `ratio *
+ * RIBBON_WIDTH_SCALE`, of ~44% of the hypha's own radial span). `0.06`
+ * affects exactly 99 hyphae, 100% of them at the rim -- comfortably above
+ * the colony-wide p90 (so it leaves the ordinary interior population
+ * untouched) and comfortably below the worst offenders (so it still visibly
+ * thins them).
+ */
+export const WIDTH_TO_LENGTH_CAP_FRACTION = 0.06
 /**
  * Minimum sample count guaranteed inside `[0, rampEnd]` (the fork's own
  * eased turn plus its drift ramp-in), regardless of the hypha's total sample
@@ -333,9 +426,16 @@ function closestSpanningByAngle(spanning: SpanningEntry[], targetAngle: number):
   return best
 }
 
-/** See `FORK_LATERAL_BUDGET_FRACTION`'s doc comment -- the maximum turn (radians) a hypha of this radius and length may take from its real start angle toward its gap-filling target. */
-function maxTurnRadians(radius: number, length: number): number {
-  const lateralBudget = length * FORK_LATERAL_BUDGET_FRACTION
+/**
+ * See `FORK_LATERAL_BUDGET_FRACTION`'s doc comment -- the maximum turn
+ * (radians) a hypha of this radius and length may take from its real start
+ * angle toward its gap-filling target. `budgetFraction` is passed
+ * explicitly (rather than read from a single shared constant) since T10
+ * split this into two independently-tuned uses -- see
+ * `FORK_RENDER_LATERAL_BUDGET_FRACTION`'s doc comment.
+ */
+function maxTurnRadians(radius: number, length: number, budgetFraction: number): number {
+  const lateralBudget = length * budgetFraction
   const fromLateral = lateralBudget / Math.max(radius, MIN_RADIUS_FOR_ANGLE_CAP)
   return Math.min(FORK_ABSOLUTE_MAX_RAD, fromLateral)
 }
@@ -412,7 +512,11 @@ interface GrowParams {
 function growHyphaPoints(params: GrowParams): HyphaPoint[] {
   const { startPosition, startRadius, targetAngleRaw, endRadius, splitTime, endTime, commitCount, status, prng } = params
 
-  const thicknessStart = radiusForCommitCount(commitCount)
+  // T10: rendered length is needed BEFORE thickness now -- see
+  // `WIDTH_TO_LENGTH_CAP_FRACTION`'s doc comment for why base width must be
+  // capped relative to it.
+  const totalLength = Math.max(0, endRadius - startRadius)
+  const thicknessStart = Math.min(radiusForCommitCount(commitCount), totalLength * WIDTH_TO_LENGTH_CAP_FRACTION)
   const thicknessEnd = status === 'fused' ? thicknessStart * 0.85 : status === 'dead_end' ? thicknessStart * 0.35 : thicknessStart * 0.7
 
   // At the spore itself (radius ~0) there is no meaningful "real angle" to
@@ -422,7 +526,7 @@ function growHyphaPoints(params: GrowParams): HyphaPoint[] {
   const hasRealStartAngle = startRadius > 1e-6
   const startAngle = hasRealStartAngle ? Math.atan2(startPosition.z, startPosition.x) : targetAngleRaw
   const unwrappedTarget = shortestAngleTo(startAngle, targetAngleRaw)
-  const maxTurn = hasRealStartAngle ? maxTurnRadians(startRadius, Math.max(0, endRadius - startRadius)) : Math.PI
+  const maxTurn = hasRealStartAngle ? maxTurnRadians(startRadius, totalLength, FORK_RENDER_LATERAL_BUDGET_FRACTION) : Math.PI
   const targetAngle = startAngle + clamp(unwrappedTarget - startAngle, -maxTurn, maxTurn)
 
   const forkFraction = hasRealStartAngle ? randRange(prng, FORK_FRACTION_MIN, FORK_FRACTION_MAX) : 0
@@ -435,7 +539,7 @@ function growHyphaPoints(params: GrowParams): HyphaPoint[] {
   // (round 4 finding) -- scale both the lateral wiggle budget and the curl
   // frequency up with the hypha's own total length so a long strand still
   // visibly meanders, proportionate to how far it actually travels.
-  const totalLength = Math.max(0, endRadius - startRadius)
+  // (`totalLength` is now computed above, before thickness -- see T10.)
   const lengthScale = Math.max(1, totalLength / COLONY_LENGTH_MAX)
   const lateralBudget = Math.min(
     Math.max(LATERAL_MAX_WORLD, totalLength * WIGGLE_LENGTH_FRACTION),
@@ -809,16 +913,69 @@ function relaxSharpTurns(points: HyphaPoint[]): HyphaPoint[] {
  * amounts, an honest consequence of swirling a real 3D segment rather than
  * an approximation.
  */
+/**
+ * T10 (second-pass rim fix). A NORMAL (non-spore-started) hypha's own radial
+ * span can never exceed `COLONY_LENGTH_MAX` -- see the `nominalEndRadius`
+ * comment at the layout call site: only a spore-started hypha's span can
+ * legitimately reach `COLONY_RADIUS_CAP`. For every hypha at or under that
+ * span, independently swirling each point by ITS OWN radius (the general
+ * `applySwirlToPosition`) bends an otherwise near-straight short strand into
+ * a visible curve, because `swirlAngleForRadius`'s rate of change with
+ * radius is LARGEST right near the rim (power=1.4 > 1 makes the curve
+ * convex, steepest at `DISC_MAX_RADIUS`) -- exactly where these short
+ * hyphae's own real attach points cluster. Measured on the express fixture
+ * (`scripts/diagnose-rim.ts`, not committed): even after both the width and
+ * post-fork-wiggle fixes above, a rim hypha's max lateral deviation from its
+ * own base->tip straight chord was still up to ~31% of its own length --
+ * visually a hook, not a taper -- while its own GROWTH invariants
+ * (`maxTurnRadians`, the lateral wiggle budget) were already tiny; the extra
+ * bend came entirely from the swirl post-process, not from growth.
+ *
+ * Fix: rotate every point belonging to such a hypha -- and every node/hair/
+ * tip/fusion attached to it -- by ONE FIXED angle (the swirl angle at the
+ * hypha's own real attach-point radius, so it still lands exactly on its
+ * parent's independently-swirled position) instead of each point's own
+ * radius-based angle. A rigid rotation of an already near-straight pre-swirl
+ * curve stays near-straight. Only a genuinely long, spore-started arm
+ * (span > `COLONY_LENGTH_MAX`) keeps the per-point independent swirl that
+ * produces the intended "spiral galaxy arm" curve -- that population is the
+ * only one the swirl's visible meander was ever meant to bend (see
+ * `growHyphaPoints`'s `lengthScale` comment). The degenerate `main` stub
+ * (both its points sit at the spore, `kind === 'main'`) is excluded: its id
+ * is also used by the direct-commit spurs (`buildDirectCommitSpurs`), which
+ * are real, scattered-radius elements that must keep their own independent
+ * per-point swirl, not inherit the main stub's (always-zero, spore-radius)
+ * angle.
+ */
+function rigidSwirlAngleByHyphaId(hyphae: Hypha[], swirl: number, power: number): Map<string, number> {
+  const byId = new Map<string, number>()
+  for (const hypha of hyphae) {
+    if (hypha.kind === 'main' || hypha.points.length === 0) continue
+    const first = hypha.points[0]!.position
+    const last = hypha.points[hypha.points.length - 1]!.position
+    const span = discRadius(last) - discRadius(first)
+    if (span > COLONY_LENGTH_MAX) continue
+    const startRadius = discRadius(first)
+    byId.set(hypha.id, startRadius < 1e-9 ? 0 : swirlAngleForRadius(startRadius, swirl, power))
+  }
+  return byId
+}
+
 export function applySwirl(result: ColonyLayoutResult, swirl: number, power: number): ColonyLayoutResult {
   if (swirl === 0) return result
   const at = (p: Vec3): Vec3 => applySwirlToPosition(p, swirl, power)
+  const rigidAngleByHyphaId = rigidSwirlAngleByHyphaId(result.hyphae, swirl, power)
+  const swirlFor = (hyphaId: string, p: Vec3): Vec3 => {
+    const rigidAngle = rigidAngleByHyphaId.get(hyphaId)
+    return rigidAngle === undefined ? at(p) : rotateAroundY(p, rigidAngle)
+  }
 
   const hyphae = result.hyphae.map((hypha) => ({
     ...hypha,
-    points: hypha.points.map((point) => ({ ...point, position: at(point.position) })),
+    points: hypha.points.map((point) => ({ ...point, position: swirlFor(hypha.id, point.position) })),
   }))
-  const nodes = result.nodes.map((node) => ({ ...node, position: at(node.position) }))
-  const tips = result.tips.map((tip) => ({ ...tip, position: at(tip.position) }))
+  const nodes = result.nodes.map((node) => ({ ...node, position: swirlFor(node.hyphaId, node.position) }))
+  const tips = result.tips.map((tip) => ({ ...tip, position: swirlFor(tip.hyphaId, tip.position) }))
   const mushrooms = result.mushrooms.map((mushroom) => ({ ...mushroom, position: at(mushroom.position) }))
   // Rim-artifact fix (T9): unlike a hair (tiny, its two ends' independent
   // swirl amounts differ negligibly), a fusion "anastomosis bridge" is
@@ -833,14 +990,26 @@ export function applySwirl(result: ColonyLayoutResult, swirl: number, power: num
   // the express fixture, `diagnose-rim.ts`). Rotating `bridgeTo` by the
   // SAME angle as its own tip (a rigid attach, not an independent swirl)
   // preserves the pre-swirl bridge length/angle exactly, matching the
-  // "short bridge" invariant `findFusionAnchor` already enforces.
+  // "short bridge" invariant `findFusionAnchor` already enforces. T10: when
+  // the tip's OWN hypha is short enough to use a rigid swirl angle, reuse
+  // that exact angle for `bridgeTo` too, instead of re-deriving one from the
+  // tip's own radius, so the bridge keeps tracking its (now rigidly rotated)
+  // tip exactly.
   const fusions = result.fusions.map((fusion) => {
-    const position = at(fusion.position)
+    const rigidAngleForHypha = rigidAngleByHyphaId.get(fusion.hyphaId)
+    const position = swirlFor(fusion.hyphaId, fusion.position)
     const tipRadius = discRadius(fusion.position)
-    const rigidAngle = tipRadius < 1e-9 ? 0 : swirlAngleForRadius(tipRadius, swirl, power)
-    return { ...fusion, position, bridgeTo: rotateAroundY(fusion.bridgeTo, rigidAngle) }
+    const bridgeAngle = rigidAngleForHypha ?? (tipRadius < 1e-9 ? 0 : swirlAngleForRadius(tipRadius, swirl, power))
+    return { ...fusion, position, bridgeTo: rotateAroundY(fusion.bridgeTo, bridgeAngle) }
   })
   const hairs = result.hairs.map((hair) => {
+    const rigidAngle = rigidAngleByHyphaId.get(hair.hyphaId)
+    if (rigidAngle !== undefined) {
+      // Exact: a rigid rotation preserves the hair's own length precisely,
+      // unlike the independent-per-point path below (which recomputes
+      // length from two separately-swirled ends and so can drift slightly).
+      return { ...hair, position: rotateAroundY(hair.position, rigidAngle), direction: rotateAroundY(hair.direction, rigidAngle) }
+    }
     const base = at(hair.position)
     const tip = at(addVec3(hair.position, scaleVec3(hair.direction, hair.length)))
     const delta = subVec3(tip, base)
@@ -972,7 +1141,7 @@ export function layoutNetworkColony(
       attachment = 'parent-branch'
     } else {
       const closest = closestSpanningByAngle(spanning, targetAngleRaw)
-      const naturalFit = closest !== null && angularDistance(closest.angleAtR0, targetAngleRaw) <= maxTurnRadians(r0, length)
+      const naturalFit = closest !== null && angularDistance(closest.angleAtR0, targetAngleRaw) <= maxTurnRadians(r0, length, FORK_LATERAL_BUDGET_FRACTION)
       if (naturalFit) {
         startPosition = pointOnHyphaAtRadius(closest!.hypha.points, r0).position
       } else {
