@@ -30,12 +30,15 @@ const VERTICAL_STAGGER = 0.045
 export interface MushroomInstancesResult {
   matrices: THREE.Matrix4[]
   birthTimes: number[]
+  /** Same order as `matrices`/`birthTimes` -- lets the renderer find which instance index (if any) matches the current hover/selection id, for A3's per-mushroom highlight. */
+  ids: string[]
   pickTargets: PickTarget[]
 }
 
 export function buildMushroomInstances(mushrooms: Mushroom[]): MushroomInstancesResult {
   const matrices: THREE.Matrix4[] = []
   const birthTimes: number[] = []
+  const ids: string[] = []
   const pickTargets: PickTarget[] = []
 
   for (const mushroom of mushrooms) {
@@ -53,8 +56,16 @@ export function buildMushroomInstances(mushrooms: Mushroom[]): MushroomInstances
     )
     matrices.push(matrix)
     birthTimes.push(mushroom.time)
-    pickTargets.push({ id: mushroom.id, x1: mushroom.position.x, z1: mushroom.position.z, x2: mushroom.position.x, z2: mushroom.position.z })
+    ids.push(mushroom.id)
+    pickTargets.push({
+      id: mushroom.id,
+      x1: mushroom.position.x,
+      z1: mushroom.position.z,
+      x2: mushroom.position.x,
+      z2: mushroom.position.z,
+      visibleAt: mushroom.time,
+    })
   }
 
-  return { matrices, birthTimes, pickTargets }
+  return { matrices, birthTimes, ids, pickTargets }
 }

@@ -39,6 +39,20 @@ interface FocusAnimation {
  * preserving behavior, see that component's doc) -- eases toward the
  * selected element's focus point, snapping instantly under
  * `prefers-reduced-motion` (P4/P7).
+ *
+ * **A4/T8 fix**: this effect must depend on `controls`, not just
+ * `selectedId`. `CameraRig`'s `<OrbitControls makeDefault>` registers itself
+ * into the R3F store asynchronously (its own mount effect calling `set({
+ * controls })`), so on the very first render `useThree().controls` is still
+ * `null` -- including for a `?sel=` deep link, where `selectedId` is ALREADY
+ * non-null on that same first render (`useSelection`'s lazy initial state
+ * reads it straight from the URL). With `controls` excluded from the deps
+ * array, that first effect run captured `orbitControls = null` in its
+ * closure, bailed out via the guard below, and never ran again (since
+ * `selectedId` doesn't change again on its own) -- so a deep-linked
+ * selection's camera focus silently never happened. Depending on `controls`
+ * too makes the effect re-run once `OrbitControls` finishes registering,
+ * picking up an already-set `selectedId` at that point.
  */
 export function CameraFocus({ model, selectedId, reducedMotion }: CameraFocusProps) {
   const { camera, controls } = useThree()
@@ -72,8 +86,12 @@ export function CameraFocus({ model, selectedId, reducedMotion }: CameraFocusPro
       toPosition,
       elapsed: 0,
     }
+    // `model`/`reducedMotion` are intentionally excluded: `App`'s `key` remounts
+    // this whole tree branch on repo change, so they're effectively fixed for
+    // this component's lifetime. `controls` is NOT excluded -- see the doc
+    // comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId])
+  }, [selectedId, controls])
 
   useFrame((_state, delta) => {
     const orbitControls = controls as OrbitControlsImpl | null

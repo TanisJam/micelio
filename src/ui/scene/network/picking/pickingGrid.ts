@@ -15,6 +15,15 @@ export interface PickTarget {
   z1: number
   x2: number
   z2: number
+  /**
+   * The epoch-ms growth time at which this target becomes fully visible
+   * (matches `growthMaterial.ts`'s per-fragment `vBirthTime > uCurrentTime`
+   * discard -- the later of a segment's two endpoint times, so the whole
+   * target is only pickable once no part of it is still hidden). A target
+   * with `visibleAt > currentTime` must never be returned by `queryNearest`
+   * (A2/T8: "no clickable invisible hyphae during growth").
+   */
+  visibleAt: number
 }
 
 interface GridCell {
@@ -93,8 +102,19 @@ export function buildPickGrid(targets: PickTarget[], cellSize: number): PickGrid
  * `tolerance`-sized box around the query point (plus their immediate
  * neighbors, since a target's nearest point may sit in an adjacent cell to
  * where the query itself falls).
+ *
+ * `currentTime` (default `Infinity`, i.e. no filtering) excludes any target
+ * whose `visibleAt` is still in the future -- so picking during growth
+ * replay only ever resolves to something actually drawn on screen right
+ * now, never a hypha/node/mushroom that hasn't grown in yet (A2/T8).
  */
-export function queryNearest(grid: PickGrid, x: number, z: number, tolerance: number): { id: string; distance: number } | null {
+export function queryNearest(
+  grid: PickGrid,
+  x: number,
+  z: number,
+  tolerance: number,
+  currentTime: number = Infinity,
+): { id: string; distance: number } | null {
   const toleranceSq = tolerance * tolerance
   const cx = cellCoord(x, grid.cellSize)
   const cz = cellCoord(z, grid.cellSize)
@@ -111,6 +131,7 @@ export function queryNearest(grid: PickGrid, x: number, z: number, tolerance: nu
       for (const target of cell.targets) {
         if (seen.has(target)) continue
         seen.add(target)
+        if (target.visibleAt > currentTime) continue
         const distanceSq = distanceSqToSegment(x, z, target.x1, target.z1, target.x2, target.z2)
         if (distanceSq < bestDistanceSq) {
           bestDistanceSq = distanceSq

@@ -18,12 +18,15 @@ export interface PointInstanceSource {
 export interface PointInstancesResult {
   matrices: THREE.Matrix4[]
   birthTimes: number[]
+  /** Same order as `matrices`/`birthTimes` -- lets the renderer find which instance index (if any) matches the current hover/selection id (A3/T8, e.g. a growing tip). */
+  ids: string[]
   pickTargets: PickTarget[]
 }
 
 export function buildPointInstances(sources: PointInstanceSource[], scale: number): PointInstancesResult {
   const matrices: THREE.Matrix4[] = []
   const birthTimes: number[] = []
+  const ids: string[] = []
   const pickTargets: PickTarget[] = []
 
   for (const source of sources) {
@@ -34,8 +37,16 @@ export function buildPointInstances(sources: PointInstanceSource[], scale: numbe
     )
     matrices.push(matrix)
     birthTimes.push(source.time)
-    pickTargets.push({ id: source.id, x1: source.position.x, z1: source.position.z, x2: source.position.x, z2: source.position.z })
+    ids.push(source.id)
+    pickTargets.push({
+      id: source.id,
+      x1: source.position.x,
+      z1: source.position.z,
+      x2: source.position.x,
+      z2: source.position.z,
+      visibleAt: source.time,
+    })
   }
 
-  return { matrices, birthTimes, pickTargets }
+  return { matrices, birthTimes, ids, pickTargets }
 }

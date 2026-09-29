@@ -5,10 +5,14 @@ import { mycelium } from '../../theme/tokens'
 
 export interface SporeMeshProps {
   reducedMotion: boolean
+  /** A3/T8: the spore is a real pickable element (id `'spore'`, resolves to the repo overview) -- hover/select brightens its halo, since it isn't part of any hypha ribbon and so can't use the shared growth shader's highlight uniforms. */
+  highlighted?: boolean
 }
 
 const CORE_RADIUS = 0.05
 const HALO_RADIUS = 0.15
+const HALO_OPACITY = 0.22
+const HALO_OPACITY_HIGHLIGHTED = 0.5
 
 /**
  * The spore (first commit / repo root, P9's legend entry): a small bright
@@ -18,13 +22,13 @@ const HALO_RADIUS = 0.15
  * low-opacity additive sphere rather than a second hard-edged bright one.
  * Gentle idle "breathing" glow (P4), disabled under `prefers-reduced-motion`.
  */
-export function SporeMesh({ reducedMotion }: SporeMeshProps) {
+export function SporeMesh({ reducedMotion, highlighted = false }: SporeMeshProps) {
   const haloRef = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
     if (reducedMotion || !haloRef.current) return
     const pulse = 1 + Math.sin(state.clock.elapsedTime * 1.1) * 0.06
-    haloRef.current.scale.setScalar(pulse)
+    haloRef.current.scale.setScalar(highlighted ? pulse * 1.35 : pulse)
   })
 
   return (
@@ -38,7 +42,13 @@ export function SporeMesh({ reducedMotion }: SporeMeshProps) {
         {/* M3c item 2: a touch more bloom on the spore halo (0.16 -> 0.22) to
             help restore the brighter, more luminous read from before M3b's
             palette/brightness pass, while staying well short of "blown out". */}
-        <meshBasicMaterial color={mycelium.sporeHalo} transparent opacity={0.22} depthWrite={false} blending={THREE.AdditiveBlending} />
+        <meshBasicMaterial
+          color={mycelium.sporeHalo}
+          transparent
+          opacity={highlighted ? HALO_OPACITY_HIGHLIGHTED : HALO_OPACITY}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
       </mesh>
     </group>
   )

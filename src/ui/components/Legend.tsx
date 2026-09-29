@@ -10,6 +10,8 @@ interface LegendEntry {
 export interface LegendProps {
   /** Pre-formatted (`formatOverflowNote`) honesty note for PR-derived hyphae the render cap omitted -- `null`/omitted when nothing was omitted (P12/M3b item 6: "a small, quiet note near the legend"). */
   overflowNote?: string | null
+  /** A subtle one-time pulse (A5/T8 "first-visit legibility") drawing a first-time visitor's eye to the legend while the growth caption is guiding them -- a finite CSS animation (`legend-pulse-once` in `index.css`), never a repeating attention-grab. Caller gates this off under `prefers-reduced-motion`. */
+  pulse?: boolean
 }
 
 const ENTRIES: LegendEntry[] = [
@@ -25,7 +27,7 @@ const ENTRIES: LegendEntry[] = [
 ]
 
 /** Compact, collapsible legend explaining the mycelium's data mapping (P9), plus an optional quiet overflow-honesty note (P12). */
-export function Legend({ overflowNote = null }: LegendProps) {
+export function Legend({ overflowNote = null, pulse = false }: LegendProps) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -43,6 +45,7 @@ export function Legend({ overflowNote = null }: LegendProps) {
       }}
     >
       <div
+        className={pulse ? 'legend-pulse-once' : undefined}
         style={{
           background: ui.panelBg,
           border: `1px solid ${ui.panelBorder}`,

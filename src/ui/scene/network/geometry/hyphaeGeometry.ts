@@ -200,6 +200,7 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
           z1: point.position.z,
           x2: hypha.points[i + 1]!.position.x,
           z2: hypha.points[i + 1]!.position.z,
+          visibleAt: Math.max(point.time, hypha.points[i + 1]!.time),
         })
       }
       vertexCursor += 2

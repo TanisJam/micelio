@@ -5,6 +5,7 @@ import { mapErrorToViewState } from '../../domain/repoRequestState'
 import type { RepoSnapshot } from '../../domain/repo'
 import { validateRepoIdentity } from '../../domain/validateRepoIdentity'
 import { DetailPanel } from '../components/DetailPanel'
+import { GrowthCaption } from '../components/GrowthCaption'
 import { Legend } from '../components/Legend'
 import { NetworkExploreList } from '../components/NetworkExploreList'
 import { StateScreen } from '../components/StateScreen'
@@ -232,8 +233,13 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
           }}
         />
       </Suspense>
-      {!mobileSheetOpen && <TimeScrubber clock={clock} bounds={model.bounds.time} />}
-      <Legend overflowNote={formatOverflowNote(model.overflow.hyphaeOmitted)} />
+      {!mobileSheetOpen && (
+        <>
+          <TimeScrubber clock={clock} bounds={model.bounds.time} />
+          <GrowthCaption clock={clock} reducedMotion={reducedMotion} />
+        </>
+      )}
+      <Legend overflowNote={formatOverflowNote(model.overflow.hyphaeOmitted)} pulse={!reducedMotion} />
       <TooltipLayer resolveDetail={(id) => resolveNetworkElementDetail(model, snapshot, id)} hoveredId={selection.hoveredId} />
       <DetailPanel
         detail={selectedDetail}

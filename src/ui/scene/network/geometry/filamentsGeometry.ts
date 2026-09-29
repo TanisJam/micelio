@@ -83,7 +83,7 @@ export function buildFilamentsGeometry(model: NetworkModel, hyphaIndexById: Map<
       crossUs.push(0)
       brightnesses.push(1)
     }
-    pickTargets.push({ id: hair.nodeId, x1: hair.position.x, z1: hair.position.z, x2: tipX, z2: tipZ })
+    pickTargets.push({ id: hair.nodeId, x1: hair.position.x, z1: hair.position.z, x2: tipX, z2: tipZ, visibleAt: hair.time })
   }
 
   const bridgeColor = hexToRgb(mycelium.fusion)

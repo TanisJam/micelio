@@ -7,7 +7,11 @@ import { getMushroomGeometry } from './geometry/mushroomGeometry'
 export interface MushroomsMeshProps {
   matrices: THREE.Matrix4[]
   birthTimes: number[]
+  /** Same order as `matrices`/`birthTimes` (see `buildMushroomInstances`). */
+  ids?: string[]
   getCurrentTime: () => number
+  hoveredId?: string | null
+  selectedId?: string | null
 }
 
 /**
@@ -26,7 +30,7 @@ export interface MushroomsMeshProps {
  * the scene stays fully unlit, so these two added lights have no visible
  * effect anywhere else.
  */
-export function MushroomsMesh({ matrices, birthTimes, getCurrentTime }: MushroomsMeshProps) {
+export function MushroomsMesh({ matrices, birthTimes, ids, getCurrentTime, hoveredId = null, selectedId = null }: MushroomsMeshProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const geometry = getMushroomGeometry()
   const material = useMemo(
@@ -39,7 +43,12 @@ export function MushroomsMesh({ matrices, birthTimes, getCurrentTime }: Mushroom
   useFrame(() => {
     const mesh = meshRef.current
     if (!mesh || matrices.length === 0) return
-    applyGrowthToInstances(mesh, matrices, birthTimes, getCurrentTime())
+    // A3/T8: a mushroom isn't part of any hypha ribbon, so it can't use the
+    // shared growth shader's hypha-highlight uniforms -- hover/select
+    // instead scales up just its own instance (`HIGHLIGHT_SCALE`).
+    const targetId = selectedId ?? hoveredId
+    const highlightIndex = targetId && ids ? ids.indexOf(targetId) : -1
+    applyGrowthToInstances(mesh, matrices, birthTimes, getCurrentTime(), highlightIndex)
   })
 
   if (matrices.length === 0) return null

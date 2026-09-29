@@ -26,6 +26,26 @@ body {
   outline-offset: 2px;
 }
 
+/* A5/T8: a subtle, FINITE one-time pulse on the Legend button for first-visit
+   legibility -- draws the eye while the growth caption (`GrowthCaption.tsx`)
+   is guiding a first-time visitor, never a repeating/nagging animation.
+   Ends back at rest (no shadow) since the keyframe's own last frame is 0. */
+@keyframes huerto-legend-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(110, 231, 255, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(110, 231, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(110, 231, 255, 0);
+  }
+}
+
+.legend-pulse-once {
+  animation: huerto-legend-pulse 1.5s ease-out 2;
+}
+
 /* The detail panel: right-side on desktop, a bottom sheet on mobile/narrow viewports (P7). */
 .detail-panel {
   position: fixed;

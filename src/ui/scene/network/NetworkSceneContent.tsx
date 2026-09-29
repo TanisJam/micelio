@@ -7,7 +7,7 @@ import { buildFilamentsGeometry } from './geometry/filamentsGeometry'
 import { buildHyphaeGeometry } from './geometry/hyphaeGeometry'
 import { createGrowthMaterial, type GrowthMaterial } from './geometry/growthMaterial'
 import { soilRadiusFor } from './geometry/soilRadius'
-import { buildPickGrid, queryNearest } from './picking/pickingGrid'
+import { buildPickGrid, queryNearest, type PickTarget } from './picking/pickingGrid'
 import { CameraFocus } from './CameraFocus'
 import { CameraRig } from './CameraRig'
 import { MushroomsMesh } from './MushroomsMesh'
@@ -105,10 +105,24 @@ export function NetworkSceneContent({
   }, [hyphae, filaments])
 
   const pickGrid = useMemo(() => {
-    const targets = [...hyphae.pickTargets, ...filaments.pickTargets, ...mushroomInstances.pickTargets, ...tipInstances.pickTargets]
+    const sporeTarget: PickTarget = {
+      id: model.spore.id,
+      x1: model.spore.position.x,
+      z1: model.spore.position.z,
+      x2: model.spore.position.x,
+      z2: model.spore.position.z,
+      visibleAt: model.spore.time,
+    }
+    const targets = [
+      sporeTarget,
+      ...hyphae.pickTargets,
+      ...filaments.pickTargets,
+      ...mushroomInstances.pickTargets,
+      ...tipInstances.pickTargets,
+    ]
     const cellSize = Math.max(0.05, model.bounds.radius / 30)
     return buildPickGrid(targets, cellSize)
-  }, [hyphae, filaments, mushroomInstances, tipInstances, model.bounds.radius])
+  }, [hyphae, filaments, mushroomInstances, tipInstances, model.bounds.radius, model.spore])
 
   const pickTolerance = Math.max(0.06, model.bounds.radius * 0.016)
 
@@ -144,7 +158,9 @@ export function NetworkSceneContent({
     raycaster.setFromCamera(pointerNdc.current, camera)
     const hit = raycaster.ray.intersectPlane(GROUND_PLANE, intersection.current)
     if (!hit) return null
-    return queryNearest(pickGrid, intersection.current.x, intersection.current.z, pickTolerance)
+    // A2/T8: never resolve to an element that hasn't grown in yet -- gate by
+    // the SAME `getCurrentTime()` the growth shader itself reads this frame.
+    return queryNearest(pickGrid, intersection.current.x, intersection.current.z, pickTolerance, getCurrentTime())
   }
 
   useEffect(() => {
@@ -193,7 +209,7 @@ export function NetworkSceneContent({
       <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
       <SoilDisc model={model} ringRadius={selectedMushroomRingRadius} />
-      <SporeMesh reducedMotion={reducedMotion} />
+      <SporeMesh reducedMotion={reducedMotion} highlighted={hoveredId === model.spore.id || selectedId === model.spore.id} />
 
       <mesh ref={hyphaeMeshRef} geometry={hyphae.geometry} material={filamentMaterial} />
       <lineSegments geometry={filaments.geometry} material={filamentMaterial} />
@@ -211,7 +227,14 @@ export function NetworkSceneContent({
       <directionalLight position={[-2, 0.6, -1.4]} intensity={0.6} color={mycelium.mushroomRim} />
       <hemisphereLight args={[mycelium.mushroomRim, mycelium.soilNear, 0.16]} />
 
-      <MushroomsMesh matrices={mushroomInstances.matrices} birthTimes={mushroomInstances.birthTimes} getCurrentTime={getCurrentTime} />
+      <MushroomsMesh
+        matrices={mushroomInstances.matrices}
+        birthTimes={mushroomInstances.birthTimes}
+        ids={mushroomInstances.ids}
+        getCurrentTime={getCurrentTime}
+        hoveredId={hoveredId}
+        selectedId={selectedId}
+      />
       <PointGlowInstances
         matrices={mushroomGlowInstances.matrices}
         birthTimes={mushroomGlowInstances.birthTimes}
@@ -235,6 +258,9 @@ export function NetworkSceneContent({
         getCurrentTime={getCurrentTime}
         breathe
         reducedMotion={reducedMotion}
+        ids={tipInstances.ids}
+        hoveredId={hoveredId}
+        selectedId={selectedId}
       />
     </>
   )
