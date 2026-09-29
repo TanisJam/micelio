@@ -2588,6 +2588,135 @@ framing.
   worker-based non-blocking path, though not a live end-to-end real-repo
   measurement (see weakness above).
 
+### T9 Rim "hook"/blocky-fragment fix -- done
+Commit: `4f74fc8` fix: grow clean tapered tips at the colony rim.
+
+Per the orchestrator's literal review of `.shots/desktop-express-end.png`
+after T8: around the whole rim of the express galaxy, a ring of short,
+bright, blocky white/cyan fragments -- small hooked/rectangular shapes ("⌐",
+"L", short thick dashes) sitting at the outer edge, visually distinct from
+the fine tapered threads everywhere else. Valtio showed a milder version.
+
+**Root cause** (confirmed empirically, not just by inspection -- a temporary
+`diagnose-rim.ts` scratch script built the real `NetworkModel` for both
+fixtures and measured the turning angle between every hypha's consecutive
+polyline segments): the fork's own eased turn (`growHyphaPoints`) and the
+separate, cosmetic, radius-dependent swirl rotation applied afterward
+(`applySwirl`) are each individually smooth, but their SUM can have a real,
+if modest, local reversal wherever the two happen to have opposing rates at
+a given sample -- most often right after a natural-fit fork attaches near an
+already-large disc radius (common near the rim, since many hyphae there are
+naturally short work-driven lengths, not because of `COLONY_RADIUS_CAP`
+clamping specifically, which turned out NOT to be the dominant mechanism --
+the specific hypha traced in detail, `hypha-pr5819`, was never actually
+radius-clamped). At a hypha's own (length-appropriate, modest) sample
+spacing, this compound curve's brief reversal reads as a sharp zigzag/hook
+rather than the gentle bend it truly is -- confirmed by resampling the same
+fixture at ~20x the normal resolution: the same hooks shrank from up to
+~124deg to under ~90deg (still a real, if much gentler, bend). Measured
+304 hyphae (of 826) on the express fixture with a >60deg turn between
+consecutive segments before any fix; some as high as 124deg.
+
+A related, smaller bridge artifact ("fusion bridges at the rim may connect
+to neighbors at odd angles" from the task brief): `applySwirl` rotated a
+fusion's `bridgeTo` independently, using ITS OWN disc radius -- but a
+bridge's tip and its bridge target can sit at meaningfully different radii,
+so independent rotation stretched a bridge `findFusionAnchor` bounds at
+`FUSION_SEARCH_RADIUS` (0.25) pre-swirl into a longer, oddly-angled chord
+post-swirl (measured up to ~0.37 on 2 express fusions).
+
+Ruled out (via the debug diagnostic, not just assumption): point pile-up
+(many samples collapsed into a near-zero radial span) -- `sampleCountForLength`
+already scales sample count down with a hypha's own (possibly clamped)
+length, so this never actually occurred on either fixture (0 cases both
+before and after). Open-PR tips as oversized quads -- already point-glow
+`THREE.SphereGeometry` instances (`PointGlowInstances.tsx`), not ribbon
+quads, so not a contributor.
+
+**Fix**, all in `src/domain/network/colonyLayout.ts`:
+1. `lateralBudget` (the post-fork organic-wiggle amplitude) is now ALSO
+   capped as a fraction of the hypha's own rendered length
+   (`POST_FORK_LATERAL_LENGTH_CAP_FRACTION`, 0.15), not just floored at a
+   fixed world-space amount (`LATERAL_MAX_WORLD`) -- a short hypha's wiggle
+   can no longer have a larger tangential swing than its own radial
+   progression.
+2. `buildForkBiasedSampleTimes` redistributes each hypha's EXISTING sample
+   budget (no extra vertices) so the fork+ramp region always gets at least
+   `MIN_FORK_SAMPLES` (8) points, resolving the fork/swirl interaction more
+   densely.
+3. `relaxSharpTurns` -- the fix that actually closes it -- runs after swirl
+   and pulls any interior point whose turn still exceeds 60deg
+   (`MAX_HYPHA_TURN_RAD`) back onto the smooth path its own untouched
+   neighbors already describe (angular midpoint via `shortestAngleTo`, 4
+   passes for a short run of consecutive outliers). Only the point's ANGLE
+   moves; radius, height, time and thickness/taper are all preserved
+   exactly, so every other invariant (monotonic radius, timing, per-point
+   taper) still holds. Endpoints (parent attach point, tip) are never
+   touched.
+4. `applySwirl`'s fusion handling now rotates `bridgeTo` RIGIDLY by the same
+   angle as its own tip, instead of independently re-deriving swirl from
+   `bridgeTo`'s own (possibly very different) radius -- preserves the
+   pre-swirl bridge length/angle exactly.
+
+**Tests** (`colonyLayout.test.ts`): the existing "rotates every element kind
+... by the exact same radius-dependent angle" swirl test was updated -- a
+fusion's `bridgeTo` is now the one documented exception, with a new
+dedicated test confirming it rotates rigidly with its tip (pre-swirl bridge
+length preserved exactly). Two new regression tests, run against BOTH real
+bundled fixtures: no hypha polyline segment turns more than 60deg from its
+predecessor (checked 100+ turns per fixture); no hypha polyline repeats a
+near-zero-length segment back-to-back (point pile-up guard, currently
+vacuous on both fixtures but guards the mechanism directly).
+
+**Verified with `pnpm shot`** (desktop+mobile, both fixtures, all states):
+26/26, 0 console errors. Before/after comparison via a temporary zoomed
+Playwright camera script (wheel-zoom + pan toward the rim, not committed)
+and tight crops of the real `desktop-express-end.png`/`debug-default-valtio-
+*.png` screenshots at the same pixel coordinates, reviewed with Read:
+**before** -- along the rim arc, multiple distinct bright hook/checkmark/
+"L"-shaped white fragments jut out from the smooth curving threads at sharp
+angles, clearly distinct from the fine tapered filaments elsewhere; express
+showed this more densely and more sharply than valtio, matching the task's
+own "milder on valtio" description. **after** -- the same screen regions
+show smoothly curving, continuously tapering threads with no jagged
+spikes; a couple of legitimate small dot/hair marks (mushrooms, commit
+hairs) remain, unaffected since this fix only touches hypha ribbon points.
+The disc's inner region (near the spore) was visually unchanged before/
+after, as expected -- the fix is rim-specific by construction (it only ever
+activates where the compound curve's real local reversal is large enough to
+matter, which the diagnostic confirms concentrates near large disc radii).
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (360
+tests, +5 net: 2 new regression tests x2 fixtures via `describe.each` = 4,
++1 new dedicated fusion-rigidity test, existing swirl test updated in
+place) · `pnpm build`: pass (`Scene` chunk 1038.60 kB, unchanged from
+before this fix) · `pnpm shot`: 26/26, 0 console errors.
+
+**Remaining weaknesses, honestly reported**:
+- `relaxSharpTurns`'s 60deg ceiling is a global invariant, not one that
+  specifically exempts "the fork's very first segment" the task brief's own
+  test wording suggested -- in practice this never mattered (the domain
+  fork's own achievable turn is bounded well under 60deg almost everywhere
+  except very close to the spore, where `FORK_ABSOLUTE_MAX_RAD` allows up to
+  70deg; no such case was observed being clipped on either bundled fixture),
+  but a hypothetical future case near the spore with a genuinely-intended
+  65-70deg fork turn would now be softened slightly to 60deg.
+- The fix targets the SPECIFIC fork+swirl interaction and its resulting
+  sharp turns; it does not re-litigate the pre-existing, already-accepted
+  P3 residual ("a dense rim bundle of many hyphae reads as a thicker fringe
+  than a single strand's own taper" -- an aggregate-density effect, not a
+  per-strand defect, flagged back in M3b and still out of scope here).
+- No automated regression test asserts the RENDERED (post-taper,
+  post-ribbon-geometry) pixel output directly; coverage is at the domain
+  polyline level (turning angle, pile-up) plus the existing generic
+  `tipTaperFactor` unit tests (unchanged by this fix, already covered
+  "tapers exactly to 0 at both very ends") and the manual screenshot review
+  above.
+
+**P3 Organic form** -- improved: the rim no longer shows sharp hook/blocky
+fragments; the pre-existing dense-bundle-fringe residual (see weakness
+above) is unchanged and still out of scope.
+
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
 decision.
