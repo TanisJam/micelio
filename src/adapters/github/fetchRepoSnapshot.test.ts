@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CAPS } from './caps.ts'
 import { fetchRepoSnapshotFromGitHub } from './fetchRepoSnapshot.ts'
-import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY } from './queries.ts'
-import type { RawClosedPullRequest, RawMergedPullRequest, RawRepositoryOverview } from './rawTypes.ts'
+import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_META_QUERY } from './queries.ts'
+import type { RawClosedPullRequest, RawMergedPullRequest, RawRepositoryMeta } from './rawTypes.ts'
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200 })
+}
+
+function queryOf(init: { body: string }): string {
+  return (JSON.parse(init.body) as { query: string }).query
 }
 
 function mergedPrNode(number: number): RawMergedPullRequest {
@@ -39,19 +44,15 @@ function closedPrNode(number: number): RawClosedPullRequest {
   }
 }
 
-function closedPageBody(nodes: RawClosedPullRequest[], hasNextPage = false, endCursor: string | null = null) {
-  return {
-    data: {
-      repository: {
-        pullRequests: { pageInfo: { hasNextPage, endCursor }, nodes },
-      },
-    },
-  }
+function mergedPageBody(nodes: RawMergedPullRequest[], hasNextPage = false, endCursor: string | null = null, totalCount = nodes.length) {
+  return { data: { repository: { pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } } }
 }
 
-function buildOverviewBody(): {
-  data: { repository: RawRepositoryOverview }
-} {
+function closedPageBody(nodes: RawClosedPullRequest[], hasNextPage = false, endCursor: string | null = null, totalCount = nodes.length) {
+  return { data: { repository: { pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } } }
+}
+
+function buildMetaBody(): { data: { repository: RawRepositoryMeta } } {
   return {
     data: {
       repository: {
@@ -81,44 +82,64 @@ function buildOverviewBody(): {
         tags: { nodes: [] },
         branches: { nodes: [{ name: 'main', target: { committedDate: '2024-01-01T00:00:00Z' } }] },
         openPRs: { nodes: [] },
-        mergedPRs: {
-          pageInfo: { hasNextPage: true, endCursor: 'cursor1' },
-          nodes: [mergedPrNode(1), mergedPrNode(2)],
-        },
       },
     },
   }
 }
 
-const overviewBody = buildOverviewBody()
-
-const mergedPageBody = {
-  data: {
-    repository: {
-      pullRequests: {
-        pageInfo: { hasNextPage: false, endCursor: null },
-        nodes: [mergedPrNode(3)],
-      },
-    },
-  },
+/**
+ * A single fetch mock covering all three of `fetchRepoSnapshotFromGitHub`'s
+ * concurrent requests (meta, merged-PR pages, closed-PR pages). Dispatches
+ * on the posted GraphQL query string itself, never assumed call order --
+ * the three streams start together and run fully concurrently (Unit 1), so
+ * nothing about their real interleaving should matter to correctness.
+ */
+function routedFetch(handlers: {
+  meta?: () => Response
+  merged?: () => Response
+  closed?: () => Response
+}): ReturnType<typeof vi.fn> {
+  return vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
+    // A real microtask yield, so all three concurrent streams' fetch calls
+    // actually get DISPATCHED (their own pagination loop's pre-fetch budget
+    // check already ran) before any one stream's handler body runs -- this
+    // makes the mock behave like real concurrent network requests instead
+    // of one stream's handler (e.g. one that advances the fake clock)
+    // running to completion before a sibling stream has even been reached.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    const query = queryOf(init)
+    if (query === REPO_META_QUERY) return (handlers.meta ?? (() => jsonResponse(buildMetaBody())))()
+    if (query === MERGED_PRS_PAGE_QUERY) return (handlers.merged ?? (() => jsonResponse(mergedPageBody([]))))()
+    if (query === CLOSED_PRS_PAGE_QUERY) return (handlers.closed ?? (() => jsonResponse(closedPageBody([]))))()
+    throw new Error(`unexpected GraphQL query: ${query}`)
+  })
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('fetchRepoSnapshotFromGitHub', () => {
-  it('paginates merged PRs, then fetches closed PRs as their own query, assembling a full snapshot', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(overviewBody))
-      .mockResolvedValueOnce(jsonResponse(mergedPageBody))
-      .mockResolvedValueOnce(jsonResponse(closedPageBody([closedPrNode(101)])))
+  it('fetches meta, merged and closed PRs concurrently and assembles a full snapshot', async () => {
+    const fetchMock = routedFetch({
+      merged: (() => {
+        let call = 0
+        return () => {
+          call += 1
+          if (call === 1) return jsonResponse(mergedPageBody([mergedPrNode(1), mergedPrNode(2)], true, 'm1', 3))
+          return jsonResponse(mergedPageBody([mergedPrNode(3)], false, null, 3))
+        }
+      })(),
+      closed: () => jsonResponse(closedPageBody([closedPrNode(101)])),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(4) // meta + 2 merged pages + 1 closed page
     expect(snapshot.meta.name).toBe('repo')
     expect(snapshot.meta.license).toBe('MIT License')
     expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1, 2, 3])
@@ -129,75 +150,103 @@ describe('fetchRepoSnapshotFromGitHub', () => {
     expect(snapshot.liveBranches).toEqual([{ name: 'main', lastCommitDate: '2024-01-01T00:00:00Z' }])
     expect(snapshot.closedPullRequests.map((pr) => pr.number)).toEqual([101])
     expect(snapshot.source).toBe('github')
+    expect(snapshot.truncated).toBeUndefined()
     expect(new Date(snapshot.fetchedAt).toString()).not.toBe('Invalid Date')
   })
 
   it('paginates closed PRs across requests when a page has more', async () => {
-    const body = structuredClone(overviewBody)
-    body.data.repository.mergedPRs = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(body))
-      .mockResolvedValueOnce(jsonResponse(closedPageBody([closedPrNode(201)], true, 'closed-cursor-1')))
-      .mockResolvedValueOnce(jsonResponse(closedPageBody([closedPrNode(202)])))
+    let call = 0
+    const fetchMock = routedFetch({
+      closed: () => {
+        call += 1
+        if (call === 1) return jsonResponse(closedPageBody([closedPrNode(201)], true, 'closed-cursor-1', 2))
+        return jsonResponse(closedPageBody([closedPrNode(202)], false, null, 2))
+      },
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(snapshot.closedPullRequests.map((pr) => pr.number)).toEqual([201, 202])
+    expect(snapshot.truncated).toBeUndefined()
   })
 
-  it('honestly returns no closed PRs (never fabricated) when even the first closed-PR page fails', async () => {
-    const body = structuredClone(overviewBody)
-    body.data.repository.mergedPRs = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(body))
-      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+  it('honestly returns no closed PRs (never fabricated) and flags it when even the first closed-PR page fails', async () => {
+    const fetchMock = routedFetch({
+      closed: () => new Response('boom', { status: 500 }),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(snapshot.closedPullRequests).toEqual([])
+    expect(snapshot.truncated?.closedPullRequests).toEqual({ fetched: 0, totalCount: null, reason: 'error' })
     // The rest of the snapshot is unaffected by the closed-PR fetch failure.
     expect(snapshot.meta.name).toBe('repo')
+    expect(snapshot.truncated?.mergedPullRequests).toBeUndefined()
   })
 
-  it('honestly keeps only the closed PRs already fetched when a continuation page fails', async () => {
-    const body = structuredClone(overviewBody)
-    body.data.repository.mergedPRs = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(body))
-      .mockResolvedValueOnce(jsonResponse(closedPageBody([closedPrNode(301)], true, 'closed-cursor-1')))
-      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+  it('honestly keeps only the closed PRs already fetched (partial + flagged) when a continuation page fails', async () => {
+    let call = 0
+    const fetchMock = routedFetch({
+      closed: () => {
+        call += 1
+        if (call === 1) return jsonResponse(closedPageBody([closedPrNode(301)], true, 'closed-cursor-1', 5))
+        return new Response('boom', { status: 500 })
+      },
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(snapshot.closedPullRequests.map((pr) => pr.number)).toEqual([301])
+    expect(snapshot.truncated?.closedPullRequests).toEqual({ fetched: 1, totalCount: 5, reason: 'error' })
+  })
+
+  it('honestly returns no merged PRs (never fabricated) and flags it when even the first merged-PR page fails', async () => {
+    const fetchMock = routedFetch({
+      merged: () => new Response('boom', { status: 500 }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    expect(snapshot.mergedPullRequests).toEqual([])
+    expect(snapshot.truncated?.mergedPullRequests).toEqual({ fetched: 0, totalCount: null, reason: 'error' })
+    // A merged-PR fetch failure doesn't lose the rest of the snapshot either.
+    expect(snapshot.meta.name).toBe('repo')
+    expect(snapshot.truncated?.closedPullRequests).toBeUndefined()
+  })
+
+  it('honestly keeps only the merged PRs already fetched (partial + flagged) when a continuation page fails', async () => {
+    let call = 0
+    const fetchMock = routedFetch({
+      merged: () => {
+        call += 1
+        if (call === 1) return jsonResponse(mergedPageBody([mergedPrNode(1)], true, 'merged-cursor-1', 9))
+        return new Response('boom', { status: 500 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1])
+    expect(snapshot.truncated?.mergedPullRequests).toEqual({ fetched: 1, totalCount: 9, reason: 'error' })
   })
 
   it('falls back to tags when there are no releases', async () => {
-    const bodyWithoutReleases = structuredClone(overviewBody)
-    bodyWithoutReleases.data.repository.releases = { totalCount: 0, nodes: [] }
-    bodyWithoutReleases.data.repository.tags = {
-      nodes: [{ name: 'v0', target: { committedDate: '2022-01-01T00:00:00Z', url: 'https://x/tag/v0' } }],
-    }
-    bodyWithoutReleases.data.repository.mergedPRs = {
-      pageInfo: { hasNextPage: false, endCursor: null },
-      nodes: [],
-    }
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn()
-        .mockResolvedValueOnce(jsonResponse(bodyWithoutReleases))
-        .mockResolvedValue(jsonResponse(closedPageBody([]))),
-    )
+    const fetchMock = routedFetch({
+      meta: () => {
+        const body = buildMetaBody()
+        body.data.repository.releases = { totalCount: 0, nodes: [] }
+        body.data.repository.tags = {
+          nodes: [{ name: 'v0', target: { committedDate: '2022-01-01T00:00:00Z', url: 'https://x/tag/v0' } }],
+        }
+        return jsonResponse(body)
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
     expect(snapshot.releases).toEqual([
@@ -206,57 +255,80 @@ describe('fetchRepoSnapshotFromGitHub', () => {
   })
 
   /**
-   * C3/T8: merged-PR and closed-PR pagination now run concurrently
-   * (`Promise.all`). This test deliberately does NOT assume any particular
-   * interleaving of the two independent request streams -- it dispatches on
-   * the posted GraphQL query string itself (whichever stream asks, in
-   * whatever order the two loops actually happen to interleave), each
-   * stream keeping its OWN page counter. That's the actual property C3
-   * needs: concurrency must never corrupt either stream's own cursor-
-   * following sequence or merge results out of order, regardless of exactly
-   * how the two loops happen to interleave in a real event loop.
+   * C3/T8 (extended by Unit 1 to three streams): meta, merged-PR and
+   * closed-PR fetching all run concurrently. This test deliberately does
+   * NOT assume any particular interleaving -- it dispatches on the posted
+   * GraphQL query string, each stream keeping its own page counter. That's
+   * the actual property that matters: concurrency must never corrupt either
+   * PR stream's own cursor-following sequence or merge results out of
+   * order, regardless of exactly how the streams interleave in a real event
+   * loop.
    */
   it('paginates merged and closed PRs correctly when running concurrently, across multiple pages each', async () => {
-    const body = structuredClone(overviewBody)
-    body.data.repository.mergedPRs = { pageInfo: { hasNextPage: true, endCursor: 'merged-cursor-1' }, nodes: [mergedPrNode(1), mergedPrNode(2)] }
-
     const mergedPages = [
-      { pageInfo: { hasNextPage: true, endCursor: 'merged-cursor-2' }, nodes: [mergedPrNode(3)] },
-      { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [mergedPrNode(4)] },
+      { nodes: [mergedPrNode(1), mergedPrNode(2)], hasNextPage: true, endCursor: 'merged-cursor-1' },
+      { nodes: [mergedPrNode(3)], hasNextPage: true, endCursor: 'merged-cursor-2' },
+      { nodes: [mergedPrNode(4)], hasNextPage: false, endCursor: null },
     ]
     const closedPages = [
-      { pageInfo: { hasNextPage: true, endCursor: 'closed-cursor-1' }, nodes: [closedPrNode(101)] },
-      { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [closedPrNode(102)] },
+      { nodes: [closedPrNode(101)], hasNextPage: true, endCursor: 'closed-cursor-1' },
+      { nodes: [closedPrNode(102)], hasNextPage: false, endCursor: null },
     ]
     let mergedCallIndex = 0
     let closedCallIndex = 0
 
-    const fetchMock = vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
-      const { query } = JSON.parse(init.body) as { query: string }
-      if (query === MERGED_PRS_PAGE_QUERY) {
+    const fetchMock = routedFetch({
+      merged: () => {
         const page = mergedPages[mergedCallIndex++]!
-        return jsonResponse({ data: { repository: { pullRequests: page } } })
-      }
-      if (query === CLOSED_PRS_PAGE_QUERY) {
+        return jsonResponse(mergedPageBody(page.nodes, page.hasNextPage, page.endCursor, 4))
+      },
+      closed: () => {
         const page = closedPages[closedCallIndex++]!
-        return jsonResponse({ data: { repository: { pullRequests: page } } })
-      }
-      return jsonResponse(body) // the overview query
+        return jsonResponse(closedPageBody(page.nodes, page.hasNextPage, page.endCursor, 2))
+      },
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(5) // overview + 2 merged pages + 2 closed pages
+    expect(fetchMock).toHaveBeenCalledTimes(6) // meta + 3 merged pages + 2 closed pages
     expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1, 2, 3, 4])
     expect(snapshot.closedPullRequests.map((pr) => pr.number)).toEqual([101, 102])
+    expect(snapshot.truncated).toBeUndefined()
+  })
+
+  it('stops merged-PR pagination once the global time budget is exceeded, returning a partial + flagged snapshot', async () => {
+    vi.useFakeTimers()
+    const fetchMock = routedFetch({
+      merged: () => {
+        // Simulate this page's own round trip alone taking longer than the
+        // whole fetch budget -- the loop must check the budget BEFORE
+        // asking for a next page, so it should never issue a second request
+        // here even though this page honestly reports `hasNextPage: true`.
+        vi.advanceTimersByTime(CAPS.fetchTimeBudgetMs + 1000)
+        return jsonResponse(mergedPageBody([mergedPrNode(1)], true, 'merged-cursor-1', 500))
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    const mergedCalls = fetchMock.mock.calls.filter(([, init]) => queryOf(init) === MERGED_PRS_PAGE_QUERY)
+    expect(mergedCalls).toHaveLength(1)
+    expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1])
+    expect(snapshot.truncated?.mergedPullRequests).toEqual({ fetched: 1, totalCount: 500, reason: 'time_budget' })
+    // The independent closed-PR stream (a single, fast, `hasNextPage: false`
+    // page here) is unaffected by merged PRs' own budget cutoff.
+    expect(snapshot.truncated?.closedPullRequests).toBeUndefined()
   })
 
   it('throws RepoError("not_found") when the repository is null', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ data: { repository: null } }))),
-    )
+    const fetchMock = routedFetch({
+      meta: () => jsonResponse({ data: { repository: null } }),
+      merged: () => jsonResponse({ data: { repository: null } }),
+      closed: () => jsonResponse({ data: { repository: null } }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
     await expect(fetchRepoSnapshotFromGitHub('o', 'missing', 'token')).rejects.toMatchObject({
       code: 'not_found',
     })

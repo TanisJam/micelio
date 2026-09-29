@@ -132,23 +132,24 @@ const RELEASE_TAG_TARGET_FIELDS = /* GraphQL */ `
   }
 `
 
-// Closed-unmerged PRs are deliberately NOT fetched here: bundling a third
-// paginated, commit-bearing connection into the overview query (alongside
-// mergedPRs and openPRs) pushed its cost/latency high enough to trigger
+// Closed-unmerged PRs and merged PRs are deliberately NOT fetched here:
+// bundling paginated, commit-bearing connections into one big overview query
+// (the original shape) pushed its cost/latency high enough to trigger
 // intermittent upstream 502/504s on repositories with substantial PR
-// history (observed while generating fixtures). Fetching them as their own
-// query (see `CLOSED_PRS_PAGE_QUERY`, also used for the first page) keeps
-// every individual request cheaper and independently retriable.
-export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
-  ${PR_COMMITS_FRAGMENT}
+// history (observed while generating fixtures), and serialized the start of
+// merged-PR pagination behind this query's own (non-trivial) latency.
+// Unit 1 (cold-fetch time budget): this is now a small, cheap, single-page
+// "meta" query -- repo info, languages, releases/tags, branches, open PRs,
+// direct-commit scan -- with NO paginated connection of its own, so it can
+// run fully concurrently with the independent merged-PR (`MERGED_PRS_PAGE_
+// QUERY`) and closed-PR (`CLOSED_PRS_PAGE_QUERY`) pagination loops instead
+// of gating their start.
+export const REPO_META_QUERY = /* GraphQL */ `
   ${SECONDARY_PR_COMMITS_FRAGMENT}
-  ${MERGED_PR_FRAGMENT}
   ${OPEN_PR_FRAGMENT}
-  query RepoOverview(
+  query RepoMeta(
     $owner: String!
     $name: String!
-    $prPageSize: Int!
-    $commitsPerPr: Int!
     $secondaryCommitsPerPr: Int!
     $directCommitsScanned: Int!
   ) {
@@ -247,19 +248,15 @@ export const REPO_OVERVIEW_QUERY = /* GraphQL */ `
           ...OpenPrFields
         }
       }
-      mergedPRs: pullRequests(states: MERGED, first: $prPageSize, orderBy: { field: CREATED_AT, direction: DESC }) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-        nodes {
-          ...MergedPrFields
-        }
-      }
     }
   }
 `
 
+// Unit 1: `totalCount` is requested on every page (not just the first) --
+// GitHub returns the same connection-wide value regardless of cursor, at
+// negligible extra cost, so there's no need to special-case "only ask on
+// page 1". Used to report an honest "N of totalCount" truncation note when
+// the time budget (see `fetchRepoSnapshot.ts`) stops pagination early.
 export const MERGED_PRS_PAGE_QUERY = /* GraphQL */ `
   ${PR_COMMITS_FRAGMENT}
   ${MERGED_PR_FRAGMENT}
@@ -277,6 +274,7 @@ export const MERGED_PRS_PAGE_QUERY = /* GraphQL */ `
         after: $after
         orderBy: { field: CREATED_AT, direction: DESC }
       ) {
+        totalCount
         pageInfo {
           hasNextPage
           endCursor
@@ -306,6 +304,7 @@ export const CLOSED_PRS_PAGE_QUERY = /* GraphQL */ `
         after: $after
         orderBy: { field: UPDATED_AT, direction: DESC }
       ) {
+        totalCount
         pageInfo {
           hasNextPage
           endCursor

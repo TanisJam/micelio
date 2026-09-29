@@ -10,6 +10,8 @@ interface LegendEntry {
 export interface LegendProps {
   /** Pre-formatted (`formatOverflowNote`) honesty note for PR-derived hyphae the render cap omitted -- `null`/omitted when nothing was omitted (P12/M3b item 6: "a small, quiet note near the legend"). */
   overflowNote?: string | null
+  /** Unit 1: pre-formatted (`formatFetchTruncationNote`) honesty note for when the cold-fetch time budget (or a mid-pagination failure) stopped a pull-request list short of its full history -- `null`/omitted when nothing was truncated. Rendered as its own quiet note, same style as `overflowNote`, so a viewer can see both an honest fetch note and an honest render-cap note at once when both apply. */
+  fetchTruncationNote?: string | null
   /** A subtle one-time pulse (A5/T8 "first-visit legibility") drawing a first-time visitor's eye to the legend while the growth caption is guiding them -- a finite CSS animation (`legend-pulse-once` in `index.css`), never a repeating attention-grab. Caller gates this off under `prefers-reduced-motion`. */
   pulse?: boolean
 }
@@ -27,8 +29,9 @@ const ENTRIES: LegendEntry[] = [
 ]
 
 /** Compact, collapsible legend explaining the mycelium's data mapping (P9), plus an optional quiet overflow-honesty note (P12). */
-export function Legend({ overflowNote = null, pulse = false }: LegendProps) {
+export function Legend({ overflowNote = null, fetchTruncationNote = null, pulse = false }: LegendProps) {
   const [open, setOpen] = useState(false)
+  const notes = [overflowNote, fetchTruncationNote].filter((note): note is string => Boolean(note))
 
   return (
     <div
@@ -115,8 +118,9 @@ export function Legend({ overflowNote = null, pulse = false }: LegendProps) {
         </ul>
       )}
       </div>
-      {overflowNote && (
+      {notes.map((note) => (
         <p
+          key={note}
           style={{
             margin: 0,
             padding: `${ui.space(1)} ${ui.space(3)}`,
@@ -129,9 +133,9 @@ export function Legend({ overflowNote = null, pulse = false }: LegendProps) {
             backdropFilter: 'blur(6px)',
           }}
         >
-          {overflowNote}
+          {note}
         </p>
-      )}
+      ))}
     </div>
   )
 }

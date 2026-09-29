@@ -8,8 +8,15 @@ export const CAPS = {
   maxMergedPrs: 1000,
   /** Page size for each merged-PR GraphQL request. */
   mergedPrsPageSize: 50,
-  /** Commits fetched (and kept) per merged PR. */
-  commitsPerPr: 20,
+  /**
+   * Commits fetched (and kept) per merged PR. Unit 1 (cold-fetch time
+   * budget): lowered from 20 -> 10 -- each fetched commit is a mycelial
+   * "fine hair", already capped for rendering (`renderHints.ts`/M3), so
+   * halving this halves each merged-PR page's GraphQL node count/latency
+   * with no visible loss (a repo with >10 commits on a PR already only
+   * rendered its first 20 hairs before; now it renders its first 10).
+   */
+  commitsPerPr: 10,
   /** Releases fetched; if 0, we fall back to tags. */
   maxReleases: 100,
   /** Open PRs fetched. */
@@ -30,4 +37,17 @@ export const CAPS = {
   directCommitsScanned: 50,
   /** Direct (non-PR) commits kept after scanning. */
   maxDirectCommits: 20,
+  /**
+   * Unit 1: a global wall-clock budget (from the start of the whole snapshot
+   * fetch) for the merged-PR and closed-PR pagination loops. Each loop
+   * checks elapsed time BEFORE requesting its next page; once the budget is
+   * exceeded, it stops (keeping whatever pages already succeeded) instead of
+   * continuing to chase `maxMergedPrs`/`maxClosedPrs`, and the snapshot is
+   * returned with an honest `truncated` note rather than blowing past
+   * Vercel's `maxDuration` (60s, see `vercel.json`). Chosen so cold fetches
+   * for large repos (measured 93-94s for facebook/react and vitejs/vite
+   * before this change) land well under both the 60s hard limit and a
+   * comfortable UX target (~25s).
+   */
+  fetchTimeBudgetMs: 22_000,
 } as const

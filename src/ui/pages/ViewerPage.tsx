@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
 import { formatOverflowNote, resolveNetworkElementDetail, type NetworkModel } from '../../domain/network'
+import { formatFetchTruncationNote } from '../../domain/fetchTruncation'
 import { mapErrorToViewState } from '../../domain/repoRequestState'
 import type { RepoSnapshot } from '../../domain/repo'
 import { validateRepoIdentity } from '../../domain/validateRepoIdentity'
@@ -272,7 +273,11 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
           <GrowthCaption clock={clock} reducedMotion={reducedMotion} />
         </>
       )}
-      <Legend overflowNote={formatOverflowNote(model.overflow.hyphaeOmitted)} pulse={!reducedMotion} />
+      <Legend
+        overflowNote={formatOverflowNote(model.overflow.hyphaeOmitted)}
+        fetchTruncationNote={formatFetchTruncationNote(snapshot.truncated)}
+        pulse={!reducedMotion}
+      />
       <TooltipLayer resolveDetail={(id) => resolveNetworkElementDetail(model, snapshot, id)} hoveredId={selection.hoveredId} />
       <DetailPanel
         detail={selectedDetail}

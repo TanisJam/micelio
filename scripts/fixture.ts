@@ -32,7 +32,11 @@ async function main(): Promise<void> {
     return
   }
   console.log(`Fetching ${owner}/${repo} from GitHub...`)
-  const snapshot = await fetchRepoSnapshotFromGitHub(owner, repo, token)
+  // Unit 1: a bundled fixture must be a complete, offline-reusable snapshot,
+  // never silently cut short by the live-request time budget that exists to
+  // protect a serverless request's own wall-clock limit -- so this disables
+  // it entirely rather than inheriting `CAPS.fetchTimeBudgetMs`.
+  const snapshot = await fetchRepoSnapshotFromGitHub(owner, repo, token, { fetchTimeBudgetMs: Number.POSITIVE_INFINITY })
 
   const fileName = `${owner.toLowerCase()}-${repo.toLowerCase()}.json`
   const outPath = path.resolve(import.meta.dirname, '../src/server/fixtures', fileName)

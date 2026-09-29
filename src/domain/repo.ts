@@ -120,6 +120,29 @@ export interface DirectCommit {
 
 export type RepoSnapshotSource = 'github' | 'fixture'
 
+/**
+ * Unit 1 (cold-fetch time budget): honest bookkeeping for a single
+ * cursor-paginated list that was cut short of its full history, either
+ * because the global fetch time budget (`CAPS.fetchTimeBudgetMs`) was
+ * reached, or because a later page failed after some pages already
+ * succeeded. `totalCount` is GitHub's own repo-wide count for the list
+ * (from the same GraphQL connection), `null` only if it was never
+ * successfully observed (e.g. the very first page failed). Ordering is
+ * always most-recent-first, so `fetched` is honestly "the N most recent",
+ * never a fabricated/reordered subset.
+ */
+export interface PaginationTruncation {
+  fetched: number
+  totalCount: number | null
+  reason: 'time_budget' | 'error'
+}
+
+/** Which of the snapshot's cursor-paginated lists were cut short, if any. Absent entries were not truncated. */
+export interface FetchTruncation {
+  mergedPullRequests?: PaginationTruncation
+  closedPullRequests?: PaginationTruncation
+}
+
 export interface RepoSnapshot {
   meta: RepoMeta
   languages: LanguageShare[]
@@ -134,6 +157,8 @@ export interface RepoSnapshot {
   /** ISO timestamp of when this snapshot was produced. */
   fetchedAt: string
   source: RepoSnapshotSource
+  /** Present only when the cold GitHub fetch stopped one or more paginations early (Unit 1). Never present for a fixture snapshot. */
+  truncated?: FetchTruncation
 }
 
 /** Simple identity for a repository, used to key requests and caches. */

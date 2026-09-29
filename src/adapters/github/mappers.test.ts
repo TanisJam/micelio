@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CAPS } from './caps.ts'
 import {
   computeFirstCommitTime,
   mapActor,
@@ -116,7 +117,8 @@ describe('mapMergedPullRequest', () => {
   })
 
   it('caps the commits list even if the raw payload has more than the cap', () => {
-    const manyCommits = Array.from({ length: 25 }, (_, i) => ({
+    const rawCount = CAPS.commitsPerPr + 5
+    const manyCommits = Array.from({ length: rawCount }, (_, i) => ({
       commit: {
         oid: `oid-${i}`,
         messageHeadline: `commit ${i}`,
@@ -125,10 +127,10 @@ describe('mapMergedPullRequest', () => {
         author: null,
       },
     }))
-    const raw = buildRawMergedPr({ commits: { totalCount: 25, nodes: manyCommits } })
+    const raw = buildRawMergedPr({ commits: { totalCount: rawCount, nodes: manyCommits } })
     const mapped = mapMergedPullRequest(raw)
-    expect(mapped.commits).toHaveLength(20)
-    expect(mapped.commitCount).toBe(25)
+    expect(mapped.commits).toHaveLength(CAPS.commitsPerPr)
+    expect(mapped.commitCount).toBe(rawCount)
   })
 
   it('carries branch topology (base/head ref) and derives firstCommitTime', () => {

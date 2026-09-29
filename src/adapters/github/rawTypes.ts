@@ -124,7 +124,8 @@ export interface RawPageInfo {
   endCursor: string | null
 }
 
-export interface RawRepositoryOverview {
+/** Unit 1: the cheap single-page "meta" shape (`REPO_META_QUERY`) -- no `mergedPRs` connection of its own, see `queries.ts`. */
+export interface RawRepositoryMeta {
   name: string
   description: string | null
   url: string
@@ -142,21 +143,27 @@ export interface RawRepositoryOverview {
   tags: { nodes: RawTagRef[] }
   branches: { nodes: RawBranchRef[] }
   openPRs: { nodes: RawOpenPullRequest[] }
-  mergedPRs: { pageInfo: RawPageInfo; nodes: RawMergedPullRequest[] }
 }
 
-export interface RepoOverviewResponse {
-  repository: RawRepositoryOverview | null
+export interface RepoMetaResponse {
+  repository: RawRepositoryMeta | null
+}
+
+/** A paginated connection that also reports its repo-wide `totalCount`, used to report honest "N of totalCount" truncation notes (Unit 1). */
+export interface RawCountedPage<T> {
+  totalCount: number
+  pageInfo: RawPageInfo
+  nodes: T[]
 }
 
 export interface MergedPrsPageResponse {
   repository: {
-    pullRequests: { pageInfo: RawPageInfo; nodes: RawMergedPullRequest[] }
+    pullRequests: RawCountedPage<RawMergedPullRequest>
   } | null
 }
 
 export interface ClosedPrsPageResponse {
   repository: {
-    pullRequests: { pageInfo: RawPageInfo; nodes: RawClosedPullRequest[] }
+    pullRequests: RawCountedPage<RawClosedPullRequest>
   } | null
 }
