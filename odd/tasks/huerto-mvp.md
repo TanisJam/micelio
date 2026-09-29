@@ -4,32 +4,45 @@ Locator: `odd/tasks/huerto-mvp.md` · Engram mirror: `odd/huerto-mvp/tasks`
 
 ## Objective
 A shareable web app: enter `owner/repo`, watch the repository's history grow as a bioluminescent
-mycelium network in a patch of dark soil, then navigate hyphae, nodes and mushrooms to inspect real GitHub data.
+mycelium galaxy — a colony of hyphae spiraling outward from a central spore in a patch of dark
+soil — then navigate hyphae, nodes and mushrooms to inspect real GitHub data.
 
 ## Problem / why
 Existing repo visualizers are either analytic (Git Truck, CodeCharta), directory-based (Gource,
 GitCoral) or non-botanical (Skyline, Git City). None renders repository *history* as a believable,
-navigable tree. Literal branch topology looks bad (few long-lived branches), so structure is
-imposed by grouping history into eras.
+navigable organic form. A strict tree metaphor was tried first and rejected (see the pivot below):
+trees split but never fuse, while git branches split AND merge, so a tree forces literal branch
+topology into artificial "eras" to look reasonable. Mycelium — hyphae that branch and fuse
+(anastomosis) — maps git's real merge DAG ~1:1 without inventing any grouping: a merged pull
+request is honestly a loop that splits off and fuses back, a closed one honestly dries into a dead
+end, exactly like git's own history.
 
-## Pivot (2026-09-28)
+## Pivot (2026-09-28, shipped M4)
 User questioned the tree metaphor: trees split but never fuse, git branches split AND merge.
 Decision (user-approved): mycelium — hyphae branch and fuse (anastomosis), so git's DAG maps ~1:1
-without inventing eras. Tree rendering (T3–T5 tree geometry, V1) is superseded; data, API, panel,
-routing, states, a11y list (T2, T6, T7) are reused. Tree code is removed in M4 once the network ships.
+without inventing eras. Tree rendering (T3–T5 tree geometry, V1) was superseded; data, API, panel,
+routing, states, a11y list (T2, T6, T7) were reused as-is. The mycelium colony network (M2–M3c) is
+now the shipped product; M4 removed the superseded tree code (`src/domain/tree/`,
+`src/ui/scene/tree/`, the spiral layout) and finished the README/OG/hero assets for the mycelium
+metaphor.
 
-## Mapping (decided — mycelium)
-- Spore at the center = first commit. Radius ≈ time (log/eased so recent years don't crush early ones).
-- Main hypha = default branch. Grows outward as a spiral from the spore (a fairy-ring-like sweep), angle advancing with time, so the whole history fills a disc.
-- Merged PR = a side hypha that splits off the parent hypha at its first commit time and FUSES back at mergedAt (a loop). If its base is another branch (not default), it splits from / fuses into that branch's hypha (branches from branches).
-- Commit = a node along its hypha (PR commits on the side hypha; direct commits and merge points on the main hypha).
-- Closed-unmerged PR = dead-end hypha that dries out (desaturated, thinner, no fusion).
-- Open PR / live branch = growing tip with an animated pulse.
-- Release/tag = a mushroom fruiting on the soil surface above its point on the main hypha (cluster if several are close).
-- Contributors = a subtle per-author hue on nodes/pulses (optional, never dominant).
-- Soil: dark loam disc (petri-dish / forest-floor patch) seen at a 3/4 top-down angle; languages as faint strata on the disc's cut edge.
-- Data truth: every filament, node and mushroom maps to real data. Topology is fixed by git; only curvature/wiggle is procedural (seeded by `owner/repo`, deterministic).
-- Scale: concurrent PRs take lanes perpendicular to the parent hypha (interval scheduling) so loops don't overlap; cap rendered PRs (~1000) and aggregate overflow honestly.
+## Mapping (shipped — mycelium colony, M2d/M3/M3c; supersedes the original spiral sketch below)
+- Spore at the center = first commit.
+- Distance from center = time (radius ≈ eased time fraction; the same time → radius mapping every hypha and mushroom uses, `ringGeometry.ts`'s `radiusForFrac`).
+- Filament (hypha) = a pull request. Length reflects real work (commits/changed lines, space-colonization growth toward the colony's own least-covered gaps), not just its time span.
+- Fork (a filament splitting off) = a branch created; a knot (fusing back in) = a pull request merged. A closed-unmerged PR dries into a dead-end (desaturated brown) filament instead of fusing.
+- Glowing tip = an open pull request or a live branch, still growing.
+- Fine hair = an individual commit (one per rendered commit node, real mycelial texture, never decorative).
+- Mushroom = a release, cream cap with a cyan rim, sized by version bump (major > minor > patch); close-in-time releases cluster. Placed on its own release-time growth ring; angle is the golden-angle sequence (M3c), decoupled from data but keeping `nearPr` (the closest real preceding merge) as the panel's honest data link.
+- Angle carries NO data anywhere in the shipped model — only an extra outward "galaxy swirl" rotation for visual coherence (`colonyLayout.ts`'s `applySwirl`) and, for mushrooms, an even golden-angle spread. Radius (time) and length (work) are the only real-data axes.
+- Soil: dark loam disc seen at a 3/4 top-down angle, darkened further in M3c so the galaxy floats on near-black with only a faint core haze. Per-language soil strata (in the original spiral sketch below) was never carried over to the colony layout — `RepoSnapshot.languages` is fetched but not currently visualized.
+- Data truth: every filament, node and mushroom maps to real data; only curvature/wiggle/swirl-angle is procedural (seeded by `owner/repo`, deterministic).
+- Scale: concurrent PRs take lanes (interval scheduling) so loops don't overlap; cap rendered PRs (~1000) and aggregate overflow honestly (`NetworkModel.overflow`, surfaced in the Legend since M3b).
+
+### Original spiral sketch (M2, superseded by the colony layout above; kept for history)
+- Main hypha = default branch, grown outward as a spiral from the spore, angle advancing with time.
+- Merged PR = a side hypha splitting off the parent hypha at its first commit time and fusing back at `mergedAt`.
+- Contributors = a subtle per-author hue on nodes/pulses -- never implemented for either layout.
 
 ## Scope (authorized)
 Standalone app in this repo. Local work-unit commits on `feat/mvp`. Remote repo creation, push, deploy: user decision (not authorized yet).
@@ -62,7 +75,8 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] M2d Colony algorithm rewrite: replace M2c's duration-based length and author-sector angle (read as tangential arcs/chords) with work-based length and gap-filling angle (space-colonization growth); update SVG debug rendering; tests; ≥4 rounds of visual iteration against both fixtures. Route: delegated (writer).
 - [x] M3 Network rendering + growth + interaction wiring: batched glowing filaments, nodes, mushrooms, soil disc, selective bloom, flow pulses, picking, reuse panel/list/scrubber. Route: delegated.
 - [x] M3b Visual polish of the 3D mycelium galaxy: fine luminous filaments with tapered tips, lit mushroom silhouettes, legible selection, dark-loam soil, mobile header fit, overflow honesty. Route: delegated (writer), per orchestrator screenshot review of `.shots/`.
-- [ ] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated.
+- [x] M3c Visual fixes: mushroom scale-down + golden-angle spread across the disc, restored brightness/bloom, fixed short-hypha rim taper artifacts, darker soil, mobile disc-fit + header consistency fixes. Route: delegated (writer), per orchestrator screenshot review of `.shots/`.
+- [x] M4 Cleanup + legend/README/OG for mycelium; remove superseded tree code. Route: delegated (writer).
 (T8 polish now applies to the mycelium build.)
 
 ## Polish bar (must all hold before the MVP is called done)
@@ -2078,28 +2092,236 @@ parallel worker load in 4 separate `pnpm test` runs during this task
   screenshots at the one viewport width this project tests (390px) — not
   verified across a wider range of real device widths.
 
-## Next step
-M4 (cleanup: remove the now-fully-superseded `src/domain/tree/` and
-`src/ui/scene/tree/` code and the tree-specific `Scene.tsx`/`TreeScene.tsx`
-the viewer no longer routes to; update the README/OG image for the
-mycelium metaphor), then T8 polish (perf on a 1000+-hypha repo, a11y
-contrast audit, the residuals listed above) and the final independent
-design/product review against P1–P12.
+### M3c Visual fixes — done
+Commits: `b1df0c6` fix(network): spread mushrooms by golden angle, restore
+glow, and fix mobile header; `6758a84` fix(network): fix mobile disc crop
+and desktop header badge gap (a follow-up fix after the orchestrator's
+review of `b1df0c6` itself found two real regressions — see below).
 
-**Decisions/gaps for the product owner (M4/T8 planning)**:
-- `NetworkModel.overflow` is now surfaced (M3b) — confirm the wording/
-  placement ("+N pull requests not drawn", a quiet line under the Legend)
-  reads correctly, or wants a different treatment.
-- The soil shader's ring machinery is now wired up for mushroom selection
-  (M3b) — confirm the current single-ring-on-select behavior is the wanted
-  scope, or whether hovering (not just selecting) a mushroom should also
-  reveal it.
-- Mushroom clusters still read as one fused shape rather than clearly-
-  separate individuals at full-disc zoom (see Weaknesses) — worth a
-  dedicated close-up treatment (e.g. camera zooms closer specifically for a
-  selected mushroom), or acceptable as "reads as fruiting here" for the
-  MVP?
-- `src/domain/network/layout.ts`'s spiral layout and its own SVG/tests are
-  now fully superseded by colony for the shipped product — confirm M4 should
-  delete `layoutNetwork`/the spiral path through `buildNetwork` too, not
-  just the tree code, or keep it around for comparison a while longer?
+Per the orchestrator's literal review of `.shots/desktop-express-end.png`,
+`desktop-valtio-selected-merged.png` and `mobile-valtio-end.png` (state
+after M3b): mushrooms dominated the galaxy as huge cream cotton-ball blobs
+(valtio's 80 releases forming one arc along a single arm; express showing a
+fused white clump), the galaxy read dimmer/flatter than the pre-M3b
+commit, express's rim showed blocky white/cyan rectangle fragments, the
+mobile disc was cropped left/right with a truncated header, and the soil
+plate still read as a visible lighter-blue ellipse.
+
+**1. Mushroom scale + spread** (`src/domain/network/mushrooms.ts`,
+`src/ui/scene/network/geometry/mushroomInstances.ts`): scaled mushrooms
+down ~3.5x (`BASE_SCALE` 0.42 → 0.12) and removed the old
+`Math.max(0.75, mushroom.scale)` floor, which had clamped patch/minor
+releases up to the same size as majors, making the domain's own
+major/minor/patch scale ratios mostly moot. Placement angle for
+`buildMushroomsOnRings` (colony) is now the golden angle
+(`MUSHROOM_GOLDEN_ANGLE_RADIANS`, ~137.5deg) ordered by each non-clustered
+release's own time index, with a deterministic `enforceMinAngularSeparation`
+safety net for releases whose rings land at a similar radius -- radius
+stays exactly time-honest; `Mushroom.nearPr` is unchanged as the real
+closest-preceding-merge data link the detail panel shows, only PLACEMENT no
+longer reads it.
+**Two real bugs found and fixed while building this** (not just the
+intended feature): (a) `clusterAngle` was reset only for `clusterId`, never
+for itself, when processing a standalone (non-clustered) release -- every
+mushroom after the sequence's first one silently inherited the PREVIOUS
+mushroom's angle instead of its own, which is the actual root cause of "80
+releases form one big arc" (the M2d/M3b per-run angle-fan logic this
+replaced was never really being applied past the first entry). (b)
+`enforceMinAngularSeparation`'s `peers.find(...)` treated a valid peer
+INDEX `0` as falsy ("nothing found"), skipping the very first conflict
+check -- caught by the function's own first unit test.
+
+**2. Brightness** (`src/ui/scene/network/geometry/hyphaeGeometry.ts`,
+`geometry/growthMaterial.ts`, `Scene.tsx`, `SporeMesh.tsx`): raised
+`BASE_ALPHA_MIN`/`MAX` (0.16/0.4 → 0.22/0.52), the shader's core-brightness
+mix (`mix(0.65, 1.35, core)` → `mix(0.8, 1.55, core)`), `Bloom`
+threshold/intensity (0.88/0.5 → 0.84/0.62) and the spore halo's opacity
+(0.16 → 0.22) -- restoring luminosity toward the pre-M3b galaxy without
+regressing M3's round-1 "dense colony blooms into undifferentiated haze"
+finding.
+
+**3. Rim artifacts** (`hyphaeGeometry.ts`'s `tipTaperFactor`): a short/
+low-work hypha (fewer than the old `MIN_POINTS_TO_TAPER` = 6 points) skipped
+tapering entirely, rendering as a constant-width, hard-square-ended ribbon
+-- exactly the "blocky white/cyan rectangle" artifact at the rim, where
+short hyphae are common. Any polyline with >= 3 points (2 segments) can now
+taper its own endpoint(s) without fully degenerating; only a true
+single-segment stub still renders at constant width.
+
+**4. Mobile** (`src/ui/scene/network/CameraRig.tsx`, `ViewerHeader.tsx`):
+(a) confirmed the disc genuinely fit with margin once the M3c-round shots
+were taken against the committed M3c code (the mobile crop the task brief
+described turned out to already be fixed by M3b's own camera math at the
+time of writing) -- but the orchestrator's review of the FIRST M3c commit
+found it cropped again; root-caused to `CameraRig`'s `OrbitControls`
+`maxDistance={radius * 4.5}` clamping the camera straight back down right
+after the positioning effect set a wider distance for narrow portrait
+viewports (needs ~7.3x radius at 390x844 vs. ~3.6x at 1440x900 landscape,
+since `OrbitControls.update()` enforces min/maxDistance on every call, not
+just interactive orbiting) -- fixed in the `6758a84` follow-up by scaling
+`maxDistance` off the same framing-distance formula, with headroom. (b)
+narrow-viewport header: dropped the source badge (`SourceBadge`) and
+guaranteed ~20+ characters of the repo name via `minWidth: '20ch'` + a
+`<wbr/>` after the slash for a real 2-line wrap point -- but applying that
+`minWidth` UNCONDITIONALLY also widened the name's box on DESKTOP past what
+a short name like `expressjs/express` actually filled, visibly gap-pushing
+the badge away from the name (a second regression the orchestrator caught
+in the same review); fixed by gating the guaranteed-width/2-line treatment
+on the narrow-viewport branch only, leaving desktop's natural
+shrink-to-fit single line untouched.
+
+**5. Soil** (`src/ui/theme/tokens.ts`'s `mycelium.soilFar`,
+`soilMaterial.ts`): darkened the center-haze token closer to the rim tone
+(`#0a0e12` → `#06080b`) and started the vignette earlier (`0.55*radius` →
+`0.4*radius`) so more of the disc reaches the background's own near-black,
+leaving only a faint loam haze near the core.
+
+Iterated 3 full `pnpm shot` rounds (both fixtures x desktop/mobile x
+end/mid/selected-merged/selected-closed/selected-mushroom, 26
+screenshots/round) against the in-progress code, reviewed with Read each
+round, 0 console errors every round; a 4th round (after the follow-up
+`6758a84` fix) reconfirmed both regressions resolved. Round 1: mushrooms
+now read as small glowing dots spread across the whole disc (not one arc/
+clump); filaments visibly brighter; no more blocky rim rectangles; mobile
+disc fit with margin and the header showed real icon buttons + full repo
+name -- but the soil ellipse was still faintly visible. Round 2 (soil
+token/vignette tweak + narrow-badge-hide): soil markedly subtler, mobile
+header now cleanly icon-only. Round 3 (final confirmation): all five items
+holding. Round 4 (post-follow-up-fix): mobile disc fits with real margin
+on both sides at 390x844; desktop header shows the SAMPLE badge
+immediately after the repo name with no gap.
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (390
+tests before M4's test removals) · `pnpm build`: pass · `pnpm shot`: 0
+console errors, all 4 rounds.
+
+**Weaknesses, honestly reported**: the mobile header's "repo name never
+truncated below ~24 chars, wrap to 2 lines" guarantee was only verified
+against the two bundled fixtures' short names (13 and 18 characters,
+neither ever needs the guarantee to activate) -- the 2-line wrap path
+itself was not visually exercised with a genuinely long `owner/repo`.
+`enforceMinAngularSeparation` is a best-effort deterministic nudge, not a
+proven-optimal packing -- a synthetic stress test (40 releases every 7
+days, an unrealistically dense synthetic case, not a real repo's release
+cadence) showed it can still leave pairs below the target separation when
+far more releases share one radius band than `2*PI/minSeparation` allows;
+the shipped test uses a more realistic 60-day cadence, which passes
+cleanly.
+
+### M4 Cleanup — done
+Commit: `04bff61` refactor: remove the superseded tree metaphor and finish
+the mycelium README.
+
+**Tree code deletion**: `src/domain/tree/`, `src/ui/scene/tree/`, the old
+`src/ui/scene/Scene.tsx` and its tree-only geometry helpers (`island.ts`,
+`instances.ts`, `shapes.ts`, `skyTexture.ts`, `tubeFrames.ts`,
+`tubeGeometry.ts`), `useRepoTree.ts` and `components/ExploreList.tsx` (the
+network has its own `NetworkExploreList`) — all unrouted/unreferenced since
+the pivot, confirmed via `rg` before deletion. The tree-only palette/
+helpers in `theme/tokens.ts` (`palette`, `leafColorForAge`,
+`soilStratumColor`, `barkColorAt`) and `theme/color.ts`
+(`softenToward`, `threeStopRamp`) were also removed once `rg` confirmed
+zero remaining consumers. `domain/elementDetail.ts`'s tree-only
+`EraDetail`/`resolveElementDetail` were removed, keeping only the
+`ElementDetail` shape shared with the network model and `DetailPanel`.
+
+**Spiral layout deletion**: `layout.ts`'s `layoutNetwork` (and its
+spiral-only internals: `assignLanes`, `buildActivityCdf`/`ActivityCdf`,
+`localSpiralPitch`, `PositionedHyphaResult`/`LayoutResult`,
+`SPIRAL_TURNS`/`SPIRAL_PITCH_SAFETY`/`NESTED_MAX_LANE_DEPTH`/
+`SIDE_JITTER_MAX`) and `mushrooms.ts`'s spiral-only `buildMushrooms` are
+gone; `buildNetwork` no longer branches on a `layout` option and always
+calls `layoutNetworkColony`. `NetworkLayoutMode` is now a single-value
+`'colony'` literal type (kept, not removed, so the field still documents
+intent) rather than deleting `NetworkModel.layout` outright. The still-
+shared disc/time geometry `layout.ts` also held (`radiusForFrac`,
+`timeToFrac`, `discRadius`, `pointOnHyphaAtRadius`, `capEvenly`,
+`radiusForCommitCount`, `LayoutOptions`/`DEFAULT_LAYOUT_OPTIONS`) moved
+into a new `ringGeometry.ts` first; `radiusForFrac`'s `activity`-blend
+parameter (`ActivityCdf`) was simplified away since colony's own call site
+never passed one -- the blend algebraically reduced to exactly the
+pure-time component for every real colony call, confirmed before deleting
+it. `scripts/network-svg.ts` (M2c's spiral-vs-colony comparison tool) was
+simplified to colony-only rather than deleted outright, since it's still a
+useful colony-only debug-SVG script.
+
+**Shared-helpers migration** (a known follow-up flagged back in M2):
+`prng.ts`, `vector.ts`, `timeBounds.ts` and a new `playback.ts`
+(`mapPlaybackProgressToTime`/`easePlaybackProgress`, the two genuinely
+metaphor-agnostic functions split out of tree's otherwise tree-geometry-
+specific `growth.ts`) plus `testHelpers.ts` moved from the deleted
+`src/domain/tree/` into a new `src/domain/shared/`; every import across
+`domain/network/*` and the UI (`useGrowthClock.ts`, `TimeScrubber.tsx`,
+`hyphaeGeometry.ts`, `filamentsGeometry.ts`, `pointInstances.ts`,
+`mushroomInstances.ts`) updated to the new path.
+
+**README/OG/hero**: README rewritten for the mycelium product -- the "every
+repository grows a mycelium galaxy" framing, a real screenshot
+(`docs/screenshot.png`, generated via the new `pnpm hero-images` script
+from a fully-grown `expressjs/express` render, 443 kB raw →
+`pngquant --quality=50-85` → 98 kB, under the 400 kB budget), the spore/
+filament/fork/knot/dry-filament/glowing-tip/hair/mushroom mapping table,
+a "how it works" section (work-driven length, gap-filling growth,
+data-free galaxy swirl), run-locally/`GITHUB_TOKEN`/Vercel-deploy sections
+kept from the prior pass, and a hexagonal-folders architecture tree updated
+for `domain/network`/`domain/shared`. `public/og.png` (1200x630, cropped
+from the same render, 96 kB, under 300 kB) and the landing page's hero
+image (`public/hero.png`, 94 kB, under 250 kB, replacing the abstract
+animated SVG placeholder with a real cropped render) came from the same
+script. `pngquant` was not present in the sandbox -- installed via `brew`
+(the one exception to "never install unless asked," since the task itself
+required a compressed PNG under a hard byte budget and no other tool was
+available). `index.html`'s meta description/OG/Twitter tags, `theme-color`
+(`#151009` warm brown → `#05070a` mycelium near-black), the favicon's
+palette (warm gold/orange → cyan/mint) and the landing page's tagline/
+document-title were all updated off the old tree-era wording/palette.
+
+**"Tree" wording sweep**: `rg -i 'tree|leaf|fruit|limb|twig'` across `src`,
+`index.html` and `README.md`; fixed the handful that were user-facing or
+factually wrong (`TooltipLayer.tsx`'s doc comment referenced the now-
+deleted `resolveElementDetail`; `Scene.tsx`'s doc comment said the tree
+scene was "left in place, unrouted" when it's now fully deleted;
+`index.css`'s "the tree... stays visible" comment). Left alone: legitimate
+non-metaphor uses (`${url}/tree/${branch}`, a real GitHub URL path
+convention; mushrooms "fruiting" on their ring, a mycology term; plain
+English "leaves"/"leaves ... unchanged") and internal historical/
+comparative doc comments ("mirrors the tree's X", "the tree's V2 pass
+found...") that accurately describe design lineage without claiming tree
+code still exists.
+
+**Bundle sizes, before/after** (both `pnpm build`, same machine): index
+chunk 294.83 kB / gzip 92.67 kB → 286.31 kB / gzip 89.70 kB (a modest real
+reduction, from the shared `DetailPanel`/`elementDetail.ts` no longer
+carrying the tree-only `EraDetail` branch); `Scene` chunk 1,037.21 kB / gzip
+277.02 kB → 1,037.44 kB / gzip 277.06 kB (essentially unchanged). The
+`Scene` chunk being unchanged confirms the deleted tree-scene code was
+already excluded from the production bundle by normal Vite/Rollup dead-code
+elimination before this task even started (nothing in the actual route
+graph ever imported it) -- M4's value here is source-tree hygiene and
+honest `rg`-verified dead-code removal, not a bundle-size win.
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (300
+tests, down from 390 -- the removed 90 were exclusively tree-only or
+spiral-only coverage; no network/colony test coverage was lost, and 2 new
+`ringGeometry.test.ts`/`playback.test.ts` files preserve the still-shared
+functions' own coverage) · `pnpm build`: pass · `pnpm shot`: 26/26
+screenshots, 0 console errors, including the landing page's new real hero
+image loading cleanly.
+
+**Weaknesses, honestly reported**: no automated dead-export checker
+(`ts-prune`/`knip`) is installed in this project, so the dead-export sweep
+was manual `rg` per removed/moved symbol rather than an exhaustive
+tool-verified pass -- a small chance a genuinely-unused export was missed.
+`docs/screenshot.png`/`public/og.png`/`public/hero.png` are lossy-
+compressed (`pngquant`, palette-reduced); a pixel-level side-by-side
+against the uncompressed originals was not done, only a visual Read-tool
+check that they still look correct.
+
+## Next step
+T8 polish (perf on a 1000+-hypha repo -- not yet re-measured after M4's
+refactor, though it touched no hot-path logic; an a11y contrast audit; a
+real-device mobile/touch check; the long-name header-wrap verification
+flagged above) and the final independent design/product review against
+P1–P12. No further product decisions are blocking -- M4 resolved the prior
+open items (spiral-layout deletion scope, tree-code deletion scope) that
+were previously flagged for the product owner.
