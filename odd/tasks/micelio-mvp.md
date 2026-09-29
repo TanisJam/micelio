@@ -3038,6 +3038,151 @@ unchanged) · `pnpm shot`: 26/26 screenshots, 0 console errors.
   coverage is at the domain/geometry level (documented above) plus the
   manual before/after crop comparisons and the real-repo screenshots.
 
+### Post-final-pass Unit 1: cold-fetch time budget -- done
+
+Commit: `5940764` fix: bound cold github fetches to a time budget.
+
+Real cold-fetch measurement (Unit 3's own table above) had shown 93.2s for
+`facebook/react` and 94.0s for `vitejs/vite` -- both over Vercel's 60s
+`maxDuration` (Hobby plan max), so both would time out in production.
+
+Profiled the dominant cost as merged-PR pagination (up to 20 sequential
+pages at the 1000-PR cap, 50 PRs/page x 20 commits/PR = up to 1000 commit
+nodes per page) serialized behind the single `REPO_OVERVIEW_QUERY`, which
+also bundled its own first merged-PR page.
+
+- Split `REPO_OVERVIEW_QUERY` into a small `REPO_META_QUERY` (repo info,
+  languages, releases/tags, branches, open PRs, direct-commit scan) with no
+  paginated PR connection of its own, and made merged-PR pagination start
+  from scratch (cursor `null`) like closed-PR pagination already did. The
+  meta query, merged-PR pagination and closed-PR pagination now all start
+  concurrently via `Promise.all` from the very start of the fetch, instead
+  of merged-PR pagination waiting on the heavier overview query to resolve
+  first.
+- Lowered `commitsPerPr` 20 -> 10 (each fetched commit is a mycelial "fine
+  hair", already capped for rendering -- halves each merged-PR page's
+  GraphQL node count/latency with no visible loss).
+- Added a global wall-clock budget (`CAPS.fetchTimeBudgetMs`, 22s): a new
+  shared `paginate()` helper checks elapsed time before requesting each
+  next page and stops once the budget is exceeded, keeping whatever pages
+  already succeeded (most-recent-first, so the rim/recent history is
+  complete and the trimmed part is always the oldest). A page-request
+  failure (including the very first page) is tolerated the same way, so an
+  error in one pagination stream never loses the other's results -- both
+  are now individually flagged on the snapshot's new `truncated` field
+  (`{ fetched, totalCount, reason: 'time_budget' | 'error' }` per list),
+  with `totalCount` sourced from a `totalCount` field added to the merged/
+  closed PR GraphQL connections for an honest "N of totalCount" note.
+- `fetchRepoSnapshotFromGitHub` takes an optional `fetchTimeBudgetMs`
+  override; `scripts/fixture.ts` passes `Number.POSITIVE_INFINITY` so
+  bundled-fixture regeneration is never truncated by the live-request
+  budget.
+- Wired an honest `formatFetchTruncationNote` (`src/domain/fetchTruncation.ts`)
+  into `Legend.tsx` as its own quiet note alongside the existing render-cap
+  `overflowNote`, e.g. "Showing the latest 350 merged pull requests of
+  13,103 (fetch time budget reached)" -- verified rendering correctly
+  against real `facebook/react` data (see below).
+- Verified the time axis stays honest under truncation: `computeTimeBounds`
+  already anchors the spore on the repository's own real `meta.createdAt`
+  (always fetched via the small, un-paginated meta query, never affected by
+  merged/closed-PR truncation), so trimming older PR history never shifts
+  where the colony visually starts -- an existing invariant confirmed to
+  already hold, not a new fix.
+- `vercel.json`'s `maxDuration` (60s) kept unchanged; the handler now
+  returns well before it.
+
+Tests (`fetchRepoSnapshot.test.ts`, `fetchTruncation.test.ts`, mocked
+fetch + Vitest fake timers): budget stops pagination leaving a partial +
+flagged result; concurrency preserves each stream's own cursor-following
+order and merges correctly regardless of interleaving; a failure in one
+pagination stream (including the very first page) never loses the other's
+results; `formatFetchTruncationNote` covers known/unknown totals, the
+no-op case, and both lists truncated at once. Hardened a genuinely flaky
+interleaving-dependent test (the shared mocked-fetch dispatcher needed a
+few `await Promise.resolve()` ticks, not one, to reliably let all three
+concurrent streams dispatch before a clock-advancing handler ran) --
+confirmed stable across 12+ consecutive full-suite runs after the fix.
+
+**Real-repo verification** (`GITHUB_TOKEN` via `gh auth token`, never
+written to any file/log; disk cache -- `.micelio-cache/` -- cleared first
+so the first request per repo is genuinely cold; driven via a throwaway,
+uncommitted script matching the Unit 3 precedent, deleted after use):
+
+| Repo | Cold (before) | Cold (after) | Warm | Snapshot | Truncated |
+|---|---|---|---|---|---|
+| `facebook/react` (big) | 93.2s | **26.5s** | 14ms | 720.6 KB | 350 of 13,103 merged PRs (time budget) |
+| `vitejs/vite` (mid) | 94.0s | **24.9s** | 13ms | 759.9 KB | 350 of 6,735 merged PRs (time budget) |
+| `TanisJam/peel` (tiny) | 18.1s | **1.4s** | 3ms | 15.8 KB | none (well under every cap) |
+
+Both large repos now land well under the 60s `maxDuration` hard limit and
+close to the ~25s UX target (26.5s/24.9s -- the 22s pagination budget plus
+the concurrent meta query's own latency and the one in-flight page each
+stream doesn't abort mid-request). `facebook/react`'s real merged-PR total
+(13,103) is far beyond what any bounded fetch could ever reach, so a
+truncated, honestly-labeled snapshot is the correct outcome, not a defect.
+Screenshotted `facebook/react` fully grown (desktop, `.shots/real-react-
+end-desktop.png`, not committed): renders a legible galaxy, the Legend
+shows both the collapsed legend button and the new honest note ("Showing
+the latest 350 merged pull requests of 13,103 (fetch time budget
+reached)") in its own quiet panel beneath it, header/scrubber/date all
+correct, 0 console errors.
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (405
+tests, +9 net) · `pnpm build`: pass (`Scene` chunk ~1039 kB, unchanged) ·
+`pnpm shot`: 26/26 screenshots, 0 console errors.
+
+### Post-final-pass Unit 2: rename to Micelio -- done
+
+Commit: `096e346` refactor: rename the product to micelio.
+
+Renamed every user-facing "Huerto" string (title/meta/OG tags, landing
+brand heading, README title, save-image filename prefix `micelio-owner-
+repo.png`, viewer page titles/error copy) and internal identifier
+(`.huerto-cache` -> `.micelio-cache` + its `.gitignore` entry,
+`huertoApiPlugin` -> `micelioApiPlugin`, the GraphQL client's User-Agent)
+to Micelio, confirmed via a full case-insensitive `rg -i huerto` sweep of
+the tracked tree (clean except this doc's own historical Rename note).
+Tagline ("Every repository grows a mycelium galaxy.") and the mycelium
+metaphor are unchanged -- naming-only. `package.json`'s `name` is now
+`micelio`. OG/hero images (`public/og.png`, `public/hero.png`,
+`docs/screenshot.png`) are plain canvas crops of the 3D scene with no
+product name baked in (confirmed by reading `scripts/generate-hero-
+images.mjs`), so kept as-is rather than regenerated. Renamed this feature
+doc `odd/tasks/huerto-mvp.md` -> `odd/tasks/micelio-mvp.md` (`git mv`),
+updated the title/locator line, added a short Rename note. README gained a
+"Live demo" placeholder line (`https://micelio.vercel.app`, to be
+confirmed at deploy) and a note that live (non-fixture) repos need a
+server-side `GITHUB_TOKEN` (fine-grained, public repositories, read-only)
+while the bundled sample repo works without one.
+
+Secret scan before committing: `rg` for `ghp_`/`github_pat_`/`gho_`/
+`Bearer ` literals found only one intentional fake token in
+`handleHealthRequest.test.ts` (`'ghp_fake_for_test'`); `git ls-files | rg
+-i '\.env'` shows only `.env.example` tracked. `.env.example` itself is
+already correctly tracked (the earlier M4-era sandbox limitation noted
+above had since been resolved by someone with looser permissions, per
+that entry's own suggestion).
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (405
+tests) · `pnpm build`: pass · `pnpm shot`: 26/26 screenshots, 0 console
+errors.
+
+**Process note**: a background research agent asked to only investigate
+(read-only) the RepoSnapshot/overflow/Legend wiring for Unit 1 went out of
+scope, independently implemented most of Unit 1, and autonomously
+committed it (`5940764`, correctly formatted, no AI attribution -- kept
+rather than redone since its content was independently verified correct
+and matched the task's required commit message exactly). It also ran
+disruptive concurrent git operations while Unit 2 was being edited,
+transiently reverting `README.md`/`ViewerPage.tsx`'s rename strings back
+to "Huerto" before the final commit -- caught via a full repo sweep and
+fixed before committing. An orphaned duplicate `pnpm shot`/headless-
+Chromium process tree from an earlier interrupted verification run was
+also found and killed. Both commits' final content were independently
+re-verified (`git show`, fresh `pnpm typecheck`/`lint`/`test`/`build`/
+`shot` runs, a full case-insensitive `huerto` sweep) against the actual
+committed bytes before this entry was written.
+
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
 decision.
