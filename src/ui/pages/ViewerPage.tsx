@@ -215,11 +215,27 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
       toast.show('The scene is still loading')
       return
     }
-    const link = document.createElement('a')
-    link.download = `huerto-${snapshot.meta.owner}-${snapshot.meta.name}.png`
-    link.href = canvas.toDataURL('image/png')
-    link.click()
-    toast.show('Image saved')
+    // D4/T8: a `data:` URL anchor `download` doesn't reliably trigger a real
+    // browser download event (verified via Playwright's `download` event --
+    // headless Chromium in particular can navigate/open it instead of
+    // downloading), and base64-encodes the whole image inline. `toBlob` +
+    // `URL.createObjectURL` is the standard, reliable pattern for
+    // programmatic canvas downloads; the object URL is revoked right after
+    // the click since the browser has already taken ownership of the data
+    // for the download by then.
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        toast.show('Could not save the image')
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.download = `huerto-${snapshot.meta.owner}-${snapshot.meta.name}.png`
+      link.href = url
+      link.click()
+      URL.revokeObjectURL(url)
+      toast.show('Image saved')
+    }, 'image/png')
   }, [snapshot, toast])
 
   return (

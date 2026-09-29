@@ -20,9 +20,13 @@ body {
     sans-serif;
 }
 
-/* Visible focus rings everywhere (P11), using the same accent as the rest of the UI (`ui.focusRing`). */
+/* Visible focus rings everywhere (P11), using the same accent as the rest of
+   the UI (`ui.focusRing`/`mycelium.hyphaActiveTip`, `#6ee7ff`). D3/T8 fix:
+   this was hardcoded to a leftover warm amber (`#ffd9a0`) from the tree
+   metaphor's palette, never updated when the UI moved to the mycelium
+   near-black/cyan tokens (M4). Keep in sync with `src/ui/theme/tokens.ts`. */
 :focus-visible {
-  outline: 2px solid #ffd9a0;
+  outline: 2px solid #6ee7ff;
   outline-offset: 2px;
 }
 

@@ -1,17 +1,23 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation } from 'wouter'
 import { parseRepoInput } from '../../domain/parseRepoInput'
 import { buildRepoPath } from '../../domain/routePath'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { ui } from '../theme/tokens'
 
-// The bundled offline fixture -- guaranteed to render even with no
-// `GITHUB_TOKEN` configured (see `src/server/fixtures/index.ts`), so it's
-// listed first and never fails.
-const FIXTURE_EXAMPLE = { owner: 'pmndrs', repo: 'valtio' }
-// Real, well-known repositories -- work once a `GITHUB_TOKEN` is configured
-// (README explains self-hosting with one); otherwise they'll hit the
-// token-required state, which itself explains the fixture/self-host story.
+// D1/T8: BOTH bundled offline fixtures (`src/server/fixtures/index.ts`) --
+// guaranteed to render even with no `GITHUB_TOKEN` configured, so they're
+// shown first, always, clearly labeled as instant samples. `expressjs/
+// express` used to be missing from this list entirely, even though it's
+// just as much a real bundled fixture as `pmndrs/valtio`.
+const INSTANT_SAMPLES = [
+  { owner: 'pmndrs', repo: 'valtio' },
+  { owner: 'expressjs', repo: 'express' },
+]
+// Real, well-known repositories that only work once a `GITHUB_TOKEN` is
+// configured -- hidden entirely (not just left to fail into the
+// token-required state) unless `/api/health` reports one is actually
+// configured on this deployment (D1/T8).
 const LIVE_EXAMPLES = [
   { owner: 'facebook', repo: 'react' },
   { owner: 'vuejs', repo: 'core' },
@@ -43,23 +49,53 @@ function ExampleChip({ owner, repo }: { owner: string; repo: string }) {
  * from the `expressjs/express` fixture, fully grown, no UI chrome) --
  * replaces the earlier abstract animated SVG placeholder now that the
  * network scene's visual metaphor is finished, not still being redesigned.
+ * D1/T8: captioned so it's honest about which real repository it's from,
+ * not left looking like generic decorative art.
  */
 function Hero() {
   return (
-    <img
-      src="/hero.png"
-      alt="A bioluminescent mycelium galaxy grown from a real repository's history -- glowing cyan and white filaments spiral outward from a central spore, with small cream mushrooms marking releases."
-      style={{
-        width: '100%',
-        maxWidth: 420,
-        aspectRatio: '4 / 3',
-        objectFit: 'cover',
-        borderRadius: ui.space(4),
-        border: `1px solid ${ui.panelBorder}`,
-        display: 'block',
-      }}
-    />
+    <figure style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: ui.space(2), alignItems: 'center' }}>
+      <img
+        src="/hero.png"
+        alt="A bioluminescent mycelium galaxy grown from a real repository's history -- glowing cyan and white filaments spiral outward from a central spore, with small cream mushrooms marking releases."
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          aspectRatio: '4 / 3',
+          objectFit: 'cover',
+          borderRadius: ui.space(4),
+          border: `1px solid ${ui.panelBorder}`,
+          display: 'block',
+        }}
+      />
+      <figcaption style={{ margin: 0, fontSize: '0.78rem', color: ui.textMuted }}>Example: expressjs/express</figcaption>
+    </figure>
   )
+}
+
+/** D1/T8: `/api/health`'s `tokenConfigured` -- `null` while still loading (kept hidden until known, never flashing then hiding). */
+function useTokenConfigured(): boolean | null {
+  const [tokenConfigured, setTokenConfigured] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/health')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: unknown) => {
+        if (cancelled) return
+        if (body && typeof body === 'object' && 'tokenConfigured' in body) {
+          setTokenConfigured(Boolean((body as { tokenConfigured: unknown }).tokenConfigured))
+        }
+      })
+      .catch(() => {
+        // Health check failing is never fatal -- LIVE_EXAMPLES just stays hidden, same as "not configured".
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return tokenConfigured
 }
 
 /**
@@ -71,6 +107,7 @@ export function LandingPage() {
   const [, navigate] = useLocation()
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const tokenConfigured = useTokenConfigured()
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -153,11 +190,29 @@ export function LandingPage() {
             )}
           </form>
 
-          <div style={{ display: 'flex', gap: ui.space(2), flexWrap: 'wrap', justifyContent: 'center', marginTop: ui.space(2) }}>
-            <ExampleChip {...FIXTURE_EXAMPLE} />
-            {LIVE_EXAMPLES.map((example) => (
-              <ExampleChip key={`${example.owner}/${example.repo}`} {...example} />
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: ui.space(2), marginTop: ui.space(2) }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: ui.space(1) }}>
+              <span style={{ fontSize: '0.72rem', color: ui.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Instant samples · no token needed
+              </span>
+              <div style={{ display: 'flex', gap: ui.space(2), flexWrap: 'wrap', justifyContent: 'center' }}>
+                {INSTANT_SAMPLES.map((example) => (
+                  <ExampleChip key={`${example.owner}/${example.repo}`} {...example} />
+                ))}
+              </div>
+            </div>
+            {tokenConfigured && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: ui.space(1) }}>
+                <span style={{ fontSize: '0.72rem', color: ui.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  More examples
+                </span>
+                <div style={{ display: 'flex', gap: ui.space(2), flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {LIVE_EXAMPLES.map((example) => (
+                    <ExampleChip key={`${example.owner}/${example.repo}`} {...example} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
