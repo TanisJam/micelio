@@ -13,9 +13,8 @@ import { CameraRig } from './CameraRig'
 import { GrowthFrontInstances } from './GrowthFrontInstances'
 import { MushroomsMesh } from './MushroomsMesh'
 import { PointGlowInstances } from './PointGlowInstances'
-import { SubstrateHaze } from './SubstrateHaze'
 import { SporeMesh } from './SporeMesh'
-import { discRadius, type NetworkModel } from '../../../domain/network'
+import type { NetworkModel } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
 
 export interface NetworkSceneContentProps {
@@ -38,11 +37,17 @@ const TIP_RADIUS = 0.05
 const MUSHROOM_GLOW_RADIUS = 0.16
 
 /**
- * The full mycelium colony scene: substrate haze, spore, batched hyphae/hair
- * geometry, mushrooms and glowing fusion/tip points, camera, and picking.
+ * The full mycelium colony scene: spore, batched hyphae/hair geometry,
+ * mushrooms and glowing fusion/tip points, camera, and picking. Round-3
+ * orchestrator finding: the earlier density-texture substrate haze (a
+ * rasterized field sampled into a low-res `DataTexture`) read as a blocky,
+ * pixelated disc with hard-edged holes on real repos -- removed entirely.
+ * The scene now sits on pure black; whatever ambient glow the colony has
+ * comes only from `Scene.tsx`'s own wide/soft second `Bloom` pass scattering
+ * real light off the hyphae themselves, never a separate mesh/texture.
  *
  * Picking (P7): the network is nearly flat, so the pointer is raycast onto
- * the y=0 substrate plane (not against individual mesh triangles) and the
+ * the y=0 ground plane (not against individual mesh triangles) and the
  * nearest element is found via a precomputed 2D spatial grid
  * (`pickingGrid.ts`) built once per model from every hypha segment/hair/
  * mushroom/tip -- O(local neighborhood), not a per-frame linear scan.
@@ -130,13 +135,6 @@ export function NetworkSceneContent({
 
   const pickTolerance = Math.max(0.06, model.bounds.radius * 0.016)
 
-  /** Selecting a mushroom reveals its own release ring as a faint hairline (reusing the substrate haze shader's existing ring-uniform machinery, otherwise always empty) -- P-brief item 3: "otherwise no rings". `null` for every other selection kind. */
-  const selectedMushroomRingRadius = useMemo(() => {
-    if (!selectedId) return null
-    const mushroom = model.mushrooms.find((candidate) => candidate.id === selectedId)
-    return mushroom ? discRadius(mushroom.position) : null
-  }, [model.mushrooms, selectedId])
-
   /** A hypha id maps to itself; a node/tip id maps to the hypha index it belongs to, so selecting/hovering a commit or a growing tip highlights its whole hypha too (P7: "Selection highlights the whole hypha"). */
   const elementIdToHyphaIndex = useMemo(() => {
     const map = new Map<string, number>()
@@ -212,7 +210,6 @@ export function NetworkSceneContent({
       <CameraRig model={model} getCurrentTime={getCurrentTime} isReplayPlaying={isReplayPlaying} reducedMotion={reducedMotion} />
       <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
-      <SubstrateHaze model={model} getCurrentTime={getCurrentTime} ringRadius={selectedMushroomRingRadius} />
       <SporeMesh reducedMotion={reducedMotion} highlighted={hoveredId === model.spore.id || selectedId === model.spore.id} />
 
       <mesh ref={hyphaeMeshRef} geometry={hyphae.geometry} material={filamentMaterial} />
@@ -230,10 +227,9 @@ export function NetworkSceneContent({
           the dark substrate below. */}
       <directionalLight position={[1.6, 3.2, 2.4]} intensity={3.2} color={mycelium.mushroomCap} />
       <directionalLight position={[-2, 0.6, -1.4]} intensity={0.6} color={mycelium.mushroomRim} />
-      {/* Post-final-pass: `substrateFar`, not `substrateNear` -- this ground
-          tint should stay matched to the dark substrate/background (what
-          `substrateFar` now means), not pick up the corrected `substrateNear`
-          glow color meant for the haze shader's own dense-structure highlight. */}
+      {/* Ground bounce tint stays matched to the scene's own flat background
+          (`mycelium.substrateFar`, also `Scene.tsx`'s `scene.background`) --
+          there's no separate substrate mesh to pick a color from anymore. */}
       <hemisphereLight args={[mycelium.mushroomRim, mycelium.substrateFar, 0.16]} />
 
       <MushroomsMesh

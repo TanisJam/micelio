@@ -1,6 +1,5 @@
 export { buildNetwork, DEFAULT_NETWORK_BUILD_OPTIONS, type NetworkBuildOptions } from './buildNetwork'
 export { layoutNetworkColony, type ColonyLayoutResult } from './colonyLayout'
-export { buildDensityField, DENSITY_FIELD_MARGIN, DENSITY_FIELD_RESOLUTION, substrateRadiusFor, type DensityField } from './densityField'
 export {
   collectActivityEventTimes,
   DEFAULT_LINEAR_BLEND_FRACTION,
