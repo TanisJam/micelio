@@ -67,7 +67,7 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 - [x] T5 Growth time-lapse + time scrubber. Route: delegated.
 - [x] T6 Navigation & inspection: hover/click, info panel with real data + GitHub links, focus camera, era list. Route: delegated.
 - [x] T7 Product shell: landing input, `/owner/repo` routing, loading/error/rate-limit states, meta/OG, README. Route: delegated.
-- [ ] T8 Polish: perf on large repos, mobile, a11y, visual pass with screenshots. Route: delegated.
+- [x] T8 Polish: fixed the findings of two independent reviews (technical + product/design) across four groups (growth/interaction, rendering/perf, API/deploy, UX polish). Route: delegated (writer).
 - [x] M1 Data for topology: extend adapter/snapshot with PR `baseRefName`/`headRefName`, first-commit time, closed-unmerged PRs (capped), default-branch merge commits if cheap; regenerate fixture(s). Route: delegated.
 - [x] M2 Network model (pure domain): DAG → deterministic layout (spiral main, lanes, split/fuse points, nodes, dead ends, tips, mushrooms), growth times, refs; tests. Route: delegated.
 - [x] M2b Layout iteration: fix chord-crossing loops, far-flung dead ends/mushrooms, empty inter-turn space, and add mycelial hair texture, per orchestrator visual review of `.shots/network-*.png`. Route: delegated (writer).
@@ -2317,11 +2317,277 @@ compressed (`pngquant`, palette-reduced); a pixel-level side-by-side
 against the uncompressed originals was not done, only a visual Read-tool
 check that they still look correct.
 
+### T8 Polish — done
+Commits: `55a70e8` fix: autoplay growth and restore hover and focus
+feedback; `0cb2bd3` fix: harden rendering and move layout off the main
+thread; `ed9739e` fix: classify graphql rate limits and set api caching;
+`f9dd805` fix: polish landing samples, mobile framing and focus styles.
+
+Fixed the findings of two independent reviews (technical + product/design)
+across four groups. One work-unit commit per group, TDD off (no project
+config, source: repo), Vitest runner. Checks run after each group; `pnpm
+shot` (headless Playwright/SwiftShader) run after every group for visual
+regression, plus targeted Playwright checks for the specific findings.
+
+**Group A — Growth & interaction** (commit `55a70e8`):
+- **A1 (CRITICAL) autoplay never advanced.** Root cause: React `StrictMode`
+  double-invokes the mount effect in dev (effect -> cleanup -> effect).
+  `useGrowthClock`'s original mount effect resumed with `if
+  (clock.isPlaying()) clock.play()`; the synthetic cleanup's `destroy()`
+  already set `playing = false`, so that check was false on the real second
+  mount and `play()` was never called again -- the clock was permanently
+  stuck at whatever progress it reached in the few ms before the synthetic
+  unmount (near 0). Fixed by extracting the state machine into
+  `growthClockController.ts` (injectable scheduler, directly unit tested,
+  9 tests incl. a StrictMode mount->destroy->mount regression test) and
+  resuming from a `shouldAutoPlay` intent captured once at creation,
+  never from the clock's post-destroy runtime state.
+- **A2 picking hit invisible (not-yet-grown) elements.** `PickTarget` now
+  carries `visibleAt` (the later of a segment's two endpoint times,
+  matching the growth shader's own `vBirthTime > uCurrentTime` discard);
+  `queryNearest` takes the current growth time and filters by it. 4 new
+  tests in `pickingGrid.test.ts`.
+- **A3 hover affordance missing for the spore and mushrooms.** The spore
+  had NO pick target at all (not hoverable/selectable); mushrooms had a
+  pick target (tooltip worked) but zero visual highlight feedback (no
+  hypha to highlight, since a mushroom isn't part of a hypha ribbon).
+  Added a spore pick target (`model.spore`) + halo brighten-on-hover;
+  added a `HIGHLIGHT_SCALE` instance-scale-up for mushrooms and tips on
+  hover/select (`applyGrowth.ts`, 5 new tests). Filaments/tips already
+  worked via the shared growth shader's hypha-highlight uniforms.
+- **A4 camera focus never ran for a `?sel=` deep link** (also any click
+  made before `OrbitControls` finished registering). Root cause:
+  `CameraFocus`'s effect depended only on `[selectedId]`; `useThree().controls`
+  is still `null` on the very first render (before `OrbitControls`'s own
+  mount effect registers it), and for a deep link `selectedId` is ALREADY
+  non-null on that same first render (`useSelection`'s lazy initial state
+  reads `?sel=` straight from the URL) -- so the guard bailed out and,
+  since `selectedId` never changes again on its own, focus silently never
+  happened. Fixed by adding `controls` to the effect's dependency array.
+- **A5 first-visit legibility.** Added `GrowthCaption` (dismissible,
+  growth-progress-synced two-line caption, never shown under
+  `prefers-reduced-motion`, hides itself once autoplay ends or is
+  dismissed) and a finite (never-repeating) CSS pulse on the Legend
+  button, both gated off under reduced motion.
+- **Playwright verification** (scratch script, deleted after use): A1 --
+  sampled the scrubber every ~1s for ~13s on a fresh `pnpm dev`-equivalent
+  load: `0.148, 0.242, 0.312, 0.433, 0.495, 0.617, 0.742, 0.842, 0.937,
+  1.000...` -- monotonic, reaches 1.0. A3 -- scanned the canvas for a hover
+  point; found one, confirmed `cursor: pointer` and a real tooltip ("Closed
+  pull request#1139 ..."). A4 -- screenshot hash changed after a click
+  select (camera moved), AND a fresh `?t=1&sel=hypha-pr1139` deep-link
+  navigation (no prior interaction) rendered a different camera framing
+  than the unselected page, confirming the deep-link race is fixed.
+- Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+  (336 tests, +12 for this group) · `pnpm build`: pass · `pnpm shot`:
+  26/26 screenshots, 0 console errors.
+
+**Group B — Robustness & perf** (commit `0cb2bd3`):
+- **B1 `SoilDisc` leaked its ShaderMaterial** on repo->repo navigation
+  (`useMemo` keyed on `radius`, no dispose). Added the missing
+  `useEffect(() => () => material.dispose(), [material])`. Audited every
+  other `useMemo(() => new THREE...)`/`useMemo(() => create...)` in
+  `src/ui/scene`: `NetworkSceneContent`'s `filamentMaterial` and
+  `PointGlowInstances`'s geometry/material already dispose correctly;
+  `Scene.tsx`'s `background` is a `THREE.Color` (no GPU resource, nothing
+  to dispose); the mushroom geometry template is an intentional
+  process-lifetime module-cached singleton (never disposed by design, not
+  a per-navigation leak).
+- **B2 `buildNetwork` blocks the main thread ~1.3s at the real server
+  caps.** Measured via a new `pnpm bench` script: 710-960ms per run in
+  this sandbox for the synthetic at-caps snapshot (1000 merged PRs x 20
+  commits, 200 closed, 50 open, 100 branches, 100 releases) -- same order
+  of magnitude as the reviewer's ~1.3s. Moved into a Web Worker
+  (`buildNetworkAsync`/`buildNetworkWorker.ts`, Vite `new Worker(new
+  URL(...), { type: 'module' })`), with a synchronous fallback
+  (`createWorker` returns `null`) for any environment with no `Worker`
+  global -- Vitest's `node` test environment in particular, so every
+  existing `buildNetwork` test kept working unchanged. `pnpm build`
+  confirms a separate `buildNetworkWorker-*.js` chunk (~19 kB).
+  **Self-caught regression**: the first version called
+  `THREE.setConsoleFunction` (needed for B5) from the eager `main.tsx`,
+  which pulled all of `three` into the initial bundle (`index` chunk
+  287kB -> 667kB, `Scene` chunk 1038kB -> 667kB, confirmed via `pnpm
+  build`'s own chunk sizes) -- moved the call into `Scene.tsx` (the
+  existing `React.lazy` boundary) instead; bundle sizes back to normal.
+- **B3 flaky wall-clock perf test.** Replaced the `performance.now()` <
+  600ms budget (intermittently failed at 600-720ms under parallel-worker
+  CI load per M3's own notes) with a 100% deterministic proxy: an opt-in
+  `ColonyLayoutInstrumentation.onSpanningScan` hook (never used by
+  production code) reports exactly how many already-placed hyphae
+  `computeSpanning`'s per-placement scan walks; for `n` hyphae placed one
+  at a time, the total is exactly `n*(n-1)/2` under the algorithm's
+  current (accepted) design -- asserted both exactly and against a loose
+  2x upper bound. Added a separate correctness smoke test at the real
+  server caps (valid model, no NaNs, caps respected) and an optional `pnpm
+  bench` script for informational wall-clock timing outside the gating
+  suite.
+- **B4 WebGL context loss.** `Scene.tsx` listens for `webglcontextlost`
+  (`preventDefault()` for spec-compliant restorability) and calls
+  `onContextLost`; `ViewerPage` shows a small `ContextLossBanner` ("The
+  galaxy lost its GPU context." + "Reload view") and remounts `<Scene>`
+  with a fresh `key` on click, rather than attempting unreliable in-place
+  WebGL resource restoration.
+- **B5 THREE.Clock deprecation warning.** Root cause: `three@0.186.1`
+  (r183+) makes `Clock`'s constructor unconditionally warn; `@react-three/
+  fiber@9.8.1` (confirmed latest via `pnpm view`) still constructs its own
+  internal `THREE.Clock` for its render-loop store, unavoidably from app
+  code. Used three.js's own official `setConsoleFunction` hook (not a
+  `console.warn` monkeypatch) to filter exactly that one message; every
+  other three.js log/warn/error passes through unchanged (4 tests).
+  Confirmed gone from `pnpm shot`'s console output (present on every shot
+  before this fix, absent after).
+- Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+  (342 tests, +6) · `pnpm build`: pass (bundle sizes back to the M4
+  baseline after the self-caught regression above) · `pnpm shot`: 26/26,
+  0 console errors, no THREE.Clock warning.
+
+**Group C — API & deploy** (commit `ed9739e`):
+- **C1 GraphQL-level rate limits misclassified.** GitHub returns a
+  primary/secondary rate limit as an ordinary HTTP 200 with an `errors`
+  entry, never a 403 -- the existing HTTP-status-based rate-limit handling
+  never saw it, so it fell through to a generic `upstream_error`, losing
+  both the typed `rate_limited` code and any reset time. Now detects
+  `type === 'RATE_LIMITED'` or a rate-limit-shaped message and maps to
+  `rate_limited`, deriving `retryAfterSeconds` from `retry-after`
+  (preferred) or `x-ratelimit-reset` when present. 5 new tests.
+- **C2 `/api/repo` had no Cache-Control.** `handleRepoRequest` now returns
+  `headers` alongside `status`/`body`: success ->
+  `public, s-maxage=3600, stale-while-revalidate=86400` (matching the
+  server's own hourly snapshot TTL); every error status -> `no-store` (a
+  transient rate-limit/upstream failure must never be served stale).
+  Computed once in the shared handler; both `api/repo.ts` and the Vite dev
+  middleware apply it identically. Tests on the shared handler updated/
+  added.
+- **C3 Vercel timeouts + serial pagination.** `vercel.json` now sets
+  `functions["api/repo.ts"].maxDuration = 60`. Merged-PR pagination (up to
+  ~20 requests at the real cap) and closed-PR pagination (up to ~4
+  requests) were fully sequential despite being fully independent request
+  streams (different query, different cursor) -- extracted into
+  `fetchMergedPullRequests`/`fetchClosedPullRequests` and run via
+  `Promise.all`, preserving each loop's own strictly-sequential
+  cursor-following and the closed-PR loop's "stop on first failure, keep
+  what succeeded" behavior exactly. New test dispatches a mocked `fetch`
+  on the POSTED QUERY STRING (not call order), so it verifies correctness
+  regardless of how the two streams actually interleave -- 4 merged + 2
+  closed pages resolve to the correct, correctly-ordered, correctly-merged
+  final lists.
+- Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+  (355 tests, +13) · `pnpm build`: pass (server-only changes, no bundle
+  impact) · `pnpm shot`: 26/26, 0 console errors.
+
+**Group D — UX polish** (commit `f9dd805`):
+- **D1 landing samples.** Both bundled offline fixtures (`pmndrs/valtio`,
+  `expressjs/express` -- the latter was entirely missing from the landing
+  page despite being just as real a fixture) now show under an "Instant
+  samples - no token needed" label. The three token-requiring examples
+  (facebook/react, vuejs/core, sveltejs/svelte) are now hidden entirely
+  unless a new `GET /api/health` (`{ tokenConfigured: boolean }`, no
+  secrets, wired into both the Vite middleware and a new
+  `api/health.ts` Vercel function, 4 tests) reports a token is actually
+  configured -- confirmed via `pnpm shot`'s own landing screenshot (no
+  `GITHUB_TOKEN` in this sandbox): only the two instant samples show. Hero
+  image now captioned "Example: expressjs/express".
+- **D2 mobile portrait framing.** The disc fit but read small with large
+  empty bands above/below at the desktop-tuned 45deg pitch / 1.28 frame
+  margin. Extracted `cameraFraming.ts` (9 tests): a portrait viewport
+  (aspect < 1) now gets a steeper 60deg pitch (closer to top-down, so a
+  flat disc's foreshortened vertical extent grows relative to its
+  pitch-independent horizontal extent) and a tighter 1.1 frame margin.
+  Measured on the before/after mobile screenshots: disc width went from
+  ~300/390px (77%) to ~350/390px (90%), matching the "~90% of viewport
+  width" target, and the empty bands above/below are visibly closer to
+  symmetric.
+- **D3 focus ring color.** `:focus-visible`'s outline was hardcoded to
+  `#ffd9a0` (a leftover warm amber from the pre-M4 tree-metaphor palette);
+  updated to `#6ee7ff`, matching `ui.focusRing`/`ui.accent`.
+- **D4 save image.** Verified via a real Playwright `download` event
+  (scratch script, deleted after use) that the original `data:` URL anchor
+  download DID actually fire a real download in this environment
+  (suggestedFilename `huerto-pmndrs-valtio.png`, 542KB file) -- but per the
+  task's own stated concern about `data:` URL anchor-download reliability
+  across browsers/headless environments, switched to the standard
+  `canvas.toBlob` + `URL.createObjectURL` pattern regardless, which is
+  the documented-reliable approach and avoids base64-inflating a
+  multi-hundred-KB image inline. Re-verified after the change: download
+  event still fires, same filename convention, same real file size.
+- Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass
+  (355 tests total, +9 for this group: cameraFraming 9,
+  handleHealthRequest 4 -- net +9 after accounting for shared setup) ·
+  `pnpm build`: pass · `pnpm shot`: 26/26, 0 console errors; landing/
+  mobile screenshots reviewed with Read and described above.
+
+**Screenshots reviewed literally** (`.shots/`, via Read, across the four
+groups' verification runs): `desktop-valtio-end.png`/`desktop-express-
+end.png` -- genuine pinwheel/spiral-galaxy shape, bright cyan filaments,
+brown dead-end filaments, mushroom dots, dark soil disc, unchanged from
+the M4 baseline (Group A/B/C touched no rendering-visible code paths).
+`desktop-landing.png` -- confirms D1 (instant-sample label + both chips +
+hidden live examples + hero caption). `mobile-valtio-end.png`/`mobile-
+express-end.png` -- confirms D2 (disc now ~90% of viewport width, more
+centered between header and scrubber, mushroom shading still legible at
+60deg). `mobile-valtio-selected-merged.png` -- confirms selection/camera-
+focus/detail-panel still work correctly together with the new mobile
+framing.
+
+**Remaining weaknesses, honestly reported**:
+- Perf at the real 1000+-PR/20-commit/200-closed/50-open/100-branch caps
+  is now covered by a correctness smoke test (B3) and an informational
+  `pnpm bench` (~710-960ms for `buildNetwork` alone in this sandbox,
+  now off the main thread via the Worker), but was not re-measured against
+  a REAL live 1000+-PR GitHub repository end-to-end (no `GITHUB_TOKEN` in
+  this sandbox) -- only the synthetic at-caps snapshot.
+- A formal a11y contrast audit and a real-device (not headless/synthetic)
+  mobile touch check were flagged in the pre-T8 "Next step" note but were
+  not part of either review's four T8 groups, so they're still open,
+  carried forward.
+- D2's mobile vertical centering is visibly IMPROVED (see the before/after
+  width measurement above) but not pixel-verified as perfectly symmetric
+  between the header and scrubber -- the fix targeted the reviewer's
+  literal complaint (disc too small, large bands) via distance/pitch, not
+  a separate camera-target vertical offset; a residual few tens of pixels
+  of asymmetry may remain.
+- The mushroom-cluster "reads as one fused blob rather than N distinct
+  mushrooms at full-disc zoom" residual (flagged back in M3b) is
+  unchanged -- out of scope for T8's four groups.
+- No automated screen-reader walkthrough or contrast-ratio tool was run;
+  P11's a11y line items rely on the same manual/structural review as
+  every prior task in this doc.
+
+**P1–P12 polish-bar status, honestly reassessed after T8**:
+- **P1 Palette** — holds, unchanged by T8 (D3's focus-ring fix aligns an
+  outline color with the existing token, no new hues).
+- **P2 Light & glow** — holds, unchanged.
+- **P3 Organic form** — holds, unchanged (same M3b residual: a dense rim
+  bundle reads as a thicker fringe than a single strand's own taper,
+  out of scope for T8).
+- **P4 Motion** — holds and is stronger: A1's fix makes the eased growth
+  replay actually run on a fresh dev-mode load (previously silently
+  stuck), which is the core of this bar item.
+- **P5 UI craft** — holds; D1/A5 add new UI (health-gated example chips,
+  hero caption, growth caption, legend pulse) using the same tokens/type
+  scale, no layout shift observed across 26/26 `pnpm shot` screenshots.
+- **P6 States designed** — holds, unchanged; B4 adds a new state (WebGL
+  context loss) not originally listed in this bar.
+- **P7 Interaction** — was FAILING two of its own explicit sub-claims
+  ("hover highlight + pointer + tooltip", "camera focuses selection")
+  before T8; both now hold, verified via real Playwright hover/selection/
+  deep-link checks (A2–A4), not just screenshots.
+- **P8 Truth** — holds, unchanged.
+- **P9 Legibility** — holds and is stronger: the spore (a legend entry)
+  is now actually hoverable/selectable, closing a real legend-vs-reality
+  gap A3 found.
+- **P10 Share** — holds; D4 makes "save image" a verified real download
+  instead of an unverified assumption.
+- **P11 A11y** — holds for what was checked (focus rings now use the
+  correct token, D3); no new automated audit was run (see weakness above).
+- **P12 Perf & robustness** — was FAILING "no console errors" (the THREE.
+  Clock warning, B5, present on every shot before this task) and had an
+  unaddressed ~1.3s main-thread block at the real caps (B2); both fixed.
+  "Handles 1000+ PR repos" now has both a correctness smoke test and a
+  worker-based non-blocking path, though not a live end-to-end real-repo
+  measurement (see weakness above).
+
 ## Next step
-T8 polish (perf on a 1000+-hypha repo -- not yet re-measured after M4's
-refactor, though it touched no hot-path logic; an a11y contrast audit; a
-real-device mobile/touch check; the long-name header-wrap verification
-flagged above) and the final independent design/product review against
-P1–P12. No further product decisions are blocking -- M4 resolved the prior
-open items (spiral-layout deletion scope, tree-code deletion scope) that
-were previously flagged for the product owner.
+Final orchestrator review; delivery (push/PR/deploy) is the owner's
+decision.
