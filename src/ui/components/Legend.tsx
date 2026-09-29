@@ -1,5 +1,9 @@
 import { useState } from 'react'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { mycelium, ui } from '../theme/tokens'
+
+/** Same breakpoint as `ViewerHeader`'s own narrow-layout query. */
+const NARROW_LEGEND_QUERY = '(max-width: 640px)'
 
 interface LegendEntry {
   label: string
@@ -31,6 +35,7 @@ const ENTRIES: LegendEntry[] = [
 /** Compact, collapsible legend explaining the mycelium's data mapping (P9), plus an optional quiet overflow-honesty note (P12). */
 export function Legend({ overflowNote = null, fetchTruncationNote = null, pulse = false }: LegendProps) {
   const [open, setOpen] = useState(false)
+  const narrow = useMediaQuery(NARROW_LEGEND_QUERY)
   const notes = [overflowNote, fetchTruncationNote].filter((note): note is string => Boolean(note))
 
   return (
@@ -44,7 +49,14 @@ export function Legend({ overflowNote = null, fetchTruncationNote = null, pulse 
         display: 'flex',
         flexDirection: 'column',
         gap: ui.space(1),
-        maxWidth: 'min(280px, calc(100vw - 32px))',
+        // Round-3 orchestrator finding (task D): on a narrow viewport, the
+        // fixed "Explore list" button (`ViewerPage.tsx`, `right: ui.space(4)`)
+        // shares this exact row -- the old `min(280px, ...)` cap let this
+        // panel grow wide enough to encroach into the button's own reserved
+        // space and visually overlap it. Reserve real room for the button +
+        // a gap only on narrow viewports; desktop (where there was no
+        // collision) keeps its original cap unchanged.
+        maxWidth: narrow ? 'calc(100vw - 165px)' : 'min(280px, calc(100vw - 32px))',
       }}
     >
       <div
@@ -117,25 +129,52 @@ export function Legend({ overflowNote = null, fetchTruncationNote = null, pulse 
           ))}
         </ul>
       )}
-      </div>
-      {notes.map((note) => (
-        <p
-          key={note}
+      {/* Round-3 orchestrator finding (task D): on a narrow viewport these
+          honesty notes used to always render as their own separate rows,
+          right next to the "Explore list" button -- real overlap risk on a
+          390px viewport. Tucked inside the collapsible panel instead
+          (collapsed/hidden by default, same as the entries list above),
+          never overlapping any fixed button. Desktop is unaffected -- the
+          notes stay always-visible there, same as before. */}
+      {narrow && open && notes.length > 0 && (
+        <div
           style={{
-            margin: 0,
-            padding: `${ui.space(1)} ${ui.space(3)}`,
-            fontFamily: ui.fontBody,
-            fontSize: '0.72rem',
-            color: ui.textMuted,
-            background: ui.panelBg,
-            border: `1px solid ${ui.panelBorder}`,
-            borderRadius: ui.space(3),
-            backdropFilter: 'blur(6px)',
+            padding: `0 ${ui.space(3)} ${ui.space(3)}`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: ui.space(1),
+            borderTop: `1px solid ${ui.panelBorder}`,
+            marginTop: ui.space(1),
+            paddingTop: ui.space(2),
           }}
         >
-          {note}
-        </p>
-      ))}
+          {notes.map((note) => (
+            <p key={note} style={{ margin: 0, fontFamily: ui.fontBody, fontSize: '0.72rem', color: ui.textMuted }}>
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
+      </div>
+      {!narrow &&
+        notes.map((note) => (
+          <p
+            key={note}
+            style={{
+              margin: 0,
+              padding: `${ui.space(1)} ${ui.space(3)}`,
+              fontFamily: ui.fontBody,
+              fontSize: '0.72rem',
+              color: ui.textMuted,
+              background: ui.panelBg,
+              border: `1px solid ${ui.panelBorder}`,
+              borderRadius: ui.space(3),
+              backdropFilter: 'blur(6px)',
+            }}
+          >
+            {note}
+          </p>
+        ))}
     </div>
   )
 }
