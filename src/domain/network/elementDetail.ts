@@ -8,6 +8,8 @@
 import type {
   BranchDetail,
   CommitDetail,
+  DirectBurstCommitEntry,
+  DirectBurstDetail,
   ElementDetail,
   PullRequestDetail,
   PullRequestCommitEntry,
@@ -16,6 +18,7 @@ import type {
   RepoOverviewDetail,
 } from '../elementDetail'
 import type { ClosedPullRequest, CommitAuthor, MergedPullRequest, OpenPullRequest, RepoSnapshot } from '../repo'
+import { groupDirectCommitBursts } from './directBursts'
 import { findNetworkElement } from './lookup'
 import type { Hypha, NetworkModel } from './types'
 
@@ -154,6 +157,33 @@ export function resolveNetworkElementDetail(model: NetworkModel, snapshot: RepoS
         name: branch.name,
         lastCommitDate: toEpochMs(branch.lastCommitDate),
         url: `${snapshot.meta.url}/tree/${branch.name}`,
+      }
+      return detail
+    }
+
+    case 'direct': {
+      // Re-derives the SAME burst `topology.ts` originally built this hypha
+      // from (pure + deterministic, so this is cheap and always consistent)
+      // -- `element.ref.id` is that burst's first commit's own oid.
+      const burst = groupDirectCommitBursts(snapshot.directCommits).find((b) => b.commits[0]!.oid === element.ref.id)
+      if (!burst) return null
+      const commits: DirectBurstCommitEntry[] = burst.commits.map((commit) => {
+        const candidateId = `node-${id}-commit-${commit.oid}`
+        return { oid: commit.oid, headline: commit.messageHeadline, elementId: nodeIds.has(candidateId) ? candidateId : null }
+      })
+      const hasFinancials = burst.commits.every((c) => typeof c.additions === 'number' && typeof c.deletions === 'number')
+      const detail: DirectBurstDetail = {
+        kind: 'direct_burst',
+        id,
+        defaultBranch: snapshot.meta.defaultBranch,
+        author: burst.author,
+        commitCount: burst.commits.length,
+        firstDate: burst.firstTime,
+        lastDate: burst.lastTime,
+        additions: hasFinancials ? burst.commits.reduce((sum, c) => sum + (c.additions ?? 0), 0) : null,
+        deletions: hasFinancials ? burst.commits.reduce((sum, c) => sum + (c.deletions ?? 0), 0) : null,
+        commits,
+        url: burst.commits[0]!.url,
       }
       return detail
     }

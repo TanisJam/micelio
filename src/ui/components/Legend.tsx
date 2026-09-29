@@ -19,7 +19,7 @@ export interface LegendProps {
 const ENTRIES: LegendEntry[] = [
   { label: 'Spore', color: mycelium.sporeCore, description: 'the first commit / the repository itself' },
   { label: 'Distance from center', color: mycelium.ring, description: 'time (always later further out)' },
-  { label: 'Filament', color: mycelium.hyphaActiveTip, description: 'a pull request (length = amount of work)' },
+  { label: 'Filament', color: mycelium.hyphaActiveTip, description: 'a pull request or a burst of commits pushed directly (length = amount of work)' },
   { label: 'Fork', color: mycelium.hyphaActiveBase, description: 'a branch was created' },
   { label: 'Knot', color: mycelium.fusion, description: 'a merged pull request' },
   { label: 'Dry filament', color: mycelium.hyphaDeadTip, description: 'closed without merging' },

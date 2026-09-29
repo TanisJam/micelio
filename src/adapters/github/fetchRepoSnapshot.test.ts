@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CAPS } from './caps.ts'
 import { fetchRepoSnapshotFromGitHub } from './fetchRepoSnapshot.ts'
-import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_META_QUERY } from './queries.ts'
-import type { RawClosedPullRequest, RawMergedPullRequest, RawRepositoryMeta } from './rawTypes.ts'
+import { CLOSED_PRS_PAGE_QUERY, DIRECT_COMMITS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_META_QUERY } from './queries.ts'
+import type { RawClosedPullRequest, RawHistoryCommit, RawMergedPullRequest, RawRepositoryMeta } from './rawTypes.ts'
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200 })
@@ -44,12 +44,32 @@ function closedPrNode(number: number): RawClosedPullRequest {
   }
 }
 
+function directCommitNode(oid: string, overrides: Partial<RawHistoryCommit> = {}): RawHistoryCommit {
+  return {
+    oid,
+    messageHeadline: `commit ${oid}`,
+    authoredDate: '2024-01-01T00:00:00Z',
+    url: `https://github.com/o/r/commit/${oid}`,
+    author: { name: 'Dev', user: { login: 'dev', avatarUrl: null } },
+    associatedPullRequests: { totalCount: 0 },
+    additions: 2,
+    deletions: 1,
+    ...overrides,
+  }
+}
+
 function mergedPageBody(nodes: RawMergedPullRequest[], hasNextPage = false, endCursor: string | null = null, totalCount = nodes.length) {
   return { data: { repository: { pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } } }
 }
 
 function closedPageBody(nodes: RawClosedPullRequest[], hasNextPage = false, endCursor: string | null = null, totalCount = nodes.length) {
   return { data: { repository: { pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } } }
+}
+
+function directPageBody(nodes: RawHistoryCommit[], hasNextPage = false, endCursor: string | null = null, totalCount = nodes.length) {
+  return {
+    data: { repository: { defaultBranchRef: { target: { history: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } } } },
+  }
 }
 
 function buildMetaBody(): { data: { repository: RawRepositoryMeta } } {
@@ -63,7 +83,7 @@ function buildMetaBody(): { data: { repository: RawRepositoryMeta } } {
         forkCount: 2,
         createdAt: '2020-01-01T00:00:00Z',
         pushedAt: '2024-01-01T00:00:00Z',
-        defaultBranchRef: { name: 'main', target: { history: { nodes: [] } } },
+        defaultBranchRef: { name: 'main' },
         licenseInfo: { name: 'MIT License' },
         languages: { edges: [{ size: 100, node: { name: 'TypeScript', color: '#3178c6' } }] },
         releases: {
@@ -88,19 +108,21 @@ function buildMetaBody(): { data: { repository: RawRepositoryMeta } } {
 }
 
 /**
- * A single fetch mock covering all three of `fetchRepoSnapshotFromGitHub`'s
- * concurrent requests (meta, merged-PR pages, closed-PR pages). Dispatches
- * on the posted GraphQL query string itself, never assumed call order --
- * the three streams start together and run fully concurrently (Unit 1), so
- * nothing about their real interleaving should matter to correctness.
+ * A single fetch mock covering all four of `fetchRepoSnapshotFromGitHub`'s
+ * concurrent requests (meta, merged-PR pages, closed-PR pages, direct-
+ * commit-history pages). Dispatches on the posted GraphQL query string
+ * itself, never assumed call order -- the four streams start together and
+ * run fully concurrently (Unit 1/2), so nothing about their real
+ * interleaving should matter to correctness.
  */
 function routedFetch(handlers: {
   meta?: () => Response
   merged?: () => Response
   closed?: () => Response
+  direct?: () => Response
 }): ReturnType<typeof vi.fn> {
   return vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
-    // A real microtask yield, so all three concurrent streams' fetch calls
+    // A real microtask yield, so all four concurrent streams' fetch calls
     // actually get DISPATCHED (their own pagination loop's pre-fetch budget
     // check already ran) before any one stream's handler body runs -- this
     // makes the mock behave like real concurrent network requests instead
@@ -113,6 +135,7 @@ function routedFetch(handlers: {
     if (query === REPO_META_QUERY) return (handlers.meta ?? (() => jsonResponse(buildMetaBody())))()
     if (query === MERGED_PRS_PAGE_QUERY) return (handlers.merged ?? (() => jsonResponse(mergedPageBody([]))))()
     if (query === CLOSED_PRS_PAGE_QUERY) return (handlers.closed ?? (() => jsonResponse(closedPageBody([]))))()
+    if (query === DIRECT_COMMITS_PAGE_QUERY) return (handlers.direct ?? (() => jsonResponse(directPageBody([]))))()
     throw new Error(`unexpected GraphQL query: ${query}`)
   })
 }
@@ -139,7 +162,7 @@ describe('fetchRepoSnapshotFromGitHub', () => {
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(4) // meta + 2 merged pages + 1 closed page
+    expect(fetchMock).toHaveBeenCalledTimes(5) // meta + 2 merged pages + 1 closed page + 1 direct-commit page
     expect(snapshot.meta.name).toBe('repo')
     expect(snapshot.meta.license).toBe('MIT License')
     expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1, 2, 3])
@@ -235,6 +258,81 @@ describe('fetchRepoSnapshotFromGitHub', () => {
     expect(snapshot.truncated?.mergedPullRequests).toEqual({ fetched: 1, totalCount: 9, reason: 'error' })
   })
 
+  it('fetches and maps direct (non-PR) commits, excluding any commit associated with a pull request', async () => {
+    const fetchMock = routedFetch({
+      direct: () =>
+        jsonResponse(
+          directPageBody([
+            directCommitNode('direct-1', { associatedPullRequests: { totalCount: 0 } }),
+            directCommitNode('pr-commit-1', { associatedPullRequests: { totalCount: 1 } }),
+            directCommitNode('direct-2', { associatedPullRequests: { totalCount: 0 }, additions: 5, deletions: 2 }),
+          ]),
+        ),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    expect(snapshot.directCommits.map((c) => c.oid)).toEqual(['direct-1', 'direct-2'])
+    expect(snapshot.directCommits[1]).toMatchObject({ additions: 5, deletions: 2 })
+    expect(snapshot.truncated?.directCommits).toBeUndefined()
+  })
+
+  it('paginates direct-commit history across requests when a page has more', async () => {
+    let call = 0
+    const fetchMock = routedFetch({
+      direct: () => {
+        call += 1
+        if (call === 1) return jsonResponse(directPageBody([directCommitNode('d1')], true, 'direct-cursor-1', 2))
+        return jsonResponse(directPageBody([directCommitNode('d2')], false, null, 2))
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    expect(snapshot.directCommits.map((c) => c.oid)).toEqual(['d1', 'd2'])
+    expect(snapshot.truncated?.directCommits).toBeUndefined()
+  })
+
+  it('honestly keeps only the direct commits already fetched (partial + flagged) when a continuation page fails', async () => {
+    let call = 0
+    const fetchMock = routedFetch({
+      direct: () => {
+        call += 1
+        if (call === 1) return jsonResponse(directPageBody([directCommitNode('d1')], true, 'direct-cursor-1', 5))
+        return new Response('boom', { status: 500 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    expect(snapshot.directCommits.map((c) => c.oid)).toEqual(['d1'])
+    expect(snapshot.truncated?.directCommits).toEqual({ fetched: 1, totalCount: 5, reason: 'error' })
+    // The other two independent streams are unaffected.
+    expect(snapshot.truncated?.mergedPullRequests).toBeUndefined()
+    expect(snapshot.truncated?.closedPullRequests).toBeUndefined()
+  })
+
+  it('stops direct-commit-history pagination once the global time budget is exceeded, returning a partial + flagged snapshot', async () => {
+    vi.useFakeTimers()
+    const fetchMock = routedFetch({
+      direct: () => {
+        vi.advanceTimersByTime(CAPS.fetchTimeBudgetMs + 1000)
+        return jsonResponse(directPageBody([directCommitNode('d1')], true, 'direct-cursor-1', 500))
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    const directCalls = fetchMock.mock.calls.filter(([, init]) => queryOf(init) === DIRECT_COMMITS_PAGE_QUERY)
+    expect(directCalls).toHaveLength(1)
+    expect(snapshot.directCommits.map((c) => c.oid)).toEqual(['d1'])
+    expect(snapshot.truncated?.directCommits).toEqual({ fetched: 1, totalCount: 500, reason: 'time_budget' })
+  })
+
   it('falls back to tags when there are no releases', async () => {
     const fetchMock = routedFetch({
       meta: () => {
@@ -291,7 +389,7 @@ describe('fetchRepoSnapshotFromGitHub', () => {
 
     const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
 
-    expect(fetchMock).toHaveBeenCalledTimes(6) // meta + 3 merged pages + 2 closed pages
+    expect(fetchMock).toHaveBeenCalledTimes(7) // meta + 3 merged pages + 2 closed pages + 1 direct-commit page
     expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1, 2, 3, 4])
     expect(snapshot.closedPullRequests.map((pr) => pr.number)).toEqual([101, 102])
     expect(snapshot.truncated).toBeUndefined()

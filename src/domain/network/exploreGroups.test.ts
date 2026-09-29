@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeMergedPr, makeSnapshot } from '../shared/testHelpers'
+import { makeDirectCommit, makeMergedPr, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { buildNetworkExploreGroups } from './exploreGroups'
 
@@ -61,5 +61,24 @@ describe('buildNetworkExploreGroups', () => {
     const groups = buildNetworkExploreGroups(model, snapshot)
     const allIds = groups.flatMap((g) => g.pullRequests.map((pr) => pr.id))
     expect(allIds).not.toContain(model.hyphae.find((h) => h.kind === 'main')!.id)
+  })
+
+  it('lists a direct-commit burst as its own row (Unit 2), with a null PR number and its real commits', () => {
+    const snapshot = makeSnapshot({
+      mergedPullRequests: [],
+      openPullRequests: [],
+      closedPullRequests: [],
+      liveBranches: [],
+      releases: [],
+      directCommits: [makeDirectCommit({ oid: 'd1', authoredDate: '2021-05-01T00:00:00Z', author: { login: 'alice', avatarUrl: null } })],
+    })
+    const model = buildNetwork(snapshot)
+    const groups = buildNetworkExploreGroups(model, snapshot)
+    expect(groups).toHaveLength(1)
+    const entry = groups[0]!.pullRequests[0]!
+    expect(entry.number).toBeNull()
+    expect(entry.status).toBe('direct')
+    expect(entry.commits).toHaveLength(1)
+    expect(entry.commits[0]!.headline.length).toBeGreaterThan(0)
   })
 })

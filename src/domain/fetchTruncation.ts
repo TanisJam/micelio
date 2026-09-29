@@ -4,6 +4,7 @@ import type { FetchTruncation, PaginationTruncation } from './repo'
 const LABELS: Record<keyof FetchTruncation, string> = {
   mergedPullRequests: 'merged pull requests',
   closedPullRequests: 'closed pull requests',
+  directCommits: 'direct commits to the default branch',
 }
 
 function reasonText(reason: PaginationTruncation['reason']): string {
@@ -39,6 +40,7 @@ export function formatFetchTruncationNote(truncated: FetchTruncation | undefined
   const parts: string[] = []
   if (truncated.mergedPullRequests) parts.push(describe('mergedPullRequests', truncated.mergedPullRequests))
   if (truncated.closedPullRequests) parts.push(describe('closedPullRequests', truncated.closedPullRequests))
+  if (truncated.directCommits) parts.push(describe('directCommits', truncated.directCommits))
   if (parts.length === 0) return null
   return parts.join('; ')
 }

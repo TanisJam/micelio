@@ -4,7 +4,7 @@ import expressFixture from '../../server/fixtures/expressjs-express.json' with {
 import type { CommitAuthor, MergedPullRequest, RepoSnapshot } from '../repo'
 import { computeTimeBounds } from '../shared/timeBounds'
 import { subVec3, vec3Length } from '../shared/vector'
-import { makeSnapshot } from '../shared/testHelpers'
+import { makeDirectCommit, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import {
   applySwirl,
@@ -29,6 +29,21 @@ const FIXTURES: [string, RepoSnapshot][] = [
 
 const RADIUS_EPSILON = 1e-6
 
+/**
+ * Tolerance for "does a hair's base actually lie on its own hypha's
+ * polyline". Not `1e-6`: `relaxSharpTurns` (a general, unconditional final
+ * pass smoothing any polyline turn sharper than `MAX_HYPHA_TURN_RAD`) runs
+ * AFTER hairs are placed on the pre-relax polyline, nudging the odd point
+ * slightly (observed up to ~0.021 world units on the real
+ * `expressjs/express` fixture, whose deep closed-PR chains produce the
+ * sharpest turns). `0.05` (1% of `DISC_MAX_RADIUS`, 5) is comfortably above
+ * that real smoothing drift while remaining two-plus orders of magnitude
+ * smaller than the old spur bug this replaced, where a hair could be placed
+ * at a completely independent angle -- off by a large fraction of the
+ * disc's own radius, not a couple of percent of it.
+ */
+const HAIR_ATTACHMENT_EPSILON = 0.05
+
 function angleOf(p: { x: number; z: number }): number {
   return Math.atan2(p.z, p.x)
 }
@@ -38,6 +53,33 @@ function shortestAngleDelta(a: number, b: number): number {
   const twoPi = Math.PI * 2
   const wrapped = (((b - a + Math.PI) % twoPi) + twoPi) % twoPi
   return wrapped - Math.PI
+}
+
+/** Shortest distance from point `p` to the segment `a`-`b` (3D). */
+function pointToSegmentDistance(p: { x: number; y: number; z: number }, a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number {
+  const abx = b.x - a.x
+  const aby = b.y - a.y
+  const abz = b.z - a.z
+  const apx = p.x - a.x
+  const apy = p.y - a.y
+  const apz = p.z - a.z
+  const abLenSq = abx * abx + aby * aby + abz * abz
+  const t = abLenSq > 1e-12 ? Math.min(1, Math.max(0, (apx * abx + apy * aby + apz * abz) / abLenSq)) : 0
+  const cx = a.x + abx * t
+  const cy = a.y + aby * t
+  const cz = a.z + abz * t
+  return Math.hypot(p.x - cx, p.y - cy, p.z - cz)
+}
+
+/** Shortest distance from point `p` to ANY segment of a hypha's polyline -- "does this point actually lie on the hypha's own curve" (within floating-point epsilon), not just "is it near one of the sampled vertices". */
+function pointToPolylineDistance(p: { x: number; y: number; z: number }, points: { position: { x: number; y: number; z: number } }[]): number {
+  if (points.length === 1) return Math.hypot(p.x - points[0]!.position.x, p.y - points[0]!.position.y, p.z - points[0]!.position.z)
+  let min = Number.POSITIVE_INFINITY
+  for (let i = 0; i < points.length - 1; i++) {
+    const d = pointToSegmentDistance(p, points[i]!.position, points[i + 1]!.position)
+    if (d < min) min = d
+  }
+  return min
 }
 
 function buildColonyModel(snapshot: RepoSnapshot) {
@@ -378,28 +420,50 @@ describe('layoutNetworkColony', () => {
     }
   })
 
-  it('produces a spore + a single degenerate main entry for a tiny repo (0 PRs, 0 releases, 1 commit)', () => {
+  it('produces a spore + a main entry + one direct-commit hypha for a tiny repo (0 PRs, 0 releases, 1 commit)', () => {
     const snapshot = makeSnapshot({
       mergedPullRequests: [],
       openPullRequests: [],
       closedPullRequests: [],
       liveBranches: [],
       releases: [],
-      directCommits: [
-        { oid: 'first', messageHeadline: 'init', authoredDate: '2024-01-01T00:00:00Z', author: { login: 'root', avatarUrl: null }, url: 'https://x/first' },
-      ],
+      directCommits: [makeDirectCommit({ oid: 'first', authoredDate: '2024-01-01T00:00:00Z', author: { login: 'root', avatarUrl: null } })],
     })
     const { colony } = buildColonyModel(snapshot)
     expect(colony.spore).toBeDefined()
-    expect(colony.hyphae).toHaveLength(1)
+    expect(colony.hyphae).toHaveLength(2)
     expect(colony.hyphae[0]!.kind).toBe('main')
+    expect(colony.hyphae.some((h) => h.kind === 'direct')).toBe(true)
     // No releases -- only real *year* rings (from the repo's real
     // created/pushed-at span) may appear, never a release ring.
     expect(colony.rings.every((r) => r.ringKind === 'year')).toBe(true)
     expect(colony.mushrooms).toHaveLength(0)
-    expect(colony.fusions).toHaveLength(0)
+    // The single direct commit's own burst hypha fuses into the colony
+    // (see `topology.ts`: a direct burst's `status` is `'fused'`, like a
+    // merged PR), so it gets a real fusion knot too.
+    expect(colony.fusions).toHaveLength(1)
     expect(colony.nodes).toHaveLength(1)
     expect(colony.hairs).toHaveLength(1)
+    // The hair must actually attach to its hypha's own polyline, not float
+    // at an independently-chosen position (the bug this replaced -- see
+    // `buildDirectCommitSpurs`, removed in favor of real `direct` hyphae).
+    const directHypha = colony.hyphae.find((h) => h.kind === 'direct')!
+    const hair = colony.hairs[0]!
+    expect(pointToPolylineDistance(hair.position, directHypha.points)).toBeLessThan(HAIR_ATTACHMENT_EPSILON)
+  })
+
+  it('attaches every hair to a point that actually lies on its own hypha polyline (no floating hairs), across both bundled fixtures', () => {
+    for (const fixture of [valtioFixture, expressFixture]) {
+      const snapshot = fixture as unknown as RepoSnapshot
+      const { colony } = buildColonyModel(snapshot)
+      const hyphaById = new Map(colony.hyphae.map((h) => [h.id, h]))
+      for (const hair of colony.hairs) {
+        const hypha = hyphaById.get(hair.hyphaId)
+        expect(hypha, `hair ${hair.id} references unknown hypha ${hair.hyphaId}`).toBeDefined()
+        const distance = pointToPolylineDistance(hair.position, hypha!.points)
+        expect(distance, `hair ${hair.id} (hypha ${hair.hyphaId}, kind ${hypha!.kind}) is ${distance} off its own hypha's polyline`).toBeLessThan(HAIR_ATTACHMENT_EPSILON)
+      }
+    }
   })
 
   describe('gap-filling sanity (synthetic 200-PR repo)', () => {

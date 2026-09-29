@@ -139,11 +139,14 @@ const RELEASE_TAG_TARGET_FIELDS = /* GraphQL */ `
 // history (observed while generating fixtures), and serialized the start of
 // merged-PR pagination behind this query's own (non-trivial) latency.
 // Unit 1 (cold-fetch time budget): this is now a small, cheap, single-page
-// "meta" query -- repo info, languages, releases/tags, branches, open PRs,
-// direct-commit scan -- with NO paginated connection of its own, so it can
-// run fully concurrently with the independent merged-PR (`MERGED_PRS_PAGE_
-// QUERY`) and closed-PR (`CLOSED_PRS_PAGE_QUERY`) pagination loops instead
-// of gating their start.
+// "meta" query -- repo info, languages, releases/tags, branches, open PRs --
+// with NO paginated connection of its own, so it can run fully concurrently
+// with the independent merged-PR (`MERGED_PRS_PAGE_QUERY`), closed-PR
+// (`CLOSED_PRS_PAGE_QUERY`) and, since Unit 2, direct-commit-history
+// (`DIRECT_COMMITS_PAGE_QUERY`) pagination loops instead of gating their
+// start. The default-branch commit-history scan (used to find direct,
+// non-PR commits) moved out to its own paginated query in Unit 2, for the
+// same reason merged/closed PRs already have their own.
 export const REPO_META_QUERY = /* GraphQL */ `
   ${SECONDARY_PR_COMMITS_FRAGMENT}
   ${OPEN_PR_FRAGMENT}
@@ -151,7 +154,6 @@ export const REPO_META_QUERY = /* GraphQL */ `
     $owner: String!
     $name: String!
     $secondaryCommitsPerPr: Int!
-    $directCommitsScanned: Int!
   ) {
     repository(owner: $owner, name: $name) {
       name
@@ -163,28 +165,6 @@ export const REPO_META_QUERY = /* GraphQL */ `
       pushedAt
       defaultBranchRef {
         name
-        target {
-          ... on Commit {
-            history(first: $directCommitsScanned) {
-              nodes {
-                oid
-                messageHeadline
-                authoredDate
-                url
-                author {
-                  name
-                  user {
-                    login
-                    avatarUrl
-                  }
-                }
-                associatedPullRequests(first: 1) {
-                  totalCount
-                }
-              }
-            }
-          }
-        }
       }
       licenseInfo {
         name
@@ -311,6 +291,59 @@ export const CLOSED_PRS_PAGE_QUERY = /* GraphQL */ `
         }
         nodes {
           ...ClosedPrFields
+        }
+      }
+    }
+  }
+`
+
+// Unit 2: paginated default-branch commit history, mirroring the merged-
+// PR/closed-PR pagination shape (`totalCount`/`pageInfo`/`nodes`) so it can
+// run through the same `paginate()` helper and the same concurrent
+// `Promise.all` start as the other two loops. `additions`/`deletions` are
+// cheap fields directly on `Commit` (no extra round-trip), used to give a
+// direct-commit burst's hypha a real work-based length, exactly like a
+// merged PR's own `additions + deletions`. `associatedPullRequests` is how
+// `mapDirectCommits` tells a genuine direct push apart from a commit that
+// belongs to (or is the merge commit of) a pull request -- both are
+// excluded, since a PR's own commits already render via its own hypha.
+export const DIRECT_COMMITS_PAGE_QUERY = /* GraphQL */ `
+  query DirectCommitsPage(
+    $owner: String!
+    $name: String!
+    $pageSize: Int!
+    $after: String
+  ) {
+    repository(owner: $owner, name: $name) {
+      defaultBranchRef {
+        target {
+          ... on Commit {
+            history(first: $pageSize, after: $after) {
+              totalCount
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                oid
+                messageHeadline
+                authoredDate
+                url
+                additions
+                deletions
+                author {
+                  name
+                  user {
+                    login
+                    avatarUrl
+                  }
+                }
+                associatedPullRequests(first: 1) {
+                  totalCount
+                }
+              }
+            }
+          }
         }
       }
     }

@@ -68,6 +68,35 @@ export interface CommitDetail {
   parentPr: { number: number; title: string; elementId: string } | null
 }
 
+export interface DirectBurstCommitEntry {
+  oid: string
+  headline: string
+  /** The matching rendered-element id for this commit, if any (clickable to focus it). */
+  elementId: string | null
+}
+
+/**
+ * Unit 2: a WORK BURST of direct (non-PR) commits pushed straight to the
+ * default branch -- rendered as its own `direct`-kind hypha (`network/
+ * types.ts`), grown and fused into the colony exactly like a merged PR's.
+ */
+export interface DirectBurstDetail {
+  kind: 'direct_burst'
+  id: string
+  /** The repository's real default branch name (e.g. `main`/`master`), so the panel can honestly say "Pushed directly to `<name>`" instead of assuming `main`. */
+  defaultBranch: string
+  author: CommitAuthor
+  commitCount: number
+  firstDate: number
+  lastDate: number
+  /** Real summed `additions`/`deletions` across every commit in the burst, when known (see `DirectCommit.additions`/`deletions`) -- `null` for a bundled fixture generated before these fields existed, never a fabricated partial sum. */
+  additions: number | null
+  deletions: number | null
+  commits: DirectBurstCommitEntry[]
+  /** The first commit's own real GitHub URL -- a burst has no PR page of its own to link to. */
+  url: string
+}
+
 export interface ReleaseDetail {
   kind: 'release'
   id: string
@@ -85,7 +114,7 @@ export interface BranchDetail {
   url: string
 }
 
-export type ElementDetail = RepoOverviewDetail | PullRequestDetail | CommitDetail | ReleaseDetail | BranchDetail
+export type ElementDetail = RepoOverviewDetail | PullRequestDetail | CommitDetail | ReleaseDetail | BranchDetail | DirectBurstDetail
 
 export interface ElementSummary {
   /** Short human label for the element's kind, e.g. "Merged PR", "Commit". */
@@ -116,5 +145,11 @@ export function summarizeElementDetail(detail: ElementDetail): ElementSummary {
       return { kindLabel: 'Release', title: detail.name, date: detail.date }
     case 'branch':
       return { kindLabel: 'Branch', title: detail.name, date: detail.lastCommitDate }
+    case 'direct_burst':
+      return {
+        kindLabel: 'Direct commits',
+        title: `${detail.commitCount} commit${detail.commitCount === 1 ? '' : 's'} pushed directly`,
+        date: detail.lastDate,
+      }
   }
 }

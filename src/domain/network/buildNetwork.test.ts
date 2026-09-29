@@ -3,7 +3,7 @@ import valtioFixture from '../../server/fixtures/pmndrs-valtio.json' with { type
 import expressFixture from '../../server/fixtures/expressjs-express.json' with { type: 'json' }
 import type { CommitAuthor, MergedPullRequest, RepoSnapshot } from '../repo'
 import { computeTimeBounds } from '../shared/timeBounds'
-import { makeBranch, makeClosedPr, makeOpenPr, makeSnapshot } from '../shared/testHelpers'
+import { makeBranch, makeClosedPr, makeDirectCommit, makeOpenPr, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { layoutNetworkColony, type ColonyLayoutInstrumentation } from './colonyLayout'
 import { buildHyphaTopology } from './topology'
@@ -63,30 +63,57 @@ describe('buildNetwork', () => {
     expect(model.spore.ref).toBeTruthy()
   })
 
-  it('produces a spore + a short main hypha for a tiny repo (0 PRs, 0 releases, 1 commit)', () => {
+  it('produces a spore + a short main hypha + a direct-commit hypha for a tiny repo (0 PRs, 0 releases, 1 commit)', () => {
     const snapshot = makeSnapshot({
       mergedPullRequests: [],
       openPullRequests: [],
       closedPullRequests: [],
       liveBranches: [],
       releases: [],
-      directCommits: [
-        {
-          oid: 'first',
-          messageHeadline: 'init',
-          authoredDate: '2024-01-01T00:00:00Z',
-          author: { login: null, avatarUrl: null },
-          url: 'https://x/first',
-        },
-      ],
+      directCommits: [makeDirectCommit({ oid: 'first', authoredDate: '2024-01-01T00:00:00Z', author: { login: null, avatarUrl: null } })],
     })
     const model = buildNetwork(snapshot)
     expect(model.spore).toBeDefined()
-    expect(model.hyphae).toHaveLength(1)
+    expect(model.hyphae).toHaveLength(2)
     expect(model.hyphae[0]!.kind).toBe('main')
     expect(model.hyphae[0]!.points.length).toBeGreaterThan(0)
+    expect(model.hyphae[1]!.kind).toBe('direct')
     expect(model.nodes).toHaveLength(1)
     expect(model.mushrooms).toHaveLength(0)
+    expect(findNonFinite(model)).toBeNull()
+  })
+
+  it('looks populated for a solo repo with many direct commits and zero pull requests (>= 5 hyphae)', () => {
+    // Owner feedback: a solo repo that commits straight to main read as
+    // "a spore with 2 filaments" -- nearly empty. 100 direct commits from a
+    // handful of distinct authors, spread across bursts (gaps > the 6h
+    // window), should render as a genuinely populated colony, not a
+    // near-empty disc with a few disconnected hairs.
+    const base = Date.parse('2022-01-01T00:00:00Z')
+    const dayMs = 24 * 60 * 60 * 1000
+    const authors = ['alice', 'bob', 'carol']
+    const directCommits = Array.from({ length: 100 }, (_, i) =>
+      makeDirectCommit({
+        oid: `solo-${i}`,
+        // One burst roughly every other day, by a rotating author -- far
+        // enough apart (> 6h) that each day's work is its own burst.
+        authoredDate: new Date(base + i * dayMs * 2).toISOString(),
+        author: { login: authors[i % authors.length]!, avatarUrl: null },
+      }),
+    )
+    const snapshot = makeSnapshot({
+      mergedPullRequests: [],
+      openPullRequests: [],
+      closedPullRequests: [],
+      liveBranches: [],
+      releases: [],
+      directCommits,
+    })
+    const model = buildNetwork(snapshot)
+    const directHyphae = model.hyphae.filter((h) => h.kind === 'direct')
+    expect(directHyphae.length).toBeGreaterThanOrEqual(5)
+    expect(model.nodes).toHaveLength(100)
+    expect(model.hairs).toHaveLength(100)
     expect(findNonFinite(model)).toBeNull()
   })
 

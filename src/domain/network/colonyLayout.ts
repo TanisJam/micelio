@@ -1,5 +1,5 @@
 import type { ReleaseInfo } from '../repo'
-import { clamp, easeInOutCubic, lerp, logScale } from '../math'
+import { clamp, easeInOutCubic, lerp } from '../math'
 import { createPrng, randJitter, randRange, type Prng } from '../shared/prng'
 import type { TimeBounds } from '../shared/types'
 import { addVec3, normalizeVec3, polarToVec3, scaleVec3, subVec3, vec3, vec3Length, type Vec3 } from '../shared/vector'
@@ -79,8 +79,6 @@ export function computeWorkLength(commitCount: number, workLines: number | null)
 const SPORE_RAY_COUNT = 10
 /** "target angle = gap center + small seeded jitter (<= 10% of gap)". */
 const GAP_JITTER_FRACTION = 0.1
-/** A direct-commit spur is minor texture, not a structural hypha -- a looser jitter reads as more organic without needing to be precisely gap-centered. */
-const SPUR_GAP_JITTER_FRACTION = 0.22
 
 // --- Growth-path shaping (item 2e of the M2d brief) -----------------------
 const FORK_FRACTION_MIN = 0.15
@@ -357,13 +355,6 @@ const FUSION_SEARCH_RADIUS = 0.25
 const RADIUS_BIN_WIDTH = 0.1
 /** Bins to each side of the tip's own bin -- `RADIUS_BIN_WIDTH * (2 * spread + 1)` comfortably covers `FUSION_SEARCH_RADIUS`. */
 const FUSION_SEARCH_BIN_SPREAD = 3
-
-// --- Direct-commit spur tuning (item 3 of the M2d brief) ------------------
-const SPUR_LENGTH_MIN = 0.05
-const SPUR_LENGTH_MAX = 0.16
-const SPUR_LENGTH_JITTER = 0.015
-const SPUR_BASE_RADIUS_FRACTION = 0.35
-const SPUR_MIN_BASE_RADIUS = 0.002
 
 // --- Hair tuning (reuses the spiral's `Hair` element) ----------------------
 const HAIR_LENGTH_FACTOR = 2.2
@@ -838,53 +829,6 @@ function buildOrderedCommitElements(hypha: Hypha, commits: HyphaCommitDraft[], p
   return { nodes, hairs }
 }
 
-/** A genuine direct commit on `main` -- excludes the merge-point pseudo-entries `topology.ts` also records there (those already get their own PR hypha's fusion knot). */
-function isGenuineDirectCommit(c: HyphaCommitDraft): boolean {
-  return c.ref.type === 'commit' && !c.isMergePoint
-}
-
-/**
- * Item 3: "Direct commits to the default branch = short hairs radiating from
- * the spore/nearest hypha at r(t)." Reuses the same gap-filling angle search
- * as a full hypha (against the FINAL placed-hyphae set, since spurs are pure
- * decoration and never influence other hyphae's own placement).
- */
-function buildDirectCommitSpurs(main: HyphaDraft, placedHyphae: Hypha[], sporeRays: number[], radiusForTime: (time: number) => number, seed: string): { nodes: NetworkNode[]; hairs: Hair[] } {
-  const directCommits = main.commits.filter(isGenuineDirectCommit)
-  if (directCommits.length === 0) return { nodes: [], hairs: [] }
-
-  const prng = createPrng(`${seed}:network-colony-spurs`)
-  const nodes: NetworkNode[] = []
-  const hairs: Hair[] = []
-
-  for (const commit of directCommits) {
-    const radius = radiusForTime(commit.time)
-    const spanning = computeSpanning(placedHyphae, radius)
-    const angles = [...spanning.map((s) => s.angleAtR0), ...sporeRays]
-    const angle = pickAngleInLargestGap(angles, prng, SPUR_GAP_JITTER_FRACTION)
-    const position = polarToVec3(angle, radius, 0)
-    const nodeId = `node-${main.id}-commit-${commit.ref.id}`
-    nodes.push({ id: nodeId, kind: 'node', hyphaId: main.id, time: commit.time, ref: commit.ref, position, radius: 0.006, isMergePoint: false })
-
-    const direction = vec3(Math.cos(angle), 0, Math.sin(angle))
-    const length = clamp(SPUR_LENGTH_MIN + randJitter(prng, SPUR_LENGTH_JITTER) + (SPUR_LENGTH_MAX - SPUR_LENGTH_MIN) * logScale(radius, 0, DISC_MAX_RADIUS), SPUR_LENGTH_MIN * 0.5, SPUR_LENGTH_MAX)
-    hairs.push({
-      id: `hair-${nodeId}`,
-      kind: 'hair',
-      hyphaId: main.id,
-      nodeId,
-      time: commit.time,
-      ref: commit.ref,
-      position,
-      direction,
-      length,
-      baseRadius: Math.max(0.006 * SPUR_BASE_RADIUS_FRACTION, SPUR_MIN_BASE_RADIUS),
-    })
-  }
-
-  return { nodes, hairs }
-}
-
 export interface ColonyLayoutResult {
   spore: Spore
   hyphae: Hypha[]
@@ -1322,10 +1266,6 @@ export function layoutNetworkColony(
       tips.push({ id: `tip-${draft.id}`, kind: 'tip', hyphaId: draft.id, time: tipPoint.time, ref: draft.ref, position: tipPoint.position })
     }
   }
-
-  const spurs = buildDirectCommitSpurs(main, placedHyphae, sporeRays, radiusForTime, seed)
-  nodes.push(...spurs.nodes)
-  hairs.push(...spurs.hairs)
 
   const mushrooms = buildMushroomsOnRings(releases, radiusForTime, placedHyphae, seed)
 

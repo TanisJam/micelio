@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeBranch, makeClosedPr, makeMergedPr, makeOpenPr, makeRelease, makeSnapshot } from '../shared/testHelpers'
+import { makeBranch, makeClosedPr, makeDirectCommit, makeMergedPr, makeOpenPr, makeRelease, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { resolveNetworkElementDetail } from './elementDetail'
 
@@ -78,9 +78,11 @@ describe('resolveNetworkElementDetail', () => {
 
   // The colony layout represents a merge as a `Fusion` knot on the PR's OWN
   // hypha (see `types.ts`'s `Fusion` doc), never as a separate node on
-  // `main` -- `isMergePoint` commits are deliberately excluded from the
-  // rendered main-hypha nodes (`colonyLayout.ts`'s `isGenuineDirectCommit`),
-  // so `model.nodes.find((n) => n.isMergePoint)` is always empty for colony
+  // `main` -- `main` never carries commit nodes of its own at all (Unit 2:
+  // direct commits render via their own `direct`-kind hyphae, merge points
+  // exist only as `main.commits` pseudo-entries at the topology level, never
+  // rendered as nodes), so `model.nodes.find((n) => n.isMergePoint)` is
+  // always empty for colony
   // and a fusion itself isn't independently selectable
   // (`LookupableNetworkElement` excludes `Fusion`). The merged PR is still
   // fully resolvable through its own hypha id, covered above.
@@ -102,5 +104,55 @@ describe('resolveNetworkElementDetail', () => {
     const tip = model.tips.find((t) => t.ref.type === 'pull_request')!
     const detail = resolveNetworkElementDetail(model, snapshot, tip.id)
     expect(detail).toMatchObject({ kind: 'pull_request', status: 'open', number: 3 })
+  })
+
+  describe('direct-commit bursts (Unit 2)', () => {
+    function buildDirectBurstModel() {
+      const base = Date.parse('2024-03-01T00:00:00Z')
+      const oneHourMs = 60 * 60 * 1000
+      const commits = [
+        makeDirectCommit({ oid: 'd1', authoredDate: new Date(base).toISOString(), author: { login: 'alice', avatarUrl: null }, additions: 10, deletions: 2 }),
+        makeDirectCommit({ oid: 'd2', authoredDate: new Date(base + oneHourMs).toISOString(), author: { login: 'alice', avatarUrl: null }, additions: 5, deletions: 1 }),
+      ]
+      const snapshot = makeSnapshot({
+        mergedPullRequests: [],
+        openPullRequests: [],
+        closedPullRequests: [],
+        liveBranches: [],
+        releases: [],
+        directCommits: commits,
+      })
+      const model = buildNetwork(snapshot)
+      return { snapshot, model }
+    }
+
+    it('resolves a `direct` hypha to a direct-burst detail with the real author, commit count, date range and summed changes', () => {
+      const { snapshot, model } = buildDirectBurstModel()
+      const hypha = model.hyphae.find((h) => h.kind === 'direct')!
+      const detail = resolveNetworkElementDetail(model, snapshot, hypha.id)
+      expect(detail).toMatchObject({
+        kind: 'direct_burst',
+        defaultBranch: snapshot.meta.defaultBranch,
+        author: { login: 'alice', avatarUrl: null },
+        commitCount: 2,
+        additions: 15,
+        deletions: 3,
+      })
+      if (detail?.kind === 'direct_burst') {
+        expect(detail.firstDate).toBeLessThanOrEqual(detail.lastDate)
+        expect(detail.commits.map((c) => c.oid)).toEqual(['d1', 'd2'])
+        expect(detail.commits.every((c) => c.elementId !== null)).toBe(true)
+      }
+    })
+
+    it('resolves a direct-burst commit node to a commit detail (no parent PR)', () => {
+      const { snapshot, model } = buildDirectBurstModel()
+      const node = model.nodes.find((n) => n.ref.type === 'commit')!
+      const detail = resolveNetworkElementDetail(model, snapshot, node.id)
+      expect(detail?.kind).toBe('commit')
+      if (detail?.kind === 'commit') {
+        expect(detail.parentPr).toBeNull()
+      }
+    })
   })
 })

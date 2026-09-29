@@ -1,6 +1,7 @@
 import type {
   ClosedPullRequest,
   CommitAuthor,
+  DirectCommit,
   LiveBranch,
   MergedPullRequest,
   OpenPullRequest,
@@ -90,6 +91,22 @@ export function makeOpenPr(overrides: Partial<OpenPullRequest> = {}): OpenPullRe
 
 export function makeBranch(overrides: Partial<LiveBranch> = {}): LiveBranch {
   return { name: 'feature/x', lastCommitDate: '2024-01-01T00:00:00Z', ...overrides }
+}
+
+let directCommitCounter = 0
+
+export function makeDirectCommit(overrides: Partial<DirectCommit> = {}): DirectCommit {
+  directCommitCounter += 1
+  return {
+    oid: `direct-oid-${directCommitCounter}`,
+    messageHeadline: `direct commit ${directCommitCounter}`,
+    authoredDate: '2023-01-01T00:00:00Z',
+    author: AUTHOR,
+    url: `https://github.com/o/r/commit/direct-oid-${directCommitCounter}`,
+    additions: 3,
+    deletions: 1,
+    ...overrides,
+  }
 }
 
 export function makeRelease(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {

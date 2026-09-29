@@ -31,6 +31,9 @@ const HYPHA_COLOR: Record<HyphaKind, string> = {
   closed: '#8a6b4f',
   open: '#ffe9a8',
   liveBranch: '#9fb3c8',
+  // Same base color as a merged PR (Unit 2: both are "trunk work" that fuses
+  // into the colony) -- see `colors.ts`'s `hyphaColorStops` default case.
+  direct: '#6ee7ff',
 }
 
 function projectSvg(x: number, z: number, scale: number): [number, number] {

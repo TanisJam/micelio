@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computeTimeBounds } from '../shared/timeBounds'
-import { makeBranch, makeClosedPr, makeMergedPr, makeOpenPr, makeSnapshot } from '../shared/testHelpers'
+import { makeBranch, makeClosedPr, makeDirectCommit, makeMergedPr, makeOpenPr, makeSnapshot } from '../shared/testHelpers'
 import { buildHyphaTopology } from './topology'
 
 describe('buildHyphaTopology', () => {
@@ -209,20 +209,153 @@ describe('buildHyphaTopology', () => {
     }
   })
 
-  it('produces just a main hypha (no PR-derived hyphae) for a tiny repo with no PRs/releases and one commit', () => {
+  it('produces just a main hypha (no PR-derived hyphae) for a tiny repo with no PRs/releases and zero direct commits', () => {
     const snapshot = makeSnapshot({
       mergedPullRequests: [],
       openPullRequests: [],
       closedPullRequests: [],
       liveBranches: [],
       releases: [],
-      directCommits: [{ oid: 'only1', messageHeadline: 'init', authoredDate: '2024-01-01T00:00:00Z', author: { login: null, avatarUrl: null }, url: 'https://x/only1' }],
+      directCommits: [],
     })
     const bounds = computeTimeBounds(snapshot)
     const { main, hyphae } = buildHyphaTopology(snapshot, bounds)
     expect(hyphae).toHaveLength(0)
     expect(main.kind).toBe('main')
     expect(main.splitTime).toBeLessThanOrEqual(main.endTime)
-    expect(main.commits).toHaveLength(1)
+    expect(main.commits).toHaveLength(0)
+  })
+
+  it('turns a single direct (non-PR) commit into its own `direct`-kind hypha, not a main-hypha commit', () => {
+    const snapshot = makeSnapshot({
+      mergedPullRequests: [],
+      openPullRequests: [],
+      closedPullRequests: [],
+      liveBranches: [],
+      releases: [],
+      directCommits: [makeDirectCommit({ oid: 'only1', authoredDate: '2024-01-01T00:00:00Z', author: { login: null, avatarUrl: null } })],
+    })
+    const bounds = computeTimeBounds(snapshot)
+    const { main, hyphae } = buildHyphaTopology(snapshot, bounds)
+    expect(hyphae).toHaveLength(1)
+    expect(hyphae[0]!.kind).toBe('direct')
+    expect(hyphae[0]!.commitCount).toBe(1)
+    expect(hyphae[0]!.status).toBe('fused')
+    expect(hyphae[0]!.parentHyphaId).toBe(main.id)
+    expect(main.commits).toHaveLength(0)
+  })
+
+  describe('direct-commit bursts', () => {
+    it('groups consecutive same-author commits within the gap window into one `direct` hypha', () => {
+      const base = Date.parse('2024-01-01T00:00:00Z')
+      const oneHourMs = 60 * 60 * 1000
+      const commits = [
+        makeDirectCommit({ oid: 'a', authoredDate: new Date(base).toISOString(), author: { login: 'alice', avatarUrl: null } }),
+        makeDirectCommit({ oid: 'b', authoredDate: new Date(base + oneHourMs).toISOString(), author: { login: 'alice', avatarUrl: null } }),
+        makeDirectCommit({ oid: 'c', authoredDate: new Date(base + 2 * oneHourMs).toISOString(), author: { login: 'alice', avatarUrl: null } }),
+      ]
+      const snapshot = makeSnapshot({
+        mergedPullRequests: [],
+        openPullRequests: [],
+        closedPullRequests: [],
+        liveBranches: [],
+        releases: [],
+        directCommits: commits,
+      })
+      const bounds = computeTimeBounds(snapshot)
+      const { hyphae } = buildHyphaTopology(snapshot, bounds)
+      const direct = hyphae.filter((h) => h.kind === 'direct')
+      expect(direct).toHaveLength(1)
+      expect(direct[0]!.commitCount).toBe(3)
+    })
+
+    it('splits a burst when the gap between commits exceeds the burst window', () => {
+      const base = Date.parse('2024-01-01T00:00:00Z')
+      const sevenHoursMs = 7 * 60 * 60 * 1000
+      const commits = [
+        makeDirectCommit({ oid: 'a', authoredDate: new Date(base).toISOString(), author: { login: 'alice', avatarUrl: null } }),
+        makeDirectCommit({ oid: 'b', authoredDate: new Date(base + sevenHoursMs).toISOString(), author: { login: 'alice', avatarUrl: null } }),
+      ]
+      const snapshot = makeSnapshot({
+        mergedPullRequests: [],
+        openPullRequests: [],
+        closedPullRequests: [],
+        liveBranches: [],
+        releases: [],
+        directCommits: commits,
+      })
+      const bounds = computeTimeBounds(snapshot)
+      const { hyphae } = buildHyphaTopology(snapshot, bounds)
+      const direct = hyphae.filter((h) => h.kind === 'direct')
+      expect(direct).toHaveLength(2)
+      expect(direct.every((h) => h.commitCount === 1)).toBe(true)
+    })
+
+    it('splits a burst when the author changes even with no time gap', () => {
+      const base = Date.parse('2024-01-01T00:00:00Z')
+      const commits = [
+        makeDirectCommit({ oid: 'a', authoredDate: new Date(base).toISOString(), author: { login: 'alice', avatarUrl: null } }),
+        makeDirectCommit({ oid: 'b', authoredDate: new Date(base + 1000).toISOString(), author: { login: 'bob', avatarUrl: null } }),
+      ]
+      const snapshot = makeSnapshot({
+        mergedPullRequests: [],
+        openPullRequests: [],
+        closedPullRequests: [],
+        liveBranches: [],
+        releases: [],
+        directCommits: commits,
+      })
+      const bounds = computeTimeBounds(snapshot)
+      const { hyphae } = buildHyphaTopology(snapshot, bounds)
+      const direct = hyphae.filter((h) => h.kind === 'direct')
+      expect(direct).toHaveLength(2)
+    })
+
+    it('caps a very long same-author burst by splitting it into multiple `direct` hyphae', () => {
+      const base = Date.parse('2024-01-01T00:00:00Z')
+      const commits = Array.from({ length: 90 }, (_, i) =>
+        makeDirectCommit({
+          oid: `c${i}`,
+          authoredDate: new Date(base + i * 60_000).toISOString(),
+          author: { login: 'alice', avatarUrl: null },
+        }),
+      )
+      const snapshot = makeSnapshot({
+        mergedPullRequests: [],
+        openPullRequests: [],
+        closedPullRequests: [],
+        liveBranches: [],
+        releases: [],
+        directCommits: commits,
+      })
+      const bounds = computeTimeBounds(snapshot)
+      const { hyphae } = buildHyphaTopology(snapshot, bounds)
+      const direct = hyphae.filter((h) => h.kind === 'direct')
+      expect(direct.length).toBeGreaterThan(1)
+      const totalCommits = direct.reduce((sum, h) => sum + h.commitCount, 0)
+      expect(totalCommits).toBe(90)
+      for (const hypha of direct) expect(hypha.commitCount).toBeLessThanOrEqual(40)
+    })
+
+    it('excludes commits associated with a merged PR from any direct-commit burst (they render via the PR hypha instead)', () => {
+      // `mapDirectCommits` (the adapter mapper) is the actual PR-association
+      // filter; at the topology level, `snapshot.directCommits` is already
+      // assumed pre-filtered -- this test documents that a merged PR's own
+      // commits never separately appear there, so they can never form a
+      // spurious extra `direct` hypha alongside the PR's real hypha.
+      const merged = makeMergedPr({ mergedAt: '2024-01-02T00:00:00Z', createdAt: '2024-01-01T00:00:00Z' })
+      const snapshot = makeSnapshot({
+        mergedPullRequests: [merged],
+        openPullRequests: [],
+        closedPullRequests: [],
+        liveBranches: [],
+        releases: [],
+        directCommits: [],
+      })
+      const bounds = computeTimeBounds(snapshot)
+      const { hyphae } = buildHyphaTopology(snapshot, bounds)
+      expect(hyphae.filter((h) => h.kind === 'direct')).toHaveLength(0)
+      expect(hyphae.filter((h) => h.kind === 'merged')).toHaveLength(1)
+    })
   })
 })

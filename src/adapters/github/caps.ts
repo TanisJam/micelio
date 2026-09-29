@@ -33,10 +33,16 @@ export const CAPS = {
   secondaryCommitsPerPr: 8,
   /** Live branches fetched. */
   maxBranches: 100,
-  /** Default-branch commits scanned to look for direct (non-PR) commits. */
-  directCommitsScanned: 50,
-  /** Direct (non-PR) commits kept after scanning. */
-  maxDirectCommits: 20,
+  /**
+   * Unit 2: default-branch commit history scanned (paginated, like merged/
+   * closed PRs) to look for direct (non-PR) commits, up to this total raw
+   * commit count -- not the count kept after filtering out PR-associated
+   * commits, which is usually much smaller. Bounded by the same wall-clock
+   * `fetchTimeBudgetMs` as merged/closed-PR pagination.
+   */
+  maxDirectCommitsScanned: 1000,
+  /** Page size for each default-branch history GraphQL request. */
+  directCommitsPageSize: 100,
   /**
    * Unit 1: a global wall-clock budget (from the start of the whole snapshot
    * fetch) for the merged-PR and closed-PR pagination loops. Each loop

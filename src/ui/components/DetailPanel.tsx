@@ -165,6 +165,63 @@ function DetailBody({ detail, onFocusElement }: { detail: ElementDetail; onFocus
       )
     }
 
+    case 'direct_burst': {
+      const dateRange =
+        detail.firstDate === detail.lastDate ? formatDate(detail.lastDate) : `${formatDate(detail.firstDate)} – ${formatDate(detail.lastDate)}`
+      return (
+        <>
+          <h2 style={{ margin: 0, fontFamily: ui.fontDisplay, fontSize: '1.15rem' }}>Pushed directly to {detail.defaultBranch}</h2>
+          <Field label="Author">
+            <AuthorLine author={detail.author} />
+          </Field>
+          <Field label="Commits">
+            {formatCount(detail.commitCount, 'commit')} · {dateRange}
+          </Field>
+          {detail.additions !== null && detail.deletions !== null && (
+            <Field label="Changes">
+              <span style={{ color: '#7fd88a' }}>{formatSignedNumber(detail.additions)}</span>{' '}
+              <span style={{ color: '#e08a8a' }}>{formatDeletions(detail.deletions)}</span>
+            </Field>
+          )}
+          {detail.commits.length > 0 && (
+            <Field label={`Commit list (${formatNumber(detail.commits.length)})`}>
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: ui.space(1) }}>
+                {detail.commits.map((commit) =>
+                  commit.elementId ? (
+                    <li key={commit.oid}>
+                      <button
+                        type="button"
+                        onClick={() => onFocusElement(commit.elementId!)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: ui.text,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          padding: `${ui.space(1)} 0`,
+                          fontSize: '0.82rem',
+                          width: '100%',
+                        }}
+                      >
+                        <code style={{ color: ui.textMuted }}>{formatShortOid(commit.oid)}</code> {commit.headline}
+                      </button>
+                    </li>
+                  ) : (
+                    <li key={commit.oid} style={{ fontSize: '0.82rem', color: ui.textMuted, padding: `${ui.space(1)} 0` }}>
+                      <code>{formatShortOid(commit.oid)}</code> {commit.headline}
+                    </li>
+                  ),
+                )}
+              </ul>
+            </Field>
+          )}
+          <Field label="Link">
+            <GitHubLink href={detail.url} />
+          </Field>
+        </>
+      )
+    }
+
     case 'commit':
       return (
         <>

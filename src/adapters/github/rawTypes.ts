@@ -30,6 +30,9 @@ export interface RawCommit {
 
 export interface RawHistoryCommit extends RawCommit {
   associatedPullRequests: { totalCount: number }
+  /** Unit 2: cheap fields directly on `Commit`, requested by `DIRECT_COMMITS_PAGE_QUERY`. */
+  additions: number
+  deletions: number
 }
 
 export interface RawPrCommitNode {
@@ -124,7 +127,7 @@ export interface RawPageInfo {
   endCursor: string | null
 }
 
-/** Unit 1: the cheap single-page "meta" shape (`REPO_META_QUERY`) -- no `mergedPRs` connection of its own, see `queries.ts`. */
+/** Unit 1/2: the cheap single-page "meta" shape (`REPO_META_QUERY`) -- no `mergedPRs`/`closedPRs`/default-branch-history connection of its own, see `queries.ts`. */
 export interface RawRepositoryMeta {
   name: string
   description: string | null
@@ -135,7 +138,6 @@ export interface RawRepositoryMeta {
   pushedAt: string
   defaultBranchRef: {
     name: string
-    target: { history: { nodes: RawHistoryCommit[] } } | null
   } | null
   licenseInfo: { name: string } | null
   languages: { edges: RawLanguageEdge[] } | null
@@ -165,5 +167,14 @@ export interface MergedPrsPageResponse {
 export interface ClosedPrsPageResponse {
   repository: {
     pullRequests: RawCountedPage<RawClosedPullRequest>
+  } | null
+}
+
+/** Unit 2: `DIRECT_COMMITS_PAGE_QUERY`'s response shape -- `null`/missing `target` for an empty repository (no commits yet on the default branch). */
+export interface DirectCommitsPageResponse {
+  repository: {
+    defaultBranchRef: {
+      target: { history: RawCountedPage<RawHistoryCommit> } | null
+    } | null
   } | null
 }

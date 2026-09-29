@@ -116,6 +116,15 @@ export interface DirectCommit {
   authoredDate: string
   author: CommitAuthor
   url: string
+  /**
+   * Real per-commit line changes, when cheaply available from GraphQL
+   * (`additions`/`deletions` on `Commit`) -- `null` for a commit fetched
+   * before this field existed (e.g. an older bundled fixture), never
+   * fabricated. Feeds a direct-commit burst's work-based hypha length the
+   * same way a merged PR's `additions + deletions` does.
+   */
+  additions: number | null
+  deletions: number | null
 }
 
 export type RepoSnapshotSource = 'github' | 'fixture'
@@ -141,6 +150,7 @@ export interface PaginationTruncation {
 export interface FetchTruncation {
   mergedPullRequests?: PaginationTruncation
   closedPullRequests?: PaginationTruncation
+  directCommits?: PaginationTruncation
 }
 
 export interface RepoSnapshot {

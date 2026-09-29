@@ -22,9 +22,10 @@ export interface NetworkExploreCommitEntry {
 export interface NetworkExplorePrEntry {
   /** The matching hypha element id. */
   id: string
-  number: number
+  /** `null` for a `direct` (non-PR) burst entry -- it has no PR number. */
+  number: number | null
   title: string
-  status: 'merged' | 'closed' | 'open'
+  status: 'merged' | 'closed' | 'open' | 'direct'
   date: number
   commits: NetworkExploreCommitEntry[]
 }
@@ -35,9 +36,12 @@ export interface NetworkExploreYearGroup {
 }
 
 export function buildNetworkExploreGroups(model: NetworkModel, snapshot: RepoSnapshot): NetworkExploreYearGroup[] {
-  const prHyphae = model.hyphae.filter(
-    (hypha): hypha is typeof hypha & { kind: 'merged' | 'closed' | 'open' } =>
-      hypha.kind === 'merged' || hypha.kind === 'closed' || hypha.kind === 'open',
+  // Unit 2: a `direct` (WORK BURST) hypha is browsable here too, alongside
+  // PR hyphae -- otherwise a repo's direct-push history would be invisible
+  // to the non-3D "Explore list" path (P11).
+  const listableHyphae = model.hyphae.filter(
+    (hypha): hypha is typeof hypha & { kind: 'merged' | 'closed' | 'open' | 'direct' } =>
+      hypha.kind === 'merged' || hypha.kind === 'closed' || hypha.kind === 'open' || hypha.kind === 'direct',
   )
 
   const nodesByHypha = new Map<string, typeof model.nodes>()
@@ -49,9 +53,9 @@ export function buildNetworkExploreGroups(model: NetworkModel, snapshot: RepoSna
 
   const groupsByYear = new Map<number, NetworkExplorePrEntry[]>()
 
-  for (const hypha of prHyphae) {
+  for (const hypha of listableHyphae) {
     const detail = resolveNetworkElementDetail(model, snapshot, hypha.id)
-    if (!detail || detail.kind !== 'pull_request') continue
+    if (!detail || (detail.kind !== 'pull_request' && detail.kind !== 'direct_burst')) continue
     const summary = summarizeElementDetail(detail)
 
     const commits: NetworkExploreCommitEntry[] = (nodesByHypha.get(hypha.id) ?? [])
@@ -62,14 +66,10 @@ export function buildNetworkExploreGroups(model: NetworkModel, snapshot: RepoSna
         return { id: node.id, headline: commitEntry?.headline ?? node.ref.id }
       })
 
-    const entry: NetworkExplorePrEntry = {
-      id: hypha.id,
-      number: detail.number,
-      title: summary.title,
-      status: detail.status,
-      date: summary.date ?? hypha.splitTime,
-      commits,
-    }
+    const entry: NetworkExplorePrEntry =
+      detail.kind === 'pull_request'
+        ? { id: hypha.id, number: detail.number, title: summary.title, status: detail.status, date: summary.date ?? hypha.splitTime, commits }
+        : { id: hypha.id, number: null, title: summary.title, status: 'direct', date: summary.date ?? hypha.splitTime, commits }
 
     const year = new Date(entry.date).getUTCFullYear()
     const list = groupsByYear.get(year) ?? []

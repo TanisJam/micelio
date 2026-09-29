@@ -193,17 +193,21 @@ export function mapBranches(branches: RawBranchRef[]): LiveBranch[] {
 
 /**
  * Keeps default-branch commits that have no associated pull request (i.e.
- * were pushed directly), capped to `CAPS.maxDirectCommits`.
+ * were pushed directly, or are the merge commit of a PR that's already
+ * excluded here too since `associatedPullRequests` reports it as belonging
+ * to that PR). Unit 2: no longer separately capped here -- the paginated
+ * scan itself (`CAPS.maxDirectCommitsScanned`) already bounds the input.
  */
 export function mapDirectCommits(history: RawHistoryCommit[]): DirectCommit[] {
   return history
     .filter((commit) => commit.associatedPullRequests.totalCount === 0)
-    .slice(0, CAPS.maxDirectCommits)
     .map((commit) => ({
       oid: commit.oid,
       messageHeadline: commit.messageHeadline,
       authoredDate: commit.authoredDate,
       url: commit.url,
       author: mapGitActor(commit.author),
+      additions: commit.additions,
+      deletions: commit.deletions,
     }))
 }

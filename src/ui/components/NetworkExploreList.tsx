@@ -34,10 +34,11 @@ function Disclosure({ open }: { open: boolean }) {
   )
 }
 
-const STATUS_LABEL: Record<'merged' | 'closed' | 'open', string> = {
+const STATUS_LABEL: Record<'merged' | 'closed' | 'open' | 'direct', string> = {
   merged: 'Merged',
   closed: 'Closed',
   open: 'Open',
+  direct: 'Direct',
 }
 
 /**
@@ -151,11 +152,21 @@ export function NetworkExploreList({ model, snapshot, selectedId, onSelect, onCl
                               onSelect(pr.id)
                             }}
                             style={ROW_BUTTON_STYLE}
-                            aria-label={`${STATUS_LABEL[pr.status]} pull request: #${pr.number} ${pr.title}, ${formatDate(pr.date)}`}
+                            aria-label={
+                              pr.number !== null
+                                ? `${STATUS_LABEL[pr.status]} pull request: #${pr.number} ${pr.title}, ${formatDate(pr.date)}`
+                                : `${pr.title}, ${formatDate(pr.date)}`
+                            }
                           >
                             <Disclosure open={prOpen} />
                             <span style={{ color: ui.textMuted, fontSize: '0.75rem' }}>{STATUS_LABEL[pr.status]}</span>
-                            #{pr.number} {pr.title}
+                            {pr.number !== null ? (
+                              <>
+                                #{pr.number} {pr.title}
+                              </>
+                            ) : (
+                              pr.title
+                            )}
                           </button>
                           {prOpen && (
                             <ul style={{ listStyle: 'none', margin: 0, padding: `0 0 0 ${ui.space(5)}` }}>

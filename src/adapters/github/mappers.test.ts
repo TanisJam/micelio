@@ -406,7 +406,7 @@ describe('mapBranches', () => {
 })
 
 describe('mapDirectCommits', () => {
-  it('keeps only commits with no associated pull request, capped', () => {
+  it('keeps only commits with no associated pull request', () => {
     const history: RawHistoryCommit[] = Array.from({ length: 30 }, (_, i) => ({
       oid: `oid-${i}`,
       messageHeadline: `commit ${i}`,
@@ -414,14 +414,16 @@ describe('mapDirectCommits', () => {
       url: `https://x/${i}`,
       author: null,
       associatedPullRequests: { totalCount: i % 2 === 0 ? 0 : 1 },
+      additions: 1,
+      deletions: 0,
     }))
     const direct = mapDirectCommits(history)
-    // Only even-indexed commits (totalCount 0) qualify; 15 exist, cap is 20.
+    // Only even-indexed commits (totalCount 0) qualify -- 15 of the 30.
     expect(direct).toHaveLength(15)
     expect(direct.map((c) => c.oid)).toEqual(['oid-0', 'oid-2', 'oid-4', 'oid-6', 'oid-8', 'oid-10', 'oid-12', 'oid-14', 'oid-16', 'oid-18', 'oid-20', 'oid-22', 'oid-24', 'oid-26', 'oid-28'])
   })
 
-  it('caps direct commits even when more than the cap qualify', () => {
+  it('does not cap the result itself (Unit 2: capping moved to the adapter pagination loop, see caps.ts)', () => {
     const history: RawHistoryCommit[] = Array.from({ length: 60 }, (_, i) => ({
       oid: `oid-${i}`,
       messageHeadline: `commit ${i}`,
@@ -429,7 +431,35 @@ describe('mapDirectCommits', () => {
       url: `https://x/${i}`,
       author: null,
       associatedPullRequests: { totalCount: 0 },
+      additions: 1,
+      deletions: 0,
     }))
-    expect(mapDirectCommits(history)).toHaveLength(20)
+    expect(mapDirectCommits(history)).toHaveLength(60)
+  })
+
+  it('carries real additions/deletions through onto the mapped `DirectCommit`', () => {
+    const history: RawHistoryCommit[] = [
+      {
+        oid: 'oid-1',
+        messageHeadline: 'commit 1',
+        authoredDate: '2024-01-01T00:00:00Z',
+        url: 'https://x/1',
+        author: null,
+        associatedPullRequests: { totalCount: 0 },
+        additions: 12,
+        deletions: 4,
+      },
+    ]
+    expect(mapDirectCommits(history)).toEqual([
+      {
+        oid: 'oid-1',
+        messageHeadline: 'commit 1',
+        authoredDate: '2024-01-01T00:00:00Z',
+        url: 'https://x/1',
+        author: { login: null, avatarUrl: null },
+        additions: 12,
+        deletions: 4,
+      },
+    ])
   })
 })

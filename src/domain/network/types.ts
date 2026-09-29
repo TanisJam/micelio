@@ -14,7 +14,7 @@ import type { Vec3 } from '../shared/vector'
  * `src/domain/tree/` in M4.
  */
 
-export type NetworkRefType = 'repo' | 'release' | 'pull_request' | 'commit' | 'branch'
+export type NetworkRefType = 'repo' | 'release' | 'pull_request' | 'commit' | 'branch' | 'direct_burst'
 
 /** Points back to the real GitHub data a network element represents. */
 export interface NetworkRef {
@@ -33,6 +33,14 @@ export type HyphaKind =
   | 'open'
   /** A live branch with no open PR: splits from its parent and keeps growing to "now". */
   | 'liveBranch'
+  /**
+   * A WORK BURST of direct (non-PR) commits pushed straight to the default
+   * branch (Unit 2) -- splits from `main` at the burst's first commit and
+   * fuses back (like a merged PR: real trunk work) at its last, with its own
+   * commits as hairs. Grouping (`groupDirectCommitBursts`): consecutive
+   * commits by the same author less than `DIRECT_BURST_MAX_GAP_MS` apart.
+   */
+  | 'direct'
 
 export interface HyphaPoint {
   position: Vec3

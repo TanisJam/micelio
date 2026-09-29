@@ -1,5 +1,6 @@
-import type { ClosedPullRequest, CommitAuthor, MergedPullRequest, OpenPullRequest, RepoSnapshot } from '../repo'
+import type { ClosedPullRequest, CommitAuthor, DirectCommit, MergedPullRequest, OpenPullRequest, RepoSnapshot } from '../repo'
 import type { TimeBounds } from '../shared/types'
+import { groupDirectCommitBursts } from './directBursts'
 import type { HyphaKind, NetworkRef } from './types'
 
 /**
@@ -15,12 +16,12 @@ export interface HyphaCommitDraft {
   ref: NetworkRef
   isMergePoint: boolean
   /**
-   * Only populated for a genuine direct commit on `main` (undefined for a
-   * merge-point pseudo-entry and for PR-hypha commits, whose author is
-   * already carried by their own `HyphaDraft.author`). Used by the colony
-   * layout to place a direct commit's radial spur in its author's sector
-   * (M2c) -- optional so the spiral layout, which never reads it, is
-   * unaffected.
+   * Only populated for a commit on a `direct`-kind hypha (undefined for a
+   * merge-point pseudo-entry on `main` and for PR-hypha commits, whose
+   * author is already carried by their own `HyphaDraft.author`) -- kept
+   * per-commit even though every commit in a burst shares the same author
+   * (grouping requires it), so a `direct` hypha's commit list can show each
+   * commit's own author without a second lookup.
    */
   author?: CommitAuthor
 }
@@ -73,6 +74,24 @@ export interface TopologyResult {
 function toEpochMs(iso: string): number {
   const ms = Date.parse(iso)
   return Number.isNaN(ms) ? 0 : ms
+}
+
+/**
+ * A direct-commit burst's `HyphaDraft.workLines` -- real `additions +
+ * deletions` summed across every commit in the burst, mirroring a merged
+ * PR's own `workLines` (see `fromMerged`). `null` (never a fabricated
+ * partial sum) unless EVERY commit in the burst has both fields, which
+ * excludes a bundled fixture generated before this field existed --
+ * `computeWorkLength` (M2d) already treats `null` as "commit count only",
+ * exactly like a closed/open PR with no diff stats.
+ */
+function burstWorkLines(commits: DirectCommit[]): number | null {
+  let total = 0
+  for (const commit of commits) {
+    if (typeof commit.additions !== 'number' || typeof commit.deletions !== 'number') return null
+    total += commit.additions + commit.deletions
+  }
+  return total
 }
 
 interface ParentCandidate {
@@ -179,14 +198,17 @@ export function buildHyphaTopology(
     title: defaultBranch,
     url: snapshot.meta.url,
     author: { login: null, avatarUrl: null },
-    commitCount: snapshot.directCommits.length,
+    // Unit 2: direct (non-PR) commits no longer live directly on `main` --
+    // each real WORK BURST of them becomes its own `direct`-kind hypha
+    // below, grown through the exact same pipeline a PR hypha uses (so its
+    // hairs actually attach to its own polyline, fixing the M2/M2c
+    // `buildDirectCommitSpurs` bug where a "spur" was placed at an
+    // independently-found empty angle, never on any real hypha's curve).
+    // `main.commits` is left to hold only the merge-point pseudo-entries
+    // pushed below, one per merged PR.
+    commitCount: 0,
     workLines: null,
-    commits: snapshot.directCommits.map((commit) => ({
-      time: clampTime(toEpochMs(commit.authoredDate), bounds.firstEventTime, bounds.lastEventTime),
-      ref: { type: 'commit', id: commit.oid },
-      isMergePoint: false,
-      author: commit.author,
-    })),
+    commits: [],
   }
 
   const sources: PrSource[] = [
@@ -258,6 +280,46 @@ export function buildHyphaTopology(
         isMergePoint: true,
       })
     }
+  }
+
+  // Unit 2: group direct (non-PR) commits into WORK BURSTS -- consecutive
+  // commits by the same author less than `DIRECT_BURST_MAX_GAP_MS` apart --
+  // and give each burst its own `direct`-kind hypha, splitting at its first
+  // commit and fusing (like a merged PR: real trunk work) at its last.
+  // `snapshot.directCommits` is already filtered upstream (the adapter's
+  // `mapDirectCommits`) to exclude any commit associated with a pull
+  // request, so every burst here is genuinely direct push history.
+  for (const burst of groupDirectCommitBursts(snapshot.directCommits)) {
+    const firstCommit = burst.commits[0]!
+    const rawSplitTime = burst.firstTime
+    const splitTime = Math.max(rawSplitTime, main.splitTime)
+    const endTime = clampTime(burst.lastTime, splitTime, bounds.lastEventTime)
+    const id = `hypha-direct-${firstCommit.oid}`
+    const workLines = burstWorkLines(burst.commits)
+
+    drafts.push({
+      id,
+      kind: 'direct',
+      ref: { type: 'direct_burst', id: firstCommit.oid },
+      parentHyphaId: main.id,
+      rawSplitTime,
+      splitTime,
+      endTime,
+      status: 'fused',
+      title: `Pushed directly to ${defaultBranch}`,
+      url: firstCommit.url,
+      author: burst.author,
+      commitCount: burst.commits.length,
+      workLines,
+      commits: burst.commits
+        .map((commit) => ({
+          time: clampTime(toEpochMs(commit.authoredDate), splitTime, endTime),
+          ref: { type: 'commit' as const, id: commit.oid },
+          isMergePoint: false,
+          author: commit.author,
+        }))
+        .sort((a, b) => a.time - b.time),
+    })
   }
 
   // Live branches with no matching open/merged/closed PR head ref: minimal

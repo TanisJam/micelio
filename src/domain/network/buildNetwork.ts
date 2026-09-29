@@ -23,7 +23,7 @@ export const DEFAULT_NETWORK_BUILD_OPTIONS: NetworkBuildOptions = {
   ...DEFAULT_LAYOUT_OPTIONS,
 }
 
-const HYPHA_KINDS: HyphaKind[] = ['main', 'merged', 'closed', 'open', 'liveBranch']
+const HYPHA_KINDS: HyphaKind[] = ['main', 'merged', 'closed', 'open', 'liveBranch', 'direct']
 
 export function buildNetwork(snapshot: RepoSnapshot, options: Partial<NetworkBuildOptions> = {}): NetworkModel {
   const resolved: NetworkBuildOptions = { ...DEFAULT_NETWORK_BUILD_OPTIONS, ...options }

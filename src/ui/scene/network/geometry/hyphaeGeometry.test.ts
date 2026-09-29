@@ -40,7 +40,7 @@ function makeModel(hyphae: Hypha[]): NetworkModel {
     fusions: [],
     overflow: { hyphaeOmitted: 0, nodesOmittedByHypha: {} },
     summary: {
-      hyphaCountByKind: { main: 0, merged: 1, closed: 0, open: 0, liveBranch: 0 },
+      hyphaCountByKind: { main: 0, merged: 1, closed: 0, open: 0, liveBranch: 0, direct: 0 },
       nodeCount: 0,
       mushroomCount: 0,
       hairCount: 0,

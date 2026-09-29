@@ -1,5 +1,5 @@
 import { RepoError } from '../../domain/errors.ts'
-import type { ClosedPullRequest, FetchTruncation, MergedPullRequest, PaginationTruncation, RepoSnapshot } from '../../domain/repo.ts'
+import type { ClosedPullRequest, DirectCommit, FetchTruncation, MergedPullRequest, PaginationTruncation, RepoSnapshot } from '../../domain/repo.ts'
 import { CAPS } from './caps.ts'
 import { graphqlRequest } from './graphqlClient.ts'
 import {
@@ -12,11 +12,13 @@ import {
   mapReleases,
   mapTagsAsReleases,
 } from './mappers.ts'
-import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_META_QUERY } from './queries.ts'
+import { CLOSED_PRS_PAGE_QUERY, DIRECT_COMMITS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_META_QUERY } from './queries.ts'
 import type {
   ClosedPrsPageResponse,
+  DirectCommitsPageResponse,
   MergedPrsPageResponse,
   RawClosedPullRequest,
+  RawHistoryCommit,
   RawMergedPullRequest,
   RepoMetaResponse,
 } from './rawTypes.ts'
@@ -180,6 +182,51 @@ function fetchClosedPullRequests(
   })
 }
 
+async function fetchDirectCommitsPage(
+  owner: string,
+  repo: string,
+  token: string,
+  after: string | null,
+): Promise<RawPage<RawHistoryCommit> | null> {
+  const page = await graphqlRequest<DirectCommitsPageResponse>(
+    DIRECT_COMMITS_PAGE_QUERY,
+    { owner, name: repo, pageSize: CAPS.directCommitsPageSize, after },
+    token,
+  )
+  const history = page.repository?.defaultBranchRef?.target?.history
+  if (!history) return null
+  return {
+    totalCount: history.totalCount,
+    hasNextPage: history.pageInfo.hasNextPage,
+    endCursor: history.pageInfo.endCursor,
+    nodes: history.nodes,
+  }
+}
+
+/**
+ * Unit 2: scans up to `CAPS.maxDirectCommitsScanned` default-branch history
+ * nodes (paginated, same shared `paginate()` helper/time budget as merged/
+ * closed PRs) and keeps every raw node -- `mapDirectCommits` (called once on
+ * the full scanned set, not per-page) filters out anything associated with
+ * a pull request afterward, since that filter is a property of each commit,
+ * not of the page it arrived on.
+ */
+function fetchDirectCommitHistory(
+  owner: string,
+  repo: string,
+  token: string,
+  fetchStartedAt: number,
+  fetchTimeBudgetMs: number,
+): Promise<PaginationResult<RawHistoryCommit>> {
+  return paginate({
+    fetchStartedAt,
+    fetchTimeBudgetMs,
+    cap: CAPS.maxDirectCommitsScanned,
+    map: (raw: RawHistoryCommit) => raw,
+    fetchPage: (after) => fetchDirectCommitsPage(owner, repo, token, after),
+  })
+}
+
 /**
  * Fetches a full `RepoSnapshot` from the GitHub GraphQL API for `owner/repo`.
  * Throws a typed `RepoError` for not-found/private/rate-limited/upstream
@@ -210,18 +257,16 @@ export async function fetchRepoSnapshotFromGitHub(
   const fetchStartedAt = Date.now()
   const fetchTimeBudgetMs = options.fetchTimeBudgetMs ?? CAPS.fetchTimeBudgetMs
 
-  // Unit 1: the cheap meta query and the two independent PR pagination loops
-  // all start at the same time and run fully concurrently -- previously,
-  // merged-PR pagination could only begin once the (heavier, mergedPRs-
-  // bearing) overview query had already resolved.
-  const [metaResponse, mergedResult, closedResult] = await Promise.all([
-    graphqlRequest<RepoMetaResponse>(
-      REPO_META_QUERY,
-      { owner, name: repo, secondaryCommitsPerPr: CAPS.secondaryCommitsPerPr, directCommitsScanned: CAPS.directCommitsScanned },
-      token,
-    ),
+  // Unit 1/2: the cheap meta query and the three independent pagination
+  // loops (merged PRs, closed PRs, default-branch commit history) all start
+  // at the same time and run fully concurrently -- previously, merged-PR
+  // pagination could only begin once the (heavier, mergedPRs-bearing)
+  // overview query had already resolved.
+  const [metaResponse, mergedResult, closedResult, directHistoryResult] = await Promise.all([
+    graphqlRequest<RepoMetaResponse>(REPO_META_QUERY, { owner, name: repo, secondaryCommitsPerPr: CAPS.secondaryCommitsPerPr }, token),
     fetchMergedPullRequests(owner, repo, token, fetchStartedAt, fetchTimeBudgetMs),
     fetchClosedPullRequests(owner, repo, token, fetchStartedAt, fetchTimeBudgetMs),
+    fetchDirectCommitHistory(owner, repo, token, fetchStartedAt, fetchTimeBudgetMs),
   ])
 
   const repository = metaResponse.repository
@@ -234,11 +279,12 @@ export async function fetchRepoSnapshotFromGitHub(
       ? mapReleases(repository.releases.nodes)
       : mapTagsAsReleases(repository.tags.nodes)
 
-  const historyNodes = repository.defaultBranchRef?.target?.history.nodes ?? []
+  const directCommits: DirectCommit[] = mapDirectCommits(directHistoryResult.items)
 
   const truncated: FetchTruncation = {}
   if (mergedResult.truncation) truncated.mergedPullRequests = mergedResult.truncation
   if (closedResult.truncation) truncated.closedPullRequests = closedResult.truncation
+  if (directHistoryResult.truncation) truncated.directCommits = directHistoryResult.truncation
 
   return {
     meta: {
@@ -259,7 +305,7 @@ export async function fetchRepoSnapshotFromGitHub(
     openPullRequests: repository.openPRs.nodes.slice(0, CAPS.maxOpenPrs).map(mapOpenPullRequest),
     closedPullRequests: closedResult.items,
     liveBranches: mapBranches(repository.branches.nodes).slice(0, CAPS.maxBranches),
-    directCommits: mapDirectCommits(historyNodes),
+    directCommits,
     fetchedAt: new Date().toISOString(),
     source: 'github',
     ...(Object.keys(truncated).length > 0 ? { truncated } : {}),
