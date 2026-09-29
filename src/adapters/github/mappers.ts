@@ -207,7 +207,10 @@ export function mapDirectCommits(history: RawHistoryCommit[]): DirectCommit[] {
       authoredDate: commit.authoredDate,
       url: commit.url,
       author: mapGitActor(commit.author),
-      additions: commit.additions,
-      deletions: commit.deletions,
+      // Post-final-pass Unit 1: no longer requested (see `RawHistoryCommit`),
+      // so this is always `undefined` on a real response now -- normalized
+      // to `null`, the domain model's existing "not known" sentinel.
+      additions: commit.additions ?? null,
+      deletions: commit.deletions ?? null,
     }))
 }

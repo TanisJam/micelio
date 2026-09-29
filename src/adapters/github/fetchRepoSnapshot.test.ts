@@ -333,6 +333,48 @@ describe('fetchRepoSnapshotFromGitHub', () => {
     expect(snapshot.truncated?.directCommits).toEqual({ fetched: 1, totalCount: 500, reason: 'time_budget' })
   })
 
+  /**
+   * Post-final-pass Unit 1 (cold-fetch regression): the shared deadline
+   * must bound the WHOLE fetch, not just the gap between pages -- a page
+   * that's already in flight when the deadline hits must be cut off too,
+   * across every concurrent stream (meta, merged/closed PRs, direct
+   * commits) alike. Unlike the pre-existing "time budget" tests above
+   * (which simulate a slow page by advancing the fake clock synchronously
+   * INSIDE the mocked handler before it resolves), this simulates a page
+   * that never resolves on its own at all -- only the deadline-driven abort
+   * (`graphqlClient.ts`'s `deadlineAt`) can end it.
+   */
+  it('aborts a still-in-flight page once the global deadline passes, honoring one shared deadline across every concurrent stream', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init: { body: string; signal?: AbortSignal }) => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      const query = queryOf(init)
+      if (query === REPO_META_QUERY) return jsonResponse(buildMetaBody())
+      if (query === CLOSED_PRS_PAGE_QUERY) return jsonResponse(closedPageBody([]))
+      if (query === DIRECT_COMMITS_PAGE_QUERY) return jsonResponse(directPageBody([]))
+      if (query === MERGED_PRS_PAGE_QUERY) {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')))
+        })
+      }
+      throw new Error(`unexpected GraphQL query: ${query}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+    await vi.advanceTimersByTimeAsync(CAPS.fetchTimeBudgetMs)
+    const snapshot = await pending
+
+    expect(snapshot.mergedPullRequests).toEqual([])
+    expect(snapshot.truncated?.mergedPullRequests).toEqual({ fetched: 0, totalCount: null, reason: 'time_budget' })
+    // The other, unblocked streams complete normally and are unaffected.
+    expect(snapshot.truncated?.closedPullRequests).toBeUndefined()
+    expect(snapshot.truncated?.directCommits).toBeUndefined()
+    expect(snapshot.meta.name).toBe('repo')
+  })
+
   it('falls back to tags when there are no releases', async () => {
     const fetchMock = routedFetch({
       meta: () => {

@@ -300,13 +300,27 @@ export const CLOSED_PRS_PAGE_QUERY = /* GraphQL */ `
 // Unit 2: paginated default-branch commit history, mirroring the merged-
 // PR/closed-PR pagination shape (`totalCount`/`pageInfo`/`nodes`) so it can
 // run through the same `paginate()` helper and the same concurrent
-// `Promise.all` start as the other two loops. `additions`/`deletions` are
-// cheap fields directly on `Commit` (no extra round-trip), used to give a
-// direct-commit burst's hypha a real work-based length, exactly like a
-// merged PR's own `additions + deletions`. `associatedPullRequests` is how
-// `mapDirectCommits` tells a genuine direct push apart from a commit that
-// belongs to (or is the merge commit of) a pull request -- both are
+// `Promise.all` start as the other two loops. `associatedPullRequests` is
+// how `mapDirectCommits` tells a genuine direct push apart from a commit
+// that belongs to (or is the merge commit of) a pull request -- both are
 // excluded, since a PR's own commits already render via its own hypha.
+//
+// Post-final-pass Unit 1 (cold-fetch regression): this query used to also
+// request `additions`/`deletions` PER COMMIT NODE. Unlike a PR's own
+// `additions`/`deletions` (requested once per PR in `MERGED_PR_FRAGMENT`,
+// already a precomputed aggregate), a `Commit`'s own `additions`/
+// `deletions` force GitHub's API to compute that individual commit's diff
+// stat against its parent on the fly -- doing that for up to 100 commits on
+// EVERY page of this query (vs. at most 10-20 per PR page) measurably
+// dominated real cold-fetch latency once this query started running
+// concurrently with merged-/closed-PR pagination (`facebook/react` cold:
+// 50.7s, up from 26.5s before direct-commit history existed). Dropped here;
+// `DirectCommit.additions`/`.deletions` in the domain model were already
+// nullable ("real per-commit line changes, when cheaply available") for
+// exactly this reason, so every downstream consumer (`topology.ts`'s
+// work-based hypha length, `elementDetail.ts`'s detail panel) already
+// degrades gracefully to a commit-count-based fallback with no additional
+// change needed there.
 export const DIRECT_COMMITS_PAGE_QUERY = /* GraphQL */ `
   query DirectCommitsPage(
     $owner: String!
@@ -329,8 +343,6 @@ export const DIRECT_COMMITS_PAGE_QUERY = /* GraphQL */ `
                 messageHeadline
                 authoredDate
                 url
-                additions
-                deletions
                 author {
                   name
                   user {

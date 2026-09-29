@@ -38,13 +38,29 @@ function parseRetryAfterSeconds(response: Response): number | undefined {
  * Minimal fetch-based GitHub GraphQL client. Maps transport and GraphQL-level
  * failures to typed `RepoError`s so the rest of the app never has to parse
  * GitHub-specific error shapes.
+ *
+ * Post-final-pass Unit 1 (cold-fetch regression): `deadlineAt`, when given,
+ * is an absolute `Date.now()`-comparable timestamp -- the SAME one shared by
+ * every concurrent request the whole snapshot fetch makes (meta + merged-/
+ * closed-PR/direct-commit-history pagination). Before this, the global
+ * `CAPS.fetchTimeBudgetMs` budget was only ever checked BETWEEN pages (see
+ * `paginate()` in `fetchRepoSnapshot.ts`): a single already-in-flight
+ * request had no upper bound of its own, so one unusually slow page (e.g.
+ * GitHub having a slow moment, or a large response) could push the whole
+ * fetch arbitrarily far past the budget with nothing to stop it. This aborts
+ * that in-flight request once the shared deadline is reached, so the WHOLE
+ * fetch -- not just the gaps between pages -- honors one real wall-clock
+ * ceiling.
  */
 export async function graphqlRequest<T>(
   query: string,
   variables: Record<string, unknown>,
   token: string,
+  deadlineAt?: number,
 ): Promise<T> {
   let response: Response
+  const controller = deadlineAt !== undefined ? new AbortController() : undefined
+  const timer = controller ? setTimeout(() => controller.abort(), Math.max(0, deadlineAt! - Date.now())) : undefined
   try {
     response = await fetch(GITHUB_GRAPHQL_ENDPOINT, {
       method: 'POST',
@@ -54,9 +70,12 @@ export async function graphqlRequest<T>(
         'User-Agent': 'micelio-app',
       },
       body: JSON.stringify({ query, variables }),
+      ...(controller ? { signal: controller.signal } : {}),
     })
   } catch (cause) {
     throw new RepoError('upstream_error', 'Could not reach the GitHub API.', { cause })
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
   }
 
   if (response.status === 401) {

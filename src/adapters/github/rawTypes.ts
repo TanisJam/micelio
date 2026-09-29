@@ -30,9 +30,17 @@ export interface RawCommit {
 
 export interface RawHistoryCommit extends RawCommit {
   associatedPullRequests: { totalCount: number }
-  /** Unit 2: cheap fields directly on `Commit`, requested by `DIRECT_COMMITS_PAGE_QUERY`. */
-  additions: number
-  deletions: number
+  /**
+   * Post-final-pass Unit 1: no longer requested by `DIRECT_COMMITS_PAGE_QUERY`
+   * (per-commit `additions`/`deletions` forced an expensive on-the-fly diff
+   * computation for every one of up to 100 commits/page -- see the query's
+   * own comment in `queries.ts`). Kept optional here, never present on real
+   * responses, so `mapDirectCommits` can fall back to `null` the same way it
+   * already does for an older bundled fixture captured before this field
+   * existed.
+   */
+  additions?: number
+  deletions?: number
 }
 
 export interface RawPrCommitNode {
