@@ -5,7 +5,8 @@
  * GPU, and saves desktop/mobile screenshots -- the mycelium network viewer at
  * a few growth/selection states for BOTH bundled fixtures, the landing page,
  * and a couple of product states -- into `.shots/` (gitignored). Fails
- * (non-zero exit) if the page logs any console error. Run with: `pnpm shot`.
+ * (non-zero exit) if the page logs any console error. Run with: `pnpm shot`
+ * (optionally `SHOT_FILTER=express-end,valtio-side pnpm shot` for a subset).
  */
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -83,6 +84,11 @@ function fixtureShots(fixture: Fixture): Shot[] {
     // `?t=1` pins the growth cursor to fully-grown instead of animating, for deterministic visual QA.
     { name: `${fixture.name}-end`, path: `${base}?t=1` },
     { name: `${fixture.name}-mid`, path: `${base}?t=0.5` },
+    // Galaxy-3d: `?pitch=` (degrees above the disc) proves the volume --
+    // a near-top view must still read as the spiral galaxy, a near-side
+    // view must show the bulge and the thin rim disc.
+    { name: `${fixture.name}-top`, path: `${base}?t=1&pitch=89` },
+    { name: `${fixture.name}-side`, path: `${base}?t=1&pitch=8` },
     { name: `${fixture.name}-selected-merged`, path: `${base}?t=1&sel=${ids.mergedHyphaId}` },
     { name: `${fixture.name}-selected-closed`, path: `${base}?t=1&sel=${ids.closedHyphaId}` },
     // A selected mushroom (M3b): exercises the release-ring reveal
@@ -119,8 +125,12 @@ async function main(): Promise<void> {
   let hadErrors = false
 
   try {
+    // `SHOT_FILTER=express-side,valtio-top pnpm shot` captures only shots whose
+    // name contains one of the comma-separated substrings (faster iteration).
+    const filters = (process.env.SHOT_FILTER ?? '').split(',').map((f) => f.trim()).filter(Boolean)
+    const selected = filters.length > 0 ? SHOTS.filter((shot) => filters.some((f) => shot.name.includes(f))) : SHOTS
     for (const viewport of VIEWPORTS) {
-      for (const shot of SHOTS) {
+      for (const shot of selected) {
         const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } })
         const consoleErrors: string[] = []
         page.on('console', (msg) => {

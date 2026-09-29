@@ -24,6 +24,10 @@ const VERTEX_SHADER = /* glsl */ `
   attribute float flowFactor;
   attribute float crossU;
   attribute float brightness;
+  #ifdef TUBE
+  attribute vec3 tubeNormal;
+  attribute vec3 tubeTangent;
+  #endif
 
   varying vec3 vColor;
   varying float vAlpha;
@@ -41,9 +45,27 @@ const VERTEX_SHADER = /* glsl */ `
     vHyphaIndex = hyphaIndex;
     vProgress = progress;
     vFlowFactor = flowFactor;
-    vCrossU = crossU;
     vBrightness = brightness;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    #ifdef TUBE
+    // Galaxy-3d tube hyphae: the "across the thread" coordinate is the
+    // SIGNED component of this vertex's surface normal along the tube's
+    // on-screen sideways direction (perpendicular to both the view ray and
+    // the tube's own tangent) -- -1/+1 at the two silhouettes, 0 where the
+    // surface faces the camera. Signed (not |.|) so linear interpolation
+    // across a facet still passes through the bright 0 core even with only
+    // a few radial segments -- the same thin-luminous-thread profile the
+    // flat ribbon had, now from ANY viewing angle.
+    vec3 viewNormal = normalize(normalMatrix * tubeNormal);
+    vec3 viewTangent = normalMatrix * tubeTangent;
+    vec3 viewDir = normalize(-mvPosition.xyz);
+    vec3 side = cross(viewDir, viewTangent);
+    float sideLength = length(side);
+    vCrossU = sideLength > 1e-5 ? dot(viewNormal, side / sideLength) : 0.0;
+    #else
+    vCrossU = crossU;
+    #endif
+    gl_Position = projectionMatrix * mvPosition;
   }
 `
 
@@ -123,7 +145,18 @@ export interface GrowthMaterialUniforms {
 
 export type GrowthMaterial = THREE.ShaderMaterial & { uniforms: GrowthMaterialUniforms }
 
-export function createGrowthMaterial(): GrowthMaterial {
+export interface GrowthMaterialOptions {
+  /**
+   * Galaxy-3d: the geometry is a round tube carrying a `tubeNormal`
+   * attribute (hyphae) rather than a flat ribbon/line (hairs, bridges). The
+   * glow profile is then derived per view in the vertex shader, and only
+   * front faces render (the far half of an additive tube would otherwise
+   * double every strand's brightness relative to the tuned ribbon alphas).
+   */
+  tube?: boolean
+}
+
+export function createGrowthMaterial(options: GrowthMaterialOptions = {}): GrowthMaterial {
   const uniforms: GrowthMaterialUniforms = {
     uCurrentTime: { value: 0 },
     uSelectedIndex: { value: -1 },
@@ -139,7 +172,8 @@ export function createGrowthMaterial(): GrowthMaterial {
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
+    side: options.tube ? THREE.FrontSide : THREE.DoubleSide,
+    defines: options.tube ? { TUBE: '' } : {},
   })
 
   return material as GrowthMaterial

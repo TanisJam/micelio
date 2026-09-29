@@ -264,6 +264,7 @@ function ReadyViewer({ model, snapshot, reducedMotion }: { model: NetworkModel; 
             canvasRef.current = canvas
           }}
           onContextLost={() => setContextLost(true)}
+          lowDetail={isMobile}
         />
       </Suspense>
       {contextLost && (

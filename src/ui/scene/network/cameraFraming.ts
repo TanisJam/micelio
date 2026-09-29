@@ -21,7 +21,10 @@ import { addVec3, scaleVec3 } from '../../../domain/shared/vector'
 // closes most of that gap; this margin is retuned on top of that fix to
 // land close to the target ~85% fill.
 export const LANDSCAPE_FRAME_MARGIN = 0.92
-export const LANDSCAPE_PITCH_RADIANS = (45 * Math.PI) / 180
+// Galaxy-3d: lowered from 45deg to 35deg -- the colony is volumetric now (a
+// thick central bulge thinning into the rim disc), and a lower default
+// angle shows that depth on load instead of flattening it into a map.
+export const LANDSCAPE_PITCH_RADIANS = (35 * Math.PI) / 180
 
 /**
  * D2/T8: a portrait/narrow viewport (aspect < 1) read as a small disc with
@@ -43,7 +46,23 @@ export const LANDSCAPE_PITCH_RADIANS = (45 * Math.PI) / 180
 // margin above, for the same ~85%-fill target now that framing uses the
 // model's true bounding radius rather than the padded substrate radius.
 export const PORTRAIT_FRAME_MARGIN = 0.85
-export const PORTRAIT_PITCH_RADIANS = (60 * Math.PI) / 180
+// Galaxy-3d: lowered from 60deg to 45deg for the same reason as the
+// landscape pitch, while staying steeper than landscape (the D2/T8 fill
+// argument above still holds for a narrow viewport).
+export const PORTRAIT_PITCH_RADIANS = (45 * Math.PI) / 180
+
+/**
+ * Visual-QA only (`scripts/shot.ts`): `?pitch=<degrees above the disc>`
+ * overrides the initial camera pitch, e.g. 89 for a top view or ~8 for a
+ * side view. `null` when absent/invalid; clamped to `[1, 89]`.
+ */
+export function readDebugPitchOverride(search: string): number | null {
+  const raw = new URLSearchParams(search).get('pitch')
+  if (raw === null) return null
+  const degrees = Number.parseFloat(raw)
+  if (!Number.isFinite(degrees)) return null
+  return (Math.min(89, Math.max(1, degrees)) * Math.PI) / 180
+}
 
 export interface CameraFraming {
   pitchRadians: number

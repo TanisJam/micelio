@@ -7,13 +7,17 @@ import type { PickTarget } from '../picking/pickingGrid'
 import { hyphaColorAt } from './colors'
 
 /**
- * Batched hyphae geometry (P12): every hypha's tapered ribbon merged into
- * ONE `BufferGeometry`/draw call, instead of one mesh per hypha (which would
- * blow the draw-call budget for a 500+-hypha repo). A flat XZ-plane ribbon
- * (2 vertices per cross-section, `RIBBON_WIDTH_SCALE * point.radius` wide,
- * tapering base -> tip per the model's own real per-point thickness) reads
- * fine from the scene's 3/4 top-down camera and is far cheaper than a true
- * radial tube.
+ * Batched hyphae geometry (P12): every hypha's tapered TUBE merged into ONE
+ * `BufferGeometry`/draw call, instead of one mesh per hypha (which would
+ * blow the draw-call budget for a 500+-hypha repo). Galaxy-3d: the colony
+ * is now genuinely volumetric (hyphae climb/dip inside a bulge), so a flat
+ * XZ ribbon would read as a sliver from the side -- each cross-section is a
+ * small ring of `radialSegments` vertices (`RIBBON_WIDTH_SCALE *
+ * point.radius` wide, tapering base -> tip per the model's own real
+ * per-point thickness). The glow profile the ribbon got from its `crossU`
+ * attribute is recomputed per view in the shader from each vertex's
+ * `tubeNormal` (see `growthMaterial.ts`'s `TUBE` define), so a strand reads
+ * as the same thin luminous thread from any angle.
  *
  * Growth (T5) and the hover/select highlight (P7) are both driven by a
  * shader (see `growthMaterial.ts`) reading per-vertex `birthTime`/
@@ -25,8 +29,10 @@ export const RIBBON_WIDTH_SCALE = 5
 const MIN_HALF_WIDTH = 0.003
 /** Alpha baked into a "time-honesty conduit" segment (see `conduitSplitRadius`) -- faint, never fully hidden. */
 const CONDUIT_ALPHA = 0.1
-/** Fraction of the ribbon's own half-width added/subtracted as a per-side Y offset (P3 "tiny y-thickness variation so arms have depth when orbiting") -- a shallow "tent" cross-section, invisible from directly overhead but giving the strand real volume once the camera orbits off-axis. */
-const CROSS_Y_TILT = 0.35
+/** Default radial segments per tube cross-section (desktop). */
+export const TUBE_RADIAL_SEGMENTS = 6
+/** Coarser LOD for small/mobile viewports -- still round enough at phone scale, ~1/3 fewer vertices. */
+export const TUBE_RADIAL_SEGMENTS_LOW = 4
 /**
  * Taper span at EACH end of a hypha's polyline, as a fraction of its own
  * total sample count (P3 "rounded/tapered tips to zero width, no square
@@ -66,10 +72,44 @@ export interface HyphaeGeometryResult {
   pickTargets: PickTarget[]
 }
 
-function perpendicularXZ(tangentX: number, tangentZ: number): [number, number] {
-  const length = Math.hypot(tangentX, tangentZ)
-  if (length < 1e-9) return [1, 0]
-  return [-tangentZ / length, tangentX / length]
+/**
+ * A cross-section frame `(n, b)` perpendicular to tangent `t`: `n` is the
+ * horizontal side vector (tangent x world-up), `b` completes a right-handed
+ * `(n, b, t)` basis. Hyphae are never close to vertical, so world-up is a
+ * stable reference (no twisting along a strand); a degenerate tangent falls
+ * back to a fixed frame.
+ */
+export function tubeFrame(tx: number, ty: number, tz: number): { n: [number, number, number]; b: [number, number, number] } {
+  const tLength = Math.hypot(tx, ty, tz)
+  if (tLength < 1e-9) return { n: [1, 0, 0], b: [0, 1, 0] }
+  const ux = tx / tLength
+  const uy = ty / tLength
+  const uz = tz / tLength
+  // n = t x up = (-tz, 0, tx)
+  let nx = -uz
+  let ny = 0
+  let nz = ux
+  let nLength = Math.hypot(nx, ny, nz)
+  if (nLength < 1e-6) {
+    // Tangent is (anti)parallel to up: use t x X instead.
+    nx = 0
+    ny = uz
+    nz = -uy
+    nLength = Math.hypot(nx, ny, nz)
+  }
+  nx /= nLength
+  ny /= nLength
+  nz /= nLength
+  // b = t x n
+  const bx = uy * nz - uz * ny
+  const by = uz * nx - ux * nz
+  const bz = ux * ny - uy * nx
+  return { n: [nx, ny, nz], b: [bx, by, bz] }
+}
+
+export interface HyphaeGeometryOptions {
+  /** Vertices per tube cross-section (>= 3). Defaults to `TUBE_RADIAL_SEGMENTS`. */
+  radialSegments?: number
 }
 
 /**
@@ -113,7 +153,8 @@ export function renderableHyphae(model: NetworkModel): Hypha[] {
   return model.hyphae.filter((hypha) => !(hypha.kind === 'main' && model.layout === 'colony') && hypha.points.length >= 2)
 }
 
-export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
+export function buildHyphaeGeometry(model: NetworkModel, options: HyphaeGeometryOptions = {}): HyphaeGeometryResult {
+  const radialSegments = Math.max(3, Math.round(options.radialSegments ?? TUBE_RADIAL_SEGMENTS))
   const hyphae = renderableHyphae(model)
   const bounds: TimeBounds = model.bounds.time
 
@@ -125,6 +166,8 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
   const progresses: number[] = []
   const flowFactors: number[] = []
   const crossUs: number[] = []
+  const tubeNormals: number[] = []
+  const tubeTangents: number[] = []
   const brightnesses: number[] = []
   const indices: number[] = []
   const pickTargets: PickTarget[] = []
@@ -145,9 +188,11 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
       const point = hypha.points[i]!
       const prev = hypha.points[Math.max(0, i - 1)]!
       const next = hypha.points[Math.min(pointCount - 1, i + 1)]!
-      const tangentX = next.position.x - prev.position.x
-      const tangentZ = next.position.z - prev.position.z
-      const [perpX, perpZ] = perpendicularXZ(tangentX, tangentZ)
+      const tx = next.position.x - prev.position.x
+      const ty = next.position.y - prev.position.y
+      const tz = next.position.z - prev.position.z
+      const { n, b: binormal } = tubeFrame(tx, ty, tz)
+      const tLength = Math.hypot(tx, ty, tz) || 1
 
       const taper = tipTaperFactor(i, pointCount)
       const halfWidth = (Math.max(MIN_HALF_WIDTH, point.radius * RIBBON_WIDTH_SCALE) * taper * ageStyle.widthScale) / 2
@@ -175,48 +220,54 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
       // Slight along-length brightness variation (P3), deterministic per
       // hypha+sample so it never flickers/changes between renders.
       const brightness = 0.88 + 0.24 * hashNoise(hyphaIndex * 97.13 + i * 13.7)
-      // A shallow Y "tent" across the ribbon's width, scaled by the same
-      // taper as the width itself so a tapered-to-a-point tip never gets a
-      // stray vertical kink (P3 "tiny y-thickness variation").
-      const yTilt = halfWidth * CROSS_Y_TILT
 
-      // Left vertex, then right vertex -- both rings of a cross-section.
-      positions.push(
-        point.position.x + perpX * halfWidth,
-        point.position.y + yTilt,
-        point.position.z + perpZ * halfWidth,
-        point.position.x - perpX * halfWidth,
-        point.position.y - yTilt,
-        point.position.z - perpZ * halfWidth,
-      )
-      for (let side = 0; side < 2; side++) {
+      // One ring of `radialSegments` vertices around the centerline.
+      for (let k = 0; k < radialSegments; k++) {
+        const angle = (k / radialSegments) * Math.PI * 2
+        const cos = Math.cos(angle)
+        const sin = Math.sin(angle)
+        const dx = n[0] * cos + binormal[0] * sin
+        const dy = n[1] * cos + binormal[1] * sin
+        const dz = n[2] * cos + binormal[2] * sin
+        positions.push(point.position.x + dx * halfWidth, point.position.y + dy * halfWidth, point.position.z + dz * halfWidth)
+        tubeNormals.push(dx, dy, dz)
+        tubeTangents.push(tx / tLength, ty / tLength, tz / tLength)
         colors.push(r / 255, g / 255, b / 255)
         alphas.push(alpha)
         birthTimes.push(point.time)
         hyphaIndices.push(hyphaIndex)
         progresses.push(t)
         flowFactors.push(flowFactor)
-        crossUs.push(side === 0 ? -1 : 1)
+        // The ribbon's across-width coordinate; unused by the tube shader
+        // path (it derives the profile per view from `tubeNormal`).
+        crossUs.push(cos)
         brightnesses.push(brightness)
       }
 
       if (i < pointCount - 1) {
-        const a = vertexCursor
-        const b2 = a + 1
-        const c = a + 2
-        const d = a + 3
-        indices.push(a, b2, c, c, b2, d)
+        // Outward-facing winding (the tube material is front-side only):
+        // (a, c, b) + (c, d, b) with a/c on this ring, b/d on the next.
+        for (let k = 0; k < radialSegments; k++) {
+          const kNext = (k + 1) % radialSegments
+          const a = vertexCursor + k
+          const c = vertexCursor + kNext
+          const b2 = vertexCursor + radialSegments + k
+          const d = vertexCursor + radialSegments + kNext
+          indices.push(a, c, b2, c, d, b2)
+        }
 
         pickTargets.push({
           id: hypha.id,
           x1: point.position.x,
+          y1: point.position.y,
           z1: point.position.z,
           x2: hypha.points[i + 1]!.position.x,
+          y2: hypha.points[i + 1]!.position.y,
           z2: hypha.points[i + 1]!.position.z,
           visibleAt: Math.max(point.time, hypha.points[i + 1]!.time),
         })
       }
-      vertexCursor += 2
+      vertexCursor += radialSegments
     }
   })
 
@@ -229,6 +280,8 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
   geometry.setAttribute('progress', new THREE.Float32BufferAttribute(progresses, 1))
   geometry.setAttribute('flowFactor', new THREE.Float32BufferAttribute(flowFactors, 1))
   geometry.setAttribute('crossU', new THREE.Float32BufferAttribute(crossUs, 1))
+  geometry.setAttribute('tubeNormal', new THREE.Float32BufferAttribute(tubeNormals, 3))
+  geometry.setAttribute('tubeTangent', new THREE.Float32BufferAttribute(tubeTangents, 3))
   geometry.setAttribute('brightness', new THREE.Float32BufferAttribute(brightnesses, 1))
   geometry.setIndex(indices)
 

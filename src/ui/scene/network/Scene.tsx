@@ -32,6 +32,8 @@ export interface NetworkSceneProps {
   onCanvasReady?: (canvas: HTMLCanvasElement) => void
   /** B4/T8: the GPU context died (driver crash, OS reclaiming VRAM, too many contexts open, etc). The caller shows a small recovery UI and remounts this whole component (a fresh `key`) to get a working canvas back -- WebGL context loss is notoriously unreliable to resume in place once three.js/R3F's whole resource graph (textures, buffers, shader programs) has been invalidated mid-session. */
   onContextLost?: () => void
+  /** Galaxy-3d: coarser tube LOD for small/mobile viewports (see `NetworkSceneContent`). */
+  lowDetail?: boolean
 }
 
 /**
@@ -59,6 +61,7 @@ export default function Scene({
   selectedId = null,
   onCanvasReady,
   onContextLost,
+  lowDetail = false,
 }: NetworkSceneProps) {
   // A FLAT background (not the tree scene's vertical sky gradient, see
   // `skyTexture.ts` -- deliberately not reused here), pure near-black
@@ -104,6 +107,7 @@ export default function Scene({
         onElementSelect={onElementSelect}
         hoveredId={hoveredId}
         selectedId={selectedId}
+        lowDetail={lowDetail}
       />
       <EffectComposer multisampling={0}>
         {/* Raised threshold + lower intensity than a first pass (M3 round-1

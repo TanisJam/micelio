@@ -60,8 +60,10 @@ export function buildMushroomInstances(mushrooms: Mushroom[]): MushroomInstances
     pickTargets.push({
       id: mushroom.id,
       x1: mushroom.position.x,
+      y1: mushroom.position.y,
       z1: mushroom.position.z,
       x2: mushroom.position.x,
+      y2: mushroom.position.y,
       z2: mushroom.position.z,
       visibleAt: mushroom.time,
     })

@@ -41,8 +41,10 @@ export function buildPointInstances(sources: PointInstanceSource[], scale: numbe
     pickTargets.push({
       id: source.id,
       x1: source.position.x,
+      y1: source.position.y,
       z1: source.position.z,
       x2: source.position.x,
+      y2: source.position.y,
       z2: source.position.z,
       visibleAt: source.time,
     })

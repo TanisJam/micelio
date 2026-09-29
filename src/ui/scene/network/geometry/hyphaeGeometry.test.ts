@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Hypha, NetworkModel } from '../../../../domain/network'
-import { buildHyphaeGeometry, hashNoise, renderableHyphae, tipTaperFactor } from './hyphaeGeometry'
+import { buildHyphaeGeometry, hashNoise, renderableHyphae, tipTaperFactor, TUBE_RADIAL_SEGMENTS, tubeFrame } from './hyphaeGeometry'
 
 function makeHypha(overrides: Partial<Hypha>): Hypha {
   return {
@@ -144,9 +144,9 @@ describe('buildHyphaeGeometry', () => {
     const model = makeModel([makeHypha({})])
     const { geometry, hyphaIndexById, pickTargets } = buildHyphaeGeometry(model)
     expect(hyphaIndexById.get('hypha-pr1')).toBe(0)
-    // 2 vertices per point, 3 points.
-    expect(geometry.getAttribute('position').count).toBe(6)
-    expect(geometry.getAttribute('hyphaIndex').count).toBe(6)
+    // One ring of TUBE_RADIAL_SEGMENTS vertices per point, 3 points.
+    expect(geometry.getAttribute('position').count).toBe(3 * TUBE_RADIAL_SEGMENTS)
+    expect(geometry.getAttribute('hyphaIndex').count).toBe(3 * TUBE_RADIAL_SEGMENTS)
     // Every vertex belongs to hypha index 0.
     const hyphaIndexAttr = geometry.getAttribute('hyphaIndex')
     for (let i = 0; i < hyphaIndexAttr.count; i++) expect(hyphaIndexAttr.getX(i)).toBe(0)
@@ -194,5 +194,56 @@ describe('buildHyphaeGeometry', () => {
     const r1 = color.getX(0)
     const r2 = color.getX(6)
     expect(r1).not.toBeCloseTo(r2, 3)
+  })
+})
+
+describe('galaxy-3d tube hyphae', () => {
+  it('builds a coarser tube when asked for fewer radial segments (mobile LOD)', () => {
+    const model = makeModel([makeHypha({})])
+    const high = buildHyphaeGeometry(model, { radialSegments: 6 })
+    const low = buildHyphaeGeometry(model, { radialSegments: 4 })
+    expect(high.geometry.getAttribute('position').count).toBe(18)
+    expect(low.geometry.getAttribute('position').count).toBe(12)
+    // 2 segments * radialSegments quads * 2 triangles * 3 indices.
+    expect(low.geometry.getIndex()!.count).toBe(2 * 4 * 6)
+    // Never fewer than 3 (a degenerate "tube" would collapse to a line).
+    expect(buildHyphaeGeometry(model, { radialSegments: 1 }).geometry.getAttribute('position').count).toBe(9)
+  })
+
+  it('carries per-vertex unit tube normals perpendicular to the tube tangent', () => {
+    const model = makeModel([makeHypha({})])
+    const { geometry } = buildHyphaeGeometry(model)
+    const normals = geometry.getAttribute('tubeNormal')
+    const tangents = geometry.getAttribute('tubeTangent')
+    expect(normals.count).toBe(geometry.getAttribute('position').count)
+    for (let i = 0; i < normals.count; i++) {
+      const n = [normals.getX(i), normals.getY(i), normals.getZ(i)]
+      const t = [tangents.getX(i), tangents.getY(i), tangents.getZ(i)]
+      expect(Math.hypot(n[0]!, n[1]!, n[2]!)).toBeCloseTo(1, 5)
+      expect(n[0]! * t[0]! + n[1]! * t[1]! + n[2]! * t[2]!).toBeCloseTo(0, 5)
+    }
+  })
+
+  it('tubeFrame returns an orthonormal right-handed frame, even for a vertical or zero tangent', () => {
+    for (const [tx, ty, tz] of [[1, 0, 0], [0.3, 0.8, -0.2], [0, 1, 0], [0, -2, 0], [0, 0, 0]] as const) {
+      const { n, b } = tubeFrame(tx, ty, tz)
+      expect(Math.hypot(...n)).toBeCloseTo(1, 6)
+      expect(Math.hypot(...b)).toBeCloseTo(1, 6)
+      expect(n[0] * b[0] + n[1] * b[1] + n[2] * b[2]).toBeCloseTo(0, 6)
+      const length = Math.hypot(tx, ty, tz)
+      if (length > 0) {
+        expect((n[0] * tx + n[1] * ty + n[2] * tz) / length).toBeCloseTo(0, 6)
+        expect((b[0] * tx + b[1] * ty + b[2] * tz) / length).toBeCloseTo(0, 6)
+      }
+    }
+  })
+
+  it('gives every pick target its real 3D heights', () => {
+    const model = makeModel([makeHypha({})])
+    const { pickTargets } = buildHyphaeGeometry(model)
+    for (const target of pickTargets) {
+      expect(Number.isFinite(target.y1)).toBe(true)
+      expect(Number.isFinite(target.y2)).toBe(true)
+    }
   })
 })

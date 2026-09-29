@@ -4,10 +4,10 @@ import * as THREE from 'three'
 import { buildPointInstances } from './geometry/pointInstances'
 import { buildMushroomInstances } from './geometry/mushroomInstances'
 import { buildFilamentsGeometry } from './geometry/filamentsGeometry'
-import { buildHyphaeGeometry } from './geometry/hyphaeGeometry'
+import { buildHyphaeGeometry, TUBE_RADIAL_SEGMENTS, TUBE_RADIAL_SEGMENTS_LOW } from './geometry/hyphaeGeometry'
 import { createGrowthMaterial, type GrowthMaterial } from './geometry/growthMaterial'
 import { FUSION_FLASH_WINDOW_MS } from './geometry/applyGrowth'
-import { buildPickGrid, queryNearest, type PickTarget } from './picking/pickingGrid'
+import { buildPickGrid, queryNearestAlongRay, type PickTarget } from './picking/pickingGrid'
 import { CameraFocus } from './CameraFocus'
 import { CameraRig } from './CameraRig'
 import { GrowthFrontInstances } from './GrowthFrontInstances'
@@ -28,9 +28,10 @@ export interface NetworkSceneContentProps {
   onElementSelect?: (id: string | null) => void
   hoveredId?: string | null
   selectedId?: string | null
+  /** Galaxy-3d: coarser tube LOD (fewer radial segments) for small/mobile viewports. */
+  lowDetail?: boolean
 }
 
-const GROUND_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 const FUSION_RADIUS = 0.03
 const TIP_RADIUS = 0.05
 /** Soft additive glow behind each mushroom cap (P1's mushroom brief: "soft point glow") -- larger than the cap itself so it reads as an ambient halo, not a second solid shape. */
@@ -46,11 +47,13 @@ const MUSHROOM_GLOW_RADIUS = 0.16
  * comes only from `Scene.tsx`'s own wide/soft second `Bloom` pass scattering
  * real light off the hyphae themselves, never a separate mesh/texture.
  *
- * Picking (P7): the network is nearly flat, so the pointer is raycast onto
- * the y=0 ground plane (not against individual mesh triangles) and the
- * nearest element is found via a precomputed 2D spatial grid
- * (`pickingGrid.ts`) built once per model from every hypha segment/hair/
- * mushroom/tip -- O(local neighborhood), not a per-frame linear scan.
+ * Picking (P7): the nearest element is found via a precomputed XZ spatial
+ * grid (`pickingGrid.ts`) built once per model from every hypha segment/
+ * hair/mushroom/tip -- O(local neighborhood), not a per-frame linear scan.
+ * Galaxy-3d: the colony is volumetric now, so instead of projecting the
+ * pointer onto y=0 (which would miss elevated bulge strands by up to a
+ * world unit of parallax) the pointer RAY is walked through the colony's
+ * own height slab and matched by true 3D ray-to-segment distance.
  */
 export function NetworkSceneContent({
   model,
@@ -61,10 +64,21 @@ export function NetworkSceneContent({
   onElementSelect,
   hoveredId = null,
   selectedId = null,
+  lowDetail = false,
 }: NetworkSceneContentProps) {
   const { gl, camera } = useThree()
 
-  const hyphae = useMemo(() => buildHyphaeGeometry(model), [model])
+  const hyphae = useMemo(
+    () => buildHyphaeGeometry(model, { radialSegments: lowDetail ? TUBE_RADIAL_SEGMENTS_LOW : TUBE_RADIAL_SEGMENTS }),
+    [model, lowDetail],
+  )
+  /** Half-height of the colony's own vertical extent (the bulge), bounding the picking ray walk. */
+  const colonyHalfHeight = useMemo(() => {
+    let max = 0
+    for (const hypha of model.hyphae) for (const point of hypha.points) max = Math.max(max, Math.abs(point.position.y))
+    for (const mushroom of model.mushrooms) max = Math.max(max, Math.abs(mushroom.position.y))
+    return max
+  }, [model])
   const filaments = useMemo(() => buildFilamentsGeometry(model, hyphae.hyphaIndexById), [model, hyphae])
   const mushroomInstances = useMemo(() => buildMushroomInstances(model.mushrooms), [model])
   const mushroomGlowInstances = useMemo(
@@ -97,14 +111,20 @@ export function NetworkSceneContent({
   // mutating a value that's *also* handed straight to JSX as a prop trips
   // `react-hooks/immutability` (mirrors the tree's `ScatterInstances`, which
   // always mutates through `meshRef.current`, never a bare `useMemo` value).
+  // Galaxy-3d: hyphae are round tubes (`tube: true`, view-dependent glow
+  // profile, front faces only); hairs/bridges stay plain line segments on
+  // their own instance of the same shader.
+  const hyphaeMaterial = useMemo(() => createGrowthMaterial({ tube: true }), [])
   const filamentMaterial = useMemo(() => createGrowthMaterial(), [])
   const hyphaeMeshRef = useRef<THREE.Mesh>(null)
+  const filamentsRef = useRef<THREE.LineSegments>(null)
 
   useEffect(() => {
     return () => {
+      hyphaeMaterial.dispose()
       filamentMaterial.dispose()
     }
-  }, [filamentMaterial])
+  }, [hyphaeMaterial, filamentMaterial])
 
   useEffect(() => {
     return () => {
@@ -117,8 +137,10 @@ export function NetworkSceneContent({
     const sporeTarget: PickTarget = {
       id: model.spore.id,
       x1: model.spore.position.x,
+      y1: model.spore.position.y,
       z1: model.spore.position.z,
       x2: model.spore.position.x,
+      y2: model.spore.position.y,
       z2: model.spore.position.z,
       visibleAt: model.spore.time,
     }
@@ -152,17 +174,20 @@ export function NetworkSceneContent({
 
   const raycaster = useMemo(() => new THREE.Raycaster(), [])
   const pointerNdc = useRef(new THREE.Vector2())
-  const intersection = useRef(new THREE.Vector3())
 
   function pickAt(clientX: number, clientY: number): { id: string; distance: number } | null {
     const rect = gl.domElement.getBoundingClientRect()
     pointerNdc.current.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
     raycaster.setFromCamera(pointerNdc.current, camera)
-    const hit = raycaster.ray.intersectPlane(GROUND_PLANE, intersection.current)
-    if (!hit) return null
     // A2/T8: never resolve to an element that hasn't grown in yet -- gate by
     // the SAME `getCurrentTime()` the growth shader itself reads this frame.
-    return queryNearest(pickGrid, intersection.current.x, intersection.current.z, pickTolerance, getCurrentTime())
+    return queryNearestAlongRay(
+      pickGrid,
+      { origin: raycaster.ray.origin, direction: raycaster.ray.direction },
+      { halfHeight: colonyHalfHeight, radius: model.bounds.radius },
+      pickTolerance,
+      getCurrentTime(),
+    )
   }
 
   useEffect(() => {
@@ -189,20 +214,21 @@ export function NetworkSceneContent({
       canvas.removeEventListener('click', handleClick)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gl, camera, pickGrid, pickTolerance])
+  }, [gl, camera, pickGrid, pickTolerance, colonyHalfHeight])
 
   useFrame((state) => {
-    const material = hyphaeMeshRef.current?.material as GrowthMaterial | undefined
-    if (!material) return
     const currentTime = getCurrentTime()
     const selectedIndex = selectedId !== null ? (elementIdToHyphaIndex.get(selectedId) ?? -1) : -1
     const hoveredIndex = hoveredId !== null ? (elementIdToHyphaIndex.get(hoveredId) ?? -1) : -1
-    const uniforms = material.uniforms
-    uniforms.uCurrentTime.value = currentTime
-    uniforms.uSelectedIndex.value = selectedIndex
-    uniforms.uHoveredIndex.value = hoveredIndex
-    uniforms.uTime.value = state.clock.elapsedTime
-    uniforms.uFlowEnabled.value = reducedMotion ? 0 : 1
+    for (const material of [hyphaeMeshRef.current?.material, filamentsRef.current?.material] as (GrowthMaterial | undefined)[]) {
+      if (!material) continue
+      const uniforms = material.uniforms
+      uniforms.uCurrentTime.value = currentTime
+      uniforms.uSelectedIndex.value = selectedIndex
+      uniforms.uHoveredIndex.value = hoveredIndex
+      uniforms.uTime.value = state.clock.elapsedTime
+      uniforms.uFlowEnabled.value = reducedMotion ? 0 : 1
+    }
   })
 
   return (
@@ -212,8 +238,8 @@ export function NetworkSceneContent({
 
       <SporeMesh reducedMotion={reducedMotion} highlighted={hoveredId === model.spore.id || selectedId === model.spore.id} />
 
-      <mesh ref={hyphaeMeshRef} geometry={hyphae.geometry} material={filamentMaterial} />
-      <lineSegments geometry={filaments.geometry} material={filamentMaterial} />
+      <mesh ref={hyphaeMeshRef} geometry={hyphae.geometry} material={hyphaeMaterial} />
+      <lineSegments ref={filamentsRef} geometry={filaments.geometry} material={filamentMaterial} />
       <GrowthFrontInstances hyphae={model.hyphae} getCurrentTime={getCurrentTime} reducedMotion={reducedMotion} />
 
       {/* Mushroom-only lighting (see `MushroomsMesh`'s doc): every other

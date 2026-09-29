@@ -14,6 +14,7 @@ import {
   PORTRAIT_PITCH_RADIANS,
   REPLAY_MIN_GROWN_RADIUS_FLOOR,
   REPLAY_MIN_GROWN_RADIUS_FRACTION,
+  readDebugPitchOverride,
 } from './cameraFraming'
 
 describe('chooseCameraFraming', () => {
@@ -133,5 +134,19 @@ describe('clampReplayGrownRadius', () => {
     const small = clampReplayGrownRadius(1, finalRadius)
     const large = clampReplayGrownRadius(5, finalRadius)
     expect(large).toBeGreaterThanOrEqual(small)
+  })
+})
+
+describe('galaxy-3d default pitch and ?pitch= override', () => {
+  it('starts the landscape camera tilted ~35deg above the disc so the volume shows on load', () => {
+    expect((LANDSCAPE_PITCH_RADIANS * 180) / Math.PI).toBeCloseTo(35, 6)
+  })
+
+  it('parses ?pitch= in degrees, clamped to [1, 89], null when absent or invalid', () => {
+    expect(readDebugPitchOverride('')).toBeNull()
+    expect(readDebugPitchOverride('?pitch=abc')).toBeNull()
+    expect(readDebugPitchOverride('?t=1&pitch=30')).toBeCloseTo((30 * Math.PI) / 180, 9)
+    expect(readDebugPitchOverride('?pitch=120')).toBeCloseTo((89 * Math.PI) / 180, 9)
+    expect(readDebugPitchOverride('?pitch=-5')).toBeCloseTo(Math.PI / 180, 9)
   })
 })

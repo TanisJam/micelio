@@ -3,7 +3,12 @@ import { OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { NetworkModel } from '../../../domain/network'
-import { chooseCameraFraming, clampReplayGrownRadius, computeFramingDistance, computeGrownRadius } from './cameraFraming'
+import { chooseCameraFraming, clampReplayGrownRadius, computeFramingDistance, computeGrownRadius, readDebugPitchOverride } from './cameraFraming'
+
+/** Default orbit clamp: never fully overhead (keeps a 3/4 read of the volumetric colony). */
+const MIN_POLAR_ANGLE = 0.35
+/** Default orbit clamp: never below the disc's own plane. */
+const MAX_POLAR_ANGLE = 1.45
 
 /** Unit 4: how fast the camera gently auto-orbits while growth replay is actively playing -- slow enough to read as "staying with the colony", never a distracting spin. `OrbitControls.autoRotateSpeed`'s own units: degrees per second at 60fps, roughly. */
 const REPLAY_AUTO_ROTATE_SPEED = 0.35
@@ -80,7 +85,10 @@ export function CameraRig({ model, getCurrentTime, isReplayPlaying, reducedMotio
   // D2/T8: a narrow/portrait viewport gets a steeper pitch and a tighter
   // frame margin -- see `cameraFraming.ts`'s doc comment for why the fixed
   // desktop-tuned 45deg pitch left large empty bands above/below on mobile.
-  const { pitchRadians, frameMargin } = chooseCameraFraming(aspect)
+  const framing = chooseCameraFraming(aspect)
+  const debugPitch = typeof window === 'undefined' ? null : readDebugPitchOverride(window.location.search)
+  const pitchRadians = debugPitch ?? framing.pitchRadians
+  const frameMargin = framing.frameMargin
   const framingDistance = computeFramingDistance(radius, verticalFov, aspect, frameMargin)
   // M3c round-4 orchestrator finding: a static `maxDistance` (previously
   // `radius * 4.5`) clamps the camera BACK toward the disc right after the
@@ -144,8 +152,10 @@ export function CameraRig({ model, getCurrentTime, isReplayPlaying, reducedMotio
       maxDistance={maxDistance}
       // Never dip below the substrate (a small positive floor), and never go
       // fully overhead either -- keeps the 3/4 read intact while orbiting.
-      minPolarAngle={0.35}
-      maxPolarAngle={1.45}
+      // (A `?pitch=` visual-QA override may sit outside these, so widen them
+      // just enough to keep it.)
+      minPolarAngle={debugPitch === null ? MIN_POLAR_ANGLE : Math.min(MIN_POLAR_ANGLE, Math.PI / 2 - debugPitch)}
+      maxPolarAngle={debugPitch === null ? MAX_POLAR_ANGLE : Math.max(MAX_POLAR_ANGLE, Math.PI / 2 - debugPitch)}
       target={target}
       // Unit 4: the first real user interaction hands control back for
       // good (`hasInteracted`, read by the `useFrame` above) -- `onStart`
