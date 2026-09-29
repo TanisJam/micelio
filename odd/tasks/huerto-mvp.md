@@ -2850,6 +2850,183 @@ read as fine tapered threads matching the interior, not thick hooked
 wedges; the pre-existing dense-bundle-fringe residual (H3, unchanged) is
 still out of scope.
 
+### Final pass -- done
+
+Three units of polish on top of T9/T10's rim fixes, per the orchestrator's
+fresh review of `.shots/desktop-express-end.png`.
+
+**Unit 1: rim growth front.** Commit: `fix: render the colony rim as a soft
+growth front`.
+
+The rim still read as a "comb" -- a ring of short, bright, straight radial
+strokes -- because (a) every hypha rendered at the same brightness/width
+regardless of how recently it split, and (b) `COLONY_RADIUS_CAP`'s hard
+clamp (`Math.min(nominalEndRadius, COLONY_RADIUS_CAP)`) truncated EVERY
+overshooting hypha to the exact same radius.
+
+- `renderHints.ts`'s new `rimAgeStyle`/`recentGrowthFactor`: a hypha whose
+  split time falls in the trailing `RECENT_GROWTH_FRACTION` (10%) of history
+  renders thinner (down to 45% width), dimmer (down to 55% alpha) and
+  blended cooler (up to 55% toward the palette's own cool cyan
+  `hyphaActiveTip`) in `hyphaeGeometry.ts` -- eased quadratically so the
+  effect concentrates near "now", not a hard cliff. Open PRs' own glowing
+  tip (a separate instanced mesh) is untouched.
+- `colonyLayout.ts`'s new `softenRimOvershoot` replaces the hard clamp: only
+  `RIM_OVERSHOOT_RETENTION` (40%) of a hypha's overshoot past the nominal
+  cap is kept, bounded by an outer hard ceiling (`COLONY_RADIUS_CAP * 1.08`)
+  so the disc still stays round. Real fixtures now render at least one
+  hypha past the nominal cap (verified by a regression test) -- previously
+  mathematically impossible.
+- A small seeded lateral curvature bias (`RIM_CURL_CONTINUITY_LENGTH_
+  FRACTION`) added to recent-slice hyphae's post-fork growth, so rim
+  filaments continue their arm's curve instead of pointing straight out.
+  Deliberately independent of the actual `swirl` config value (a fixed
+  rotational direction, not `Math.sign(resolved.swirl)`) -- an early attempt
+  read the real swirl value and broke the `swirl: 0` "plain" reference
+  layout several existing tests build to isolate swirl's own effect.
+
+Tests: `renderHints.test.ts` (11 new -- `recentGrowthFactor` boundary/
+monotonic/degenerate-bounds cases, `rimAgeStyle` no-op/full-effect/
+monotonic/degenerate cases), `colonyLayout.test.ts` (7 new -- `soften
+RimOvershoot` no-op/no-collapse/bounded/monotonic/degenerate cases, plus a
+real-fixture regression proving at least one hypha now exceeds the nominal
+cap on both bundled fixtures).
+
+Crops (1440x900, 2x device-scale, express + valtio, bottom/left/right):
+`.shots/front-before-{express,valtio}-{bottom,left,right}.png` (captured via
+`git stash` of Unit 1's tracked files, before this fix) show the classic
+comb -- evenly-spaced, uniform-length, uniform-brightness straight teeth.
+`.shots/front-after-*` (same regions/camera, after the fix) show clearly
+varied length and brightness, several visibly curved/bent strands following
+the swirl's own arm direction, and thinner/dimmer/cooler young filaments
+near the very edge -- read side by side, the after crops no longer look
+like a mechanical comb.
+
+**Unit 2: release clusters.** Commit: `fix: shape release bursts as small
+fairy rings`.
+
+A burst of many releases close in time (express's own real-world ~16-
+release burst) placed each member at its own nearly-identical individual
+radius/angle -- a lumpy lit-up pile, not intentional.
+
+- `mushrooms.ts`'s `buildMushroomsOnRings` now groups releases into bursts
+  by the pre-existing 3-day cluster window (`computeReleaseSequence`'s
+  `clusterIndex`, unchanged), then places the WHOLE group at one shared
+  radius/angle (from the group's own mean/"center" time), and lays its
+  members out via the new `layoutBurstRing`: evenly spaced around a small
+  ring, sized (`mushroomCapWorldRadius` + a fixed margin) so no two
+  adjacent members' real rendered caps overlap. A single, non-bursty
+  release is an unchanged one-member "ring" -- a zero offset at its own
+  real radius (singles stay single). Each member keeps its own individually
+  resolved `nearPr` data link (computed at the burst's own shared ring
+  radius, since that's where it actually renders) and remains separately
+  pickable (`mushroomInstances.ts`, untouched -- still one instance/pick
+  target per `Mushroom`).
+- Removed the now-dead `MUSHROOM_CLUSTER_ANGLE_SCATTER`/fan-scatter logic
+  it replaced.
+
+Tests: `mushrooms.test.ts` (18 new) -- `layoutBurstRing`: single/empty/
+deterministic/even-spacing/true-ring(equal radius)/no-cap-overlap across
+burst sizes 2-24/worst-case-all-major-caps; `buildMushroomsOnRings`: detects
+and shares one `clusterId` across a 16-release burst (express's own real
+motivating case), lays it out around the group's shared center (not a
+straight line/pile), no cap overlap end to end, deterministic, singles stay
+single, each member individually pickable with its own release tag,
+no NaN/Infinity for a large burst.
+
+Crop: `.shots/mushrooms-before-express.png` shows a burst mid-disc as a
+loose scattered/overlapping group; `.shots/mushrooms-after-express.png`
+(same region/camera) shows a clean, visibly circular fairy ring of evenly-
+spaced mushrooms. (The same crop region for valtio shows mostly single
+releases in both before/after -- valtio's release cadence in that region
+isn't bursty, an honest result, not a missed case; express was the
+motivating/verifying case per the task brief.)
+
+Checks after Units 1+2 (run against each unit's own isolated commit state):
+`pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (382 after
+Unit 1, 396 after Unit 2) · `pnpm build`: pass (`Scene` chunk ~1038 kB,
+unchanged) · `pnpm shot`: 26/26 screenshots, 0 console errors (run after
+each unit).
+
+**Unit 3: real large-repository verification.** No code changes -- no
+defect found. Documented per the task's own fallback ("commit only if you
+change code, otherwise document").
+
+Ran with a real `GITHUB_TOKEN` (`gh auth token`, never written to any file/
+log/fixture/commit) against a fresh dev server with `.huerto-cache/` cleared
+first (so the first request per repo is genuinely cold), driven headless
+via a throwaway, uncommitted Playwright script (`scripts/real-repo-check.ts`,
+deleted after use, matching `scripts/diagnose-rim.ts`'s precedent from T9/
+T10). Three real repos, by size:
+
+| Repo | Stars | API cold | API warm | Snapshot | buildNetwork (worker) | Nav->settled | Overflow | Console errors (desktop/mobile) |
+|---|---|---|---|---|---|---|---|---|
+| `facebook/react` (big) | 250,822 | 93.2s | 32ms | 1626.8 KB | 1336ms | 6.2s | +348 PRs not drawn (1000-PR cap hit) | 0 / 0 |
+| `vitejs/vite` (mid) | 83,070 | 94.0s | 20ms | 1717.9 KB | 1088ms | 5.2s | +314 PRs not drawn (1000-PR cap hit) | 0 / 0 |
+| `TanisJam/peel` (tiny) | 0 | 18.1s | 3ms | 15.8 KB | 63ms | 4.2s | none (well under every cap) | 0 / 0 |
+
+(`TanisJam/peel` has 11 total PRs, not the 0-2 the task named as an example
+-- no smaller *real, personal* repo with 0-2 PRs was found in the account,
+and 11 is still a legitimate tiny/near-empty case: 15.8 KB snapshot,
+63ms `buildNetwork`, one lone spore with a handful of short hyphae.)
+
+Verified against real screenshots (desktop end/selected + mobile end, all
+in `.shots/real-<size>-<owner>-<repo>-*.png`, none committed as fixtures --
+`.shots/` and `.huerto-cache/` are both gitignored):
+- `facebook/react`: dense but legible disc; clicking near the busiest part
+  of the disc landed a real, correctly-detailed closed PR (#36683, real
+  author/commit/GitHub link) -- picking works end to end on real, dense
+  data. The honest overflow note (P12) reads correctly: "+348 pull requests
+  not drawn".
+- `vitejs/vite`: same, with two release bursts clearly visible as genuine
+  circular fairy rings (Unit 2's fix, confirmed on real, previously-unseen
+  data, not just the express fixture used to build it).
+- `TanisJam/peel`: a lone spore with a few short hyphae and two mushrooms --
+  reads as intentional, not broken (P6's "empty/tiny repo" requirement),
+  matching M4/T-era coverage that was previously only checked against
+  synthetic edge cases.
+- Mobile layouts for all three stayed legible (header fits, legend/disc
+  scale sanely) at 390x844.
+- No caps other than the 1000-merged-PR cap were visibly hit for react/vite
+  (no truncated-looking commit trails, no obviously-capped branch/open-PR
+  count in the UI); this wasn't independently cross-checked against the raw
+  GraphQL counts beyond what the app itself surfaces.
+- Zero console errors, zero NaN-driven visual artifacts, no timeouts, no
+  broken layout in any of the 6 desktop/mobile loads.
+
+No defect found -- no fix needed for this unit.
+
+**Final checks (current HEAD, all three units' commits applied):**
+`pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (396 tests,
++34 net from T10's 366) · `pnpm build`: pass (`Scene` chunk ~1038 kB,
+unchanged) · `pnpm shot`: 26/26 screenshots, 0 console errors.
+
+**Remaining weaknesses, honestly reported:**
+- Physical-GPU frame rate (P4's "~60fps on a mid laptop") is unmeasurable in
+  this environment: `pnpm shot`/the real-repo checks both run headless
+  Chromium under SwiftShader (software WebGL), which has no reliable
+  relationship to real GPU frame timing -- this was already true before
+  this pass and remains an honest, unresolved gap; only a human on real
+  hardware can verify it.
+- `RIM_OVERSHOOT_RETENTION`, `RIM_CURL_CONTINUITY_LENGTH_FRACTION`, and the
+  age-style constants in `rimAgeStyle` (Unit 1) are empirically tuned
+  against the two bundled fixtures' own distributions, same limitation
+  T9/T10 already flagged for their own constants -- a much larger or
+  differently-shaped repo could still show a milder version of the same
+  comb/hook artifacts at a different scale.
+- The burst fairy-ring (Unit 2) sizes its ring purely to avoid cap overlap;
+  it doesn't avoid overlapping the surrounding hyphae/other mushrooms
+  outside its own burst, so a ring landing in an already-dense region could
+  still visually crowd its neighbors (not observed on either fixture or the
+  three real repos, but not proven impossible either).
+- Unit 3's "no caps hit beyond the 1000-merged-PR cap" finding for react/
+  vite is a visual read, not a byte-for-byte audit against the raw GraphQL
+  response (commits-per-PR/branches/open-PR caps specifically) -- the
+  snapshot JSON itself wasn't diffed against an uncapped baseline.
+- No automated test asserts final RENDERED pixel output for either unit;
+  coverage is at the domain/geometry level (documented above) plus the
+  manual before/after crop comparisons and the real-repo screenshots.
+
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
 decision.
