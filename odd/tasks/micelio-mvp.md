@@ -3652,6 +3652,187 @@ Literal descriptions:
   tests, not a pixel-level regression test that would catch a FUTURE
   reintroduction of the same double-conversion bug.
 
+### Orchestrator review round 3 -- done
+
+Four issues from the orchestrator's review of round 2's `.shots/final2-*`
+screenshots, addressed as three commits on `main` (local only, never pushed).
+
+**A (`a3cd5d4` feat: glow the substrate from the mycelium light).** The
+density-texture substrate haze (Unit 3's own rasterized field, packed into a
+96x96 `DataTexture`, sampled by a custom shader) read as blocky, pixelated
+teal blobs with hard edges and rectangular holes on real repos -- confirmed
+directly in the orchestrator's own screenshots, not just by reading the
+shader. Deleted entirely: `densityField.ts`/`densityField.test.ts`,
+`densityTexture.ts`, `substrateMaterial.ts`, the `SubstrateHaze` mesh, and
+their `domain/network/index.ts` export. Replaced with a second
+`@react-three/postprocessing` `Bloom` pass (`Scene.tsx`) stacked after the
+existing focused one: `mipmapBlur`, a much lower `luminanceThreshold`
+(0.84 -> 0.08) so ordinary thread brightness (not just emissive tips)
+contributes, `radius=0.92`/`levels=9` for a wide spread, and a low
+`intensity` (0.16) so it stays a faint haze. It reads the SAME rendered
+hyphae/spore/mushroom pixels already on screen -- no separate mesh, no
+texture -- so the haze exists only where the colony has actually grown and
+grows with it automatically; mip-based blur is inherently smooth (never
+blocky); pure black background pixels contribute nothing, so empty areas
+stay pure black. The first bloom pass and the ordinary crisp thread render
+are unchanged. Deleting the substrate also removed the selected-mushroom
+release-ring hairline (it piggybacked on the substrate shader's own
+ring-uniform machinery) -- not replaced; see remaining weaknesses.
+
+**B+C (`1588952` fix: calm replay camera and spore halo).** Two related
+findings: (B) replay camera too aggressive -- at lime's growth-5s the camera
+was zoomed so close the spore halo filled the frame as a giant disc and a
+growing tip read as a huge cyan circle; (C) the spore's halo too
+big/opaque even independent of zoom. Root cause for B: `CameraRig` eased
+the framing distance toward the colony's LITERAL current-grown radius
+(`computeGrownRadius`), with only a small absolute floor (0.75 world
+units) -- early replay (a couple of hyphae near the spore) has a tiny grown
+radius, so the camera zoomed in far more aggressively than intended.
+`clampReplayGrownRadius` (`cameraFraming.ts`, new pure function,
+unit-tested) floors the eased grown radius at `max(grown, finalRadius *
+0.4, 0.5)` -- never frames closer than showing ~40% of the colony's own
+FINAL extent, still easing smoothly via the existing `THREE.MathUtils.damp`.
+Independently of camera distance, `screenSizeClamp.ts` (new pure module,
+unit-tested) computes the max world-space radius that projects to a given
+pixel budget on screen; `SporeMesh`'s halo (max 46px) and
+`GrowthFrontInstances`' traveling growth-front point (max 26px, the
+literal "huge cyan circle") now clamp their own on-screen size every frame
+regardless of how close the camera gets. C's baseline opacity was also
+toned down (spore halo 0.22/0.5 -> 0.14/0.32).
+
+**D (`af11cd9` fix: keep mobile header and colony unclipped).** At 390px,
+`Legend`'s box (`maxWidth: min(280px, calc(100vw - 32px))`) could grow wide
+enough (its collapsed pill + the always-visible truncation-note paragraphs)
+to encroach into the fixed "Explore list" button's own reserved space on
+the same row (`ViewerPage.tsx`, `top: 64` for both) -- confirmed directly in
+`final2-react-end-mobile.png`. `Legend` now detects a narrow viewport (same
+640px breakpoint `ViewerHeader` already uses) and caps its width to
+`calc(100vw - 165px)`, reserving real room for the button + gap; it also
+tucks the overflow/fetch-truncation notes inside the collapsible panel
+(rendered only when both narrow AND open) instead of always rendering them
+as separate rows next to the button. Desktop is unchanged -- notes stay
+always-visible there, same as before. The colony being cropped left/right
+on mobile was the deleted density-texture substrate mesh's own oversized
+(1.6x-padded) silhouette exceeding the frame at mobile's tighter margin --
+gone once A deleted that mesh; the real hyphae geometry already fit within
+`CameraRig`'s tuned mobile frame margin from round 2.
+
+**E (kept, verified unchanged).** `TanisJam/lime`'s 37 filaments, truthful
+counters (`tickerCountsAt`'s PR-only filter from round 2's Unit 5),
+event ticker, and `facebook/react`'s cold-fetch budget were not touched by
+this round's changes -- spot-verified: cold fetch (`.micelio-cache/`
+cleared, real `GITHUB_TOKEN`) landed at ~22.8s wall-clock (dev-server boot +
+navigation + the existing 22s budget + a 2.2s settle wait), consistent with
+round 2's ~22.0s measurement; `TanisJam/lime?t=1` still reads "1 pull
+request &middot; 127 commits &middot; 1 release" with the same
+8-10-arm colony shape as round 2's `final2-lime-end.png`.
+
+Checks (all three commits): typecheck/lint/test (495 tests, net +4: 4 new
+`clampReplayGrownRadius` cases in `cameraFraming.test.ts` plus 7 new
+`screenSizeClamp.test.ts` cases, minus the 7 lost when
+`densityField.test.ts` was deleted)/build all pass.
+
+**Visual QA process:** iterated 3 rounds with an ad-hoc Playwright harness
+(mirroring `scripts/shot.ts`'s own SwiftShader-headless-Chromium approach,
+real `GITHUB_TOKEN` via `gh auth token`) before finalizing. Round 1: all 8
+required shots (see below) -- confirmed the substrate was gone, zoom/halo
+calmed, mobile unblocked, no console errors. Round 2: a selection screenshot
+(`pmndrs/valtio?t=1&sel=hypha-pr965`) confirmed the new bloom pass doesn't
+break hover/select highlighting; a 1s-into-replay shot showed an
+all-black frame, investigated and attributed to the lazy-loaded `Scene`
+chunk (~1MB) + WebGL/shader-compile startup latency in the test harness
+itself (matches `scripts/shot.ts`'s own 2.2s settle-wait assumption), not a
+product regression -- no code change needed. Round 3: re-captured the exact
+required set as the official `.shots/final3-*.png` (gitignored, not
+committed): `final3-lime-{end,end-mobile,growth-2s,growth-5s,growth-9s}.png`,
+`final3-valtio-end.png`, `final3-react-{end,end-mobile}.png`. 0 console
+errors across all 8. `pnpm shot` afterward: 26/26 screenshots, 0 console
+errors.
+
+Literal descriptions (round 3, final):
+- `final3-lime-end.png`: header "TanisJam/lime &middot; LIVE &middot; 0
+  stars &middot; 0 forks &middot; 26 days old". Roughly 8-10 bright cyan
+  arms radiate from the spore against pure black -- no substrate mesh, no
+  disc, no pixelation of any kind. A faint, smooth ambient glow is visible
+  close to the denser cluster of arms near the spore, barely perceptible
+  further out where filaments are sparse and isolated -- consistent with
+  "grows with the colony's own density" rather than a fixed backdrop.
+  Counter: "1 pull request &middot; 127 commits &middot; 1 release" (Unit
+  5's truthful counter, unchanged). Spore halo reads as a small, soft green
+  ring, clearly subordinate to the bright white core, not a dominant shape.
+- `final3-lime-growth-2s.png`: 2s into real autoplay, ticker "2 commits
+  pushed to main", counters "0 pull requests &middot; 2 commits &middot; 0
+  releases". One short filament near the spore; camera framed at a
+  reasonable middle distance (NOT an extreme close-up) -- the spore halo and
+  the single visible growth element are modestly sized on screen, nothing
+  reads as a "giant disc" or "huge circle".
+- `final3-lime-growth-5s.png`: the exact scenario the orchestrator flagged
+  as broken in round 2 (giant spore halo, huge cyan tip circle) -- now
+  several filaments visible, camera framed similarly to growth-9s (not
+  zoomed in dramatically tighter), spore halo and the one bright cyan
+  growth-front point are both modestly sized, comparable in scale to their
+  appearance in the end-state shot. Counters "0 pull requests &middot; 35
+  commits &middot; 0 releases".
+- `final3-lime-growth-9s.png`: 9-10 filaments visible, camera framed close
+  to its near-final extent, counters "0 pull requests &middot; 90 commits
+  &middot; 0 releases" -- smooth, unremarkable continuation of the growth
+  sequence, no camera jump or size discontinuity from growth-5s.
+- `final3-valtio-end.png`: a dense, richly swirled colony with a clearly
+  visible soft haze/glow diffusing around the denser central arms and along
+  the swirl pattern -- reads as a genuine faint nebula, not a disc; no hard
+  edges, no pixelation, no holes anywhere. Counter/ticker match round 2's
+  own valtio numbers exactly (untouched by this round).
+- `final3-react-end.png`: a dense, richly swirled colony filling most of
+  the viewport with a pronounced (still soft, not blocky) ambient glow --
+  react's high hypha density gives the new bloom pass much more source
+  brightness to work with, and the result reads as a proper glowing galaxy
+  rather than a flat-tinted disc. Both truncation notes still shown stacked
+  in the Legend panel (desktop, always-visible). No disc remnant anywhere.
+- `final3-react-end-mobile.png`: "Legend &#9662;" (collapsed) and "Explore
+  list" sit side by side on the same row with a clear visible gap between
+  them -- no overlap, unlike round 2's `final2-react-end-mobile.png`. The
+  colony's outer tendril tips reach close to the left/right viewport edges
+  but are NOT cut off/cropped with a hard edge (unlike round 2's oversized
+  substrate silhouette) -- full tendril tips are visible tapering to a
+  point.
+- `final3-lime-end-mobile.png`: same as above -- Legend and Explore list
+  clearly separated, colony comfortably contained within the frame with
+  visible margin on all sides, no cropping.
+
+**Remaining weaknesses, honestly reported:**
+- Deleting the density-texture substrate also removed the selected-mushroom
+  release-ring hairline (it reused the substrate shader's own ring-uniform
+  machinery, which no longer exists) -- spot-checked via
+  `desktop-valtio-selected-mushroom.png` (`pnpm shot`): the detail panel
+  still opens correctly, just with no ring drawn on the ground anymore. Not
+  reimplemented this round (out of the orchestrator's literal "delete
+  entirely" scope); a future pass could add a small standalone ring mesh if
+  that affordance is wanted back.
+- The second `Bloom` pass's tuning (threshold 0.08, intensity 0.16,
+  radius 0.92, levels 9) was tuned empirically against the same five repos
+  used throughout this project (lime, valtio, express, react, peel) across
+  3 screenshot rounds -- not derived from a closed-form model of how mip-blur
+  intensity should scale with colony density, so an even denser or even
+  sparser repo than already tested isn't guaranteed to land in the same
+  "faint but visible" sweet spot without further tuning.
+- `clampReplayGrownRadius`'s 40%-of-final-radius floor and
+  `screenSizeClamp`'s pixel budgets (46px spore halo, 26px growth-front)
+  were also tuned empirically against screenshots, not derived from a
+  formal "minimum legible/maximum-not-overwhelming" on-screen-size model.
+- No automated test asserts the new second `Bloom` pass's actual rendered
+  pixel output (a glow's presence/intensity) -- coverage is the empirical
+  screenshot review documented above (comparing round 2's flat-disc shots
+  against this round's haze-free renders) plus the domain-level
+  `cameraFraming.test.ts`/`screenSizeClamp.test.ts` unit tests, not a
+  pixel-level regression test.
+- The `?t=` debug-progress override path (used throughout this round's
+  `-end`/`-mid` shots) bypasses `isReplayPlaying()` entirely (paused), so
+  the camera zoom-floor fix (task B) was only exercised by the real
+  autoplay growth shots (`growth-2s/5s/9s`), not independently unit-tested
+  against `CameraRig` itself (a React component; this codebase has no
+  component-level tests for any `scene/network` component, only the pure
+  `cameraFraming.ts`/`screenSizeClamp.ts` functions it calls).
+
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
 decision.
