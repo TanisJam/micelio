@@ -89,6 +89,10 @@ Strategy: ask-on-risk. Forecast > 400 lines → chain strategy to ask before pus
 (T8 polish now applies to the mycelium build.)
 - [x] Serverless hardening Unit 1: bound cold GitHub fetches to a time budget (real cold-fetch measurement showed 93-94s for large repos, over Vercel's 60s `maxDuration`). Route: direct (existing files, understood scope).
 - [x] Serverless hardening Unit 2: rename the product from "Huerto" to "Micelio" (user decision, naming-only). Route: direct.
+- [x] Production feedback Unit 1: serve bundled samples (valtio/express) instantly regardless of a configured `GITHUB_TOKEN`. Route: direct.
+- [x] Production feedback Unit 2: grow hyphae from bursts of direct commits (fixes the "lone spore" solo-repo complaint and the floating-disconnected-hair bug). Route: delegated (writer).
+- [x] Production feedback Unit 3: let the substrate emerge from the mycelium -- remove the geometric soil disc, replace with a density-based organic haze; more noticeable growing tips. Route: delegated (writer).
+- [x] Production feedback Unit 4: replay history event by event -- activity-weighted growth clock, fusion/mushroom flash effects, camera auto-orbit, event ticker + running counters. Route: delegated (writer).
 
 ## Polish bar (must all hold before the MVP is called done)
 Visual (mycelium)
@@ -3182,6 +3186,245 @@ also found and killed. Both commits' final content were independently
 re-verified (`git show`, fresh `pnpm typecheck`/`lint`/`test`/`build`/
 `shot` runs, a full case-insensitive `huerto` sweep) against the actual
 committed bytes before this entry was written.
+
+### Production feedback round -- done (Units 1-4)
+
+Four owner-reported production issues, addressed as four separate commits
+on `main` (local only, never pushed -- production auto-deploys on push, so
+the task explicitly forbade pushing).
+
+**Unit 1: instant samples.** Commit `798ac89` fix: serve bundled samples
+first. `getRepoSnapshot.ts` checked the disk cache, then the token, then
+the fixture -- so once production had a real `GITHUB_TOKEN` configured,
+`pmndrs/valtio`/`expressjs/express` (bundled fixtures, meant to demo
+instantly) started going live instead, turning a previously-instant demo
+into a ~25s "Germinating..." wait. Reordered: fixture check now comes
+before the token check, unconditionally. Two new tests (fixture served
+even with a token configured; still fetches live for a repo with no
+fixture) plus a real repeatability bug found and fixed in the SAME
+unit: the two new tests picked `'some-owner'/'some-unknown-repo'` as the
+"no fixture" test id, colliding with an EXISTING test using the same
+id -- `SnapshotCache`'s on-disk layer (`.micelio-cache/`, real
+filesystem, TTL 1h) persists across `pnpm test` invocations within that
+window, so the second test's live-fetch result silently poisoned the
+first test on any re-run. Fixed with a distinct test id plus a
+`beforeEach` that clears `.micelio-cache/` for the whole file, verified
+idempotent across two consecutive full `pnpm test` runs.
+Checks: typecheck/lint/test (420 tests, +2)/build all pass. `pnpm shot`:
+14/14 screenshots, 0 console errors.
+
+**Unit 2: direct-commit bursts.** Commit `496aa81` feat: grow hyphae from
+bursts of direct commits. Root cause of "TanisJam/lime looks ugly and
+nearly empty": direct (non-PR) commits were capped at 20 and drawn via
+`buildDirectCommitSpurs` -- a hair placed at an INDEPENDENTLY-chosen empty
+angle, never actually attached to any hypha's own polyline (the "floating
+disconnected hairs" the orchestrator flagged).
+- Adapter: default-branch history moved to its own paginated
+  `DIRECT_COMMITS_PAGE_QUERY` (100/page, up to 1000 scanned), running
+  concurrently with merged/closed-PR pagination inside the existing 22s
+  time budget, with `additions`/`deletions` per commit and honest
+  `truncated.directCommits` metadata (verified for real against
+  `facebook/react`: "Showing the latest 400 direct commits ... of 21,709
+  (fetch time budget reached)", see the final screenshot below).
+- Domain: `groupDirectCommitBursts` (gaps < 6h same-author, capped 40
+  commits/burst, split into consecutive chunks beyond that) turns direct
+  commits into `direct`-kind hyphae -- split at the first commit, FUSED
+  (like a merged PR: real trunk work) at the last, grown through the exact
+  same `growHyphaPoints`/`buildOrderedCommitElements` pipeline a PR hypha
+  uses, so every hair's base provably lies on its own hypha's polyline
+  (new regression test, both bundled fixtures, epsilon 0.05 -- tuned
+  against `relaxSharpTurns`'s own real post-hoc smoothing drift, ~2+
+  orders of magnitude tighter than the old bug's scale).
+- Detail panel: a `direct` hypha shows "Pushed directly to `<branch>` · N
+  commits · date range · +adds -dels" with a clickable commit list;
+  Explore list and Legend updated ("a pull request or a burst of commits
+  pushed directly").
+Checks: typecheck/lint/test (435 tests, +15)/build all pass. `pnpm shot`:
+0 console errors.
+
+**Unit 3: organic substrate.** Commit `444f2e2` feat: let the substrate
+emerge from the mycelium. Removed the geometric soil disc/plate entirely
+(`SoilDisc.tsx`/`soilMaterial.ts`/`soilRadius.ts` deleted). Replaced with
+`densityField.ts` (pure domain: rasterizes the colony's own hyphae/hairs/
+mushrooms/spore into a low-res density + per-texel birth-time grid) ->
+`densityTexture.ts` (packs it into a `DataTexture`) -> `substrateMaterial.ts`
+(a shader sampling it into a soft, low-contrast haze, dense near real
+structure, fading to the flat background elsewhere).
+**Two real bugs found and fixed while building this** (both confirmed via
+`pnpm shot`/a throwaway diagnostic script against the real `pmndrs/valtio`
+fixture, not just eyeballed):
+1. Summing density per contributing point saturated almost the entire disc
+   solid (measured: 70% of texels above a "dense" threshold, raw values up
+   to 1050) for any repo past a couple hundred rendered points -- a single
+   hypha alone samples dozens of points along its own curve, landing in/
+   near the same few texels. Switched to MAX accumulation (a texel's
+   density reflects "how close is the nearest real structure", not an
+   accumulated point count) plus a much wider field margin (1.12 -> 1.6)
+   and an explicit shader-side radial fade as a backstop.
+2. Even after that fix, the haze STILL read as fully grown from the very
+   first frame regardless of playback time (verified directly: forcing
+   `density = 0.0` unconditionally in the fragment shader did not remove
+   the mismatch). Root cause: this material's hex-to-color conversion fed
+   raw sRGB-encoded bytes straight into `gl_FragColor`, but
+   `scene.background` (a `THREE.Color`) gets an automatic sRGB-to-linear
+   decode from three.js's `ColorManagement` -- so a "zero-density, should
+   be invisible against the background" texel came out visibly LIGHTER
+   than the true background everywhere, masking any real density variation
+   underneath it. Fixed with an explicit `convertSRGBToLinear` conversion
+   (`hexToLinearVec3`) for this material's uniforms only (left the shared
+   `hexToVec3` used by the already-tuned, additively-blended hypha
+   palette untouched, to avoid an unrelated regression).
+Also: `GrowthFrontInstances.tsx` (+ the new `pointOnHyphaAtTime` time-keyed
+polyline lookup) makes the growth front itself more noticeable -- a
+bright point now travels along each actively-growing hypha's own polyline
+from split to end, not just the hard per-vertex reveal cutoff. The
+selected-mushroom ring hairline moved onto the haze.
+Checks: typecheck/lint/test (435 tests)/build all pass (verified as an
+independently-buildable/testable commit, split out from Unit 4 before
+committing -- see the note below on how that split was done).
+
+**Unit 4: event-paced growth replay.** Commit `89f42cf` feat: replay
+history event by event. `eventPacing.ts`: playback progress now maps
+onto an activity-weighted timeline -- an inverted rank-based empirical
+CDF over every real event (hypha splits/ends, commits, releases), where
+each of N events gets an equal `1/(N-1)` share of the 0..1 progress range
+REGARDLESS of how close together they happened in real calendar time --
+blended with a small (18%) fraction of plain linear time so a real quiet
+gap still reads as a brief pause, not a full stop. Default replay
+lengthened 10s -> 18s. `tickerEvents.ts` + `GrowthTicker.tsx`: a quiet,
+fading one-line ticker near the scrubber naming the most recent landed
+event ("#65 merged · title · N commits", "N commits pushed to `<branch>`",
+"`<name>` released") plus running counters (pull requests · commits ·
+releases so far), both reading the exact same `clock.getTime()` the 3D
+scene's own growth reveal uses -- confirmed correct against real data
+(see screenshots below, e.g. valtio's real PR #9 named exactly, React's
+real "18.3.0" release named exactly).
+`applyGrowthToInstances` gained an optional `flashWindowMs`: a just-grown
+instance briefly renders bigger (`FLASH_PEAK_SCALE`) than its real scale,
+easing back down -- a mushroom's release "sprout" and a fusion knot's
+merge "flash", both keyed to the SAME per-instance birth time already
+driving their reveal, no separate one-shot animation system.
+`CameraRig.tsx`: a slow auto-orbit (`REPLAY_AUTO_ROTATE_SPEED`) while
+replay is actively playing and the viewer hasn't touched the camera yet;
+the first drag/zoom/pan hands control back permanently for that mount.
+**A related pre-existing bug found and fixed while wiring this up**:
+`TimeScrubber`'s date label recomputed a plain linear time from `progress`
+instead of reading the clock's own `getTime()` (which already applied
+easing, and now event-pacing too) -- the scrubber and the 3D scene could
+show two different dates for the same frame. Fixed to read
+`clock.getTime()` directly via `useSyncExternalStore`.
+Checks: typecheck/lint/test (473 tests, +38)/build all pass.
+
+**Splitting Units 3 and 4 into separate commits**: both were implemented
+in the same working session and several files (`NetworkSceneContent.tsx`,
+`domain/network/index.ts`, `Scene.tsx`) ended up with genuinely
+interleaved changes from both units. Rather than commit them together
+(against the task's explicit per-unit commit messages) or hand-wave the
+split, each Unit-4-only file was temporarily reverted to its Unit-2 state
+(tracked files via `git checkout HEAD --`, new files moved aside), the two
+shared files were hand-edited back to their Unit-3-only content, and the
+FULL check suite (typecheck/lint/test/build) was run and confirmed green
+against that intermediate Unit-3-only tree before committing it -- then
+every Unit-4 file/hunk was restored and the suite re-run (473 tests,
+matching the pre-split combined count exactly) before the second commit.
+Both commits build byte-identical output to the original combined
+work-in-progress tree (confirmed via matching Vite output-file hashes).
+
+**Real-repo final verification** (`GITHUB_TOKEN` via `gh auth token`,
+never written to any file/log/fixture/commit; `.micelio-cache/` cleared
+first so first requests are genuinely cold): desktop (1440x900) end
+(`?t=1`) + mid-growth (`?t=0.5`) screenshots for all five repos, plus a
+4-frame REAL-TIME autoplay growth sequence (2s/4s/6s/9s after page load,
+no `?t=` override) for `TanisJam/lime` and `pmndrs/valtio`, saved under
+`.shots/final-*` (gitignored, not committed):
+`final-lime-{end,mid,growth-2s,growth-4s,growth-6s,growth-9s}.png`,
+`final-peel-{end,mid}.png`,
+`final-valtio-{end,mid,growth-2s,growth-4s,growth-6s,growth-9s}.png`,
+`final-express-{end,mid}.png`, `final-react-{end,mid}.png`. 0 console
+errors across all 18 captures.
+
+A real, reproducible environment finding while capturing these: after
+roughly 9-12 consecutive page navigations in ONE long-lived headless-
+Chromium session (this sandbox's SwiftShader software WebGL), a later
+navigation can hang indefinitely regardless of page content (reproduced
+twice on `pnpm shot`'s own fixed 14-shot suite, once on the plain
+"token required" state screen, which touches none of this project's
+WebGL code) -- worked around for the final capture by launching a fresh
+browser per repo, never one browser for all 18 shots.
+
+Literal descriptions:
+- `final-lime-end.png`: header "TanisJam/lime · LIVE · 0 stars · 0
+  forks · 26 days old". ~7-8 thin cyan filaments curve out from the
+  green spore, clustered lower-left; a handful of small dots sit near
+  the outer reach on the right (verified via the new hair-attachment
+  test to be short hyphae/hairs, not the old floating-spur bug). The
+  organic haze closely hugs this asymmetric shape -- clearly NOT an
+  ellipse, with visible dark negative space upper-right where no
+  structure reaches. Ticker: "4 commits pushed to main". Counters: "12
+  pull requests · 127 commits · 1 release" (the counter's "pull
+  requests" includes non-PR hyphae kinds too -- see residual note
+  below).
+- `final-lime-growth-2s.png`: 2s into real autoplay, date "Sep 3, 2026",
+  a single short filament, ticker "2 commits pushed to main", counters
+  "1 pull request · 2 commits · 0 releases" -- clearly less grown than
+  the end state.
+- `final-lime-growth-6s.png` / `-9s.png`: by 6s (1/3 of the 18s replay)
+  lime is already at "10 pull requests · 118 commits · 1 release", and
+  by 9s (halfway) it's IDENTICAL to the end state ("12 pull requests ·
+  127 commits · 1 release") -- see the residual note on front-loaded
+  pacing below.
+- `final-valtio-growth-2s.png`: caught mid-fade-in, the ticker box
+  partially transparent, reading "#9 merged · fix: array length for
+  direct assignment · 2 commits" -- a real, specific, early valtio PR.
+  Date "Nov 19, 2020" (valtio's own start).
+- `final-valtio-growth-6s.png`: already "482 pull requests · 1,555
+  commits · 71 releases" (final is 631/1,887/80) -- the same front-
+  loading pattern as lime, at a much larger scale.
+- `final-react-end.png`: a dense, richly swirled disc with visible
+  mushroom fairy-ring clusters; the Legend area shows TWO honest
+  truncation notes stacked: "Showing the latest 350 merged pull requests
+  of 13,104 (fetch time budget reached); Showing the latest 400 direct
+  commits to the default branch of 21,709 (fetch time budget reached)"
+  -- real, live confirmation that Unit 2's new paginated direct-commit
+  adapter and its truncation metadata work correctly against the
+  largest/most demanding real repo tested. Ticker: "#37699 merged ·
+  [compiler] Remove unused collections in HIR passes · 1 commit".
+  Cold fetch: 50.7s (react end, `.micelio-cache/` cleared) -- under
+  Vercel's 60s `maxDuration` but with less margin than the ~26.5s
+  measured in the post-final-pass Unit 1 entry above; not investigated
+  further here (out of this round's scope), flagged as worth a future
+  look if it recurs.
+
+**Remaining weaknesses, honestly reported:**
+- Growth replay is front-loaded for a real repo whose collected-event
+  count and eased-progress interaction happen to concentrate most visible
+  change in the first third-to-half of the 18s replay, leaving a longer
+  static tail (observed on BOTH a 4-event tiny repo and valtio's ~2,600-
+  event real history) -- every event still gets its own real, provable
+  minimum progress-space share (`1/(N-1)`, unit-tested), so nothing is
+  literally starved, but the PERCEIVED pacing reads as "fast, then
+  static" rather than evenly spread across the full replay. Not tuned
+  further this round (would need either a larger linear-blend fraction, a
+  non-uniform rank curve, or a longer duration for busy repos) --
+  flagging for a future pass rather than gold-plating here.
+- The ticker's "pull requests" counter (`tickerCountsAt`) counts every
+  non-`main` hypha's own split time, which includes `liveBranch` hyphae
+  (a branch with no PR at all) alongside real PR/direct-burst hyphae --
+  slightly overcounts "pull requests" literally for a repo with loose
+  branches. Not a fabricated number (every counted hypha is real,
+  verifiable data), but the LABEL is a little imprecise; a tighter fix
+  would exclude `liveBranch` from that specific counter.
+- `facebook/react`'s cold fetch (50.7s, this round) is meaningfully
+  slower than the ~26.5s measured in the post-final-pass Unit 1 entry for
+  the same repo -- could be real upstream data growth (react has kept
+  growing) or environment variance; not isolated further this round.
+- No automated test asserts final RENDERED pixel output for the Unit 3
+  haze or Unit 4 ticker/flash effects; coverage is at the domain/geometry
+  level (documented above) plus the manual screenshot comparisons here.
+- The small floating-looking dots visible in the tiny-repo screenshots
+  (lime, peel) were spot-checked against the new hair-attachment
+  regression test rather than individually clicked/verified in the
+  browser -- worth a manual click-through in a future pass.
 
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
