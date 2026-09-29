@@ -120,6 +120,65 @@ const POST_FORK_DRIFT_MAX_RAD = 0.02
 const LATERAL_MAX_WORLD = 0.01 * DISC_MAX_RADIUS
 /** For a hypha longer than `COLONY_LENGTH_MAX` (a spore-started one whose real r0 is large -- see `growHyphaPoints`), the lateral wiggle budget instead scales with its OWN length by this fraction, so a long strand still visibly meanders rather than reading as a rigid straight spoke. */
 const WIGGLE_LENGTH_FRACTION = 0.05
+/**
+ * Hard ceiling on the post-fork lateral wiggle budget, as a fraction of the
+ * hypha's OWN rendered length (`endRadius - startRadius`, AFTER
+ * `COLONY_RADIUS_CAP` clamping -- see `growHyphaPoints`'s `lateralBudget`).
+ *
+ * Root cause of the rim "hook"/blocky-fragment artifact (T9): `LATERAL_MAX_
+ * WORLD` is a fixed world-space distance, tuned to read as "barely
+ * perceptible" against a hypha's INTENDED (COLONY_LENGTH_MIN..MAX) length.
+ * When the rim clamp compresses a hypha's RENDERED length well below that --
+ * common for a hypha whose natural start radius already sits close to the
+ * disc edge -- that same fixed wiggle no longer reads as barely perceptible:
+ * its per-sample TANGENTIAL swing becomes comparable to (or bigger than) the
+ * per-sample RADIAL step, so the polyline's local tangent direction swings
+ * sharply at each oscillation extremum instead of smoothly tracking the
+ * radius outward -- a real zigzag/hook in the polyline itself, not a
+ * rendering bug. Confirmed against the bundled `expressjs/express` fixture:
+ * 304 rim hyphae (endRadius within 0.15 of the cap) had a >60deg turning
+ * angle between consecutive segments before this fix, some as high as
+ * ~124deg; 0 after. Only binds below `LATERAL_MAX_WORLD /
+ * POST_FORK_LATERAL_LENGTH_CAP_FRACTION` (~0.33 units), so a normal
+ * (uncompressed) hypha's wiggle is unchanged.
+ */
+const POST_FORK_LATERAL_LENGTH_CAP_FRACTION = 0.15
+/**
+ * Minimum sample count guaranteed inside `[0, rampEnd]` (the fork's own
+ * eased turn plus its drift ramp-in), regardless of the hypha's total sample
+ * budget -- part 2 of the rim-artifact fix (T9). The fork's eased turn and
+ * the swirl rotation applied afterward (`applySwirl`, a separate cosmetic
+ * post-process) are each individually smooth in isolation, but a short
+ * hypha's own `forkFraction`-sized slice of its (already small) sample
+ * budget could be as few as 2-3 points -- coarse enough to alias their sum
+ * into a visible zigzag/hook wherever the two happen to have opposing local
+ * slopes, even though the true underlying curve has none. Redistributing
+ * (not adding) samples from the long, gently-varying post-ramp stretch into
+ * this region resolves it densely enough to track the real curve, at no
+ * extra vertex cost.
+ */
+const MIN_FORK_SAMPLES = 8
+/**
+ * Ceiling on the turning angle between consecutive polyline segments a
+ * FINAL (post-swirl) colony hypha is allowed to keep -- part 3 of the
+ * rim-artifact fix (T9), the one that actually closes it. The fork's own
+ * eased turn (`growHyphaPoints`) and the separate cosmetic swirl rotation
+ * applied afterward (`applySwirlToPosition`, per-point, radius-dependent)
+ * are each individually smooth, but their SUM can have a real, if modest,
+ * local reversal wherever the two have opposing rates at a given sample --
+ * most often right after a natural-fit fork attaches near an already-large
+ * disc radius, where the fork's own turn and swirl's differential across
+ * even a short remaining radial span are comparable in size. At a hypha's
+ * own (length-appropriate) sample spacing this reads as a sharp zigzag/hook
+ * rather than the gentle bend the underlying continuous curve actually has
+ * -- confirmed by resampling the express fixture's colony at ~20x the
+ * normal resolution (`diagnose-rim.ts`, scratch script, not committed): the
+ * same hooks shrink from up to ~124deg to a much gentler bend, well under
+ * this ceiling. `relaxSharpTurns` removes what's left by pulling any
+ * interior point whose turn still exceeds this back onto the smooth path
+ * its own neighbors already describe.
+ */
+const MAX_HYPHA_TURN_RAD = (60 * Math.PI) / 180
 const Y_JITTER = 0.015
 const SAMPLES_MIN = 12
 const SAMPLES_MAX = 40
@@ -287,6 +346,32 @@ function sampleCountForLength(length: number): number {
   return Math.round(lerp(SAMPLES_MIN, SAMPLES_MAX, t))
 }
 
+/**
+ * `t` values for `growHyphaPoints`'s per-sample loop, biased so `[0,
+ * rampEnd]` (the fork's own eased turn plus its drift ramp-in) always gets
+ * at least `MIN_FORK_SAMPLES` of the hypha's own (unchanged) total
+ * `sampleCount` -- see `MIN_FORK_SAMPLES`'s doc comment for why. `[rampEnd,
+ * 1]` gets whatever remains, spaced evenly as before; the shared boundary at
+ * `rampEnd` is only ever added once. Monotonically increasing by
+ * construction (two independent evenly-spaced runs, the second starting
+ * exactly where the first ends), so radius (which is `lerp(startRadius,
+ * endRadius, t)`) stays non-decreasing along the path exactly as it always
+ * has.
+ */
+export function buildForkBiasedSampleTimes(sampleCount: number, rampEnd: number): number[] {
+  if (sampleCount <= 1) return [0]
+  const forkSampleCount = clamp(Math.round(sampleCount * rampEnd), MIN_FORK_SAMPLES, sampleCount - 1)
+  const postForkSampleCount = sampleCount - forkSampleCount
+  const times: number[] = []
+  for (let i = 0; i < forkSampleCount; i++) {
+    times.push(forkSampleCount > 1 ? (i / (forkSampleCount - 1)) * rampEnd : 0)
+  }
+  for (let i = 1; i <= postForkSampleCount; i++) {
+    times.push(postForkSampleCount > 1 ? rampEnd + (i / postForkSampleCount) * (1 - rampEnd) : 1)
+  }
+  return times
+}
+
 interface GrowParams {
   startPosition: Vec3
   startRadius: number
@@ -352,15 +437,19 @@ function growHyphaPoints(params: GrowParams): HyphaPoint[] {
   // visibly meanders, proportionate to how far it actually travels.
   const totalLength = Math.max(0, endRadius - startRadius)
   const lengthScale = Math.max(1, totalLength / COLONY_LENGTH_MAX)
-  const lateralBudget = Math.max(LATERAL_MAX_WORLD, totalLength * WIGGLE_LENGTH_FRACTION)
+  const lateralBudget = Math.min(
+    Math.max(LATERAL_MAX_WORLD, totalLength * WIGGLE_LENGTH_FRACTION),
+    totalLength * POST_FORK_LATERAL_LENGTH_CAP_FRACTION,
+  )
   const curlFreq = randRange(prng, CURL_FREQ_MIN, CURL_FREQ_MAX) * lengthScale
   const curlPhase = randRange(prng, 0, CURL_PHASE_MAX)
 
   const sampleCount = clamp(sampleCountForLength(totalLength), SAMPLES_MIN, SAMPLES_MAX)
+  const sampleTimes = buildForkBiasedSampleTimes(sampleCount, rampEnd)
   const points: HyphaPoint[] = []
 
   for (let i = 0; i < sampleCount; i++) {
-    const t = i / (sampleCount - 1)
+    const t = sampleTimes[i]!
     const radius = lerp(startRadius, endRadius, t)
     const time = lerp(splitTime, endTime, t)
 
@@ -663,6 +752,55 @@ export function unswirlPosition(position: Vec3, swirl: number, power: number): V
 }
 
 /**
+ * Removes a sharp zigzag/hook from a FINAL (post-swirl) hypha polyline by
+ * pulling any interior point whose turn exceeds `MAX_HYPHA_TURN_RAD` back
+ * onto the smooth path its own immediate neighbors already describe -- see
+ * `MAX_HYPHA_TURN_RAD`'s doc comment for the root cause this closes. Only
+ * the offending point's ANGLE moves (to the angular midpoint of its two
+ * neighbors, via `shortestAngleTo` so it takes the short way around);
+ * radius, height and time are left untouched, so every OTHER invariant
+ * (monotonic radius, timing, per-point thickness/taper) still holds
+ * exactly. Endpoints (the real fork-start attach point, and the tip) are
+ * never touched -- both are hard invariants elsewhere (exact parent
+ * position, exact final radius/time). Multiple passes: a single point can
+ * be an outlier only relative to ANOTHER point that itself only gets fixed
+ * in a later pass (a short run of consecutive outliers).
+ */
+function relaxSharpTurns(points: HyphaPoint[]): HyphaPoint[] {
+  if (points.length < 3) return points
+  const relaxed = points.map((point) => ({ ...point }))
+
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 1; i < relaxed.length - 1; i++) {
+      const a = relaxed[i - 1]!.position
+      const b = relaxed[i]!.position
+      const c = relaxed[i + 1]!.position
+      const v1x = b.x - a.x
+      const v1z = b.z - a.z
+      const v2x = c.x - b.x
+      const v2z = c.z - b.z
+      const len1 = Math.hypot(v1x, v1z)
+      const len2 = Math.hypot(v2x, v2z)
+      if (len1 < 1e-9 || len2 < 1e-9) continue
+      const cosTurn = clamp((v1x * v2x + v1z * v2z) / (len1 * len2), -1, 1)
+      if (Math.acos(cosTurn) <= MAX_HYPHA_TURN_RAD) continue
+
+      const angleA = Math.atan2(a.z, a.x)
+      const angleC = Math.atan2(c.z, c.x)
+      // Midpoint angle between the two (untouched) neighbors -- `shortestAngleTo`
+      // re-expresses `angleC` as `angleA` plus the shortest signed delta, so
+      // halving that delta averages the short way around the circle, never
+      // the long way.
+      const shortestDelta = shortestAngleTo(angleA, angleC) - angleA
+      const midpointAngle = angleA + shortestDelta / 2
+      const radius = discRadius(b)
+      relaxed[i] = { ...relaxed[i]!, position: polarToVec3(midpointAngle, radius, b.y) }
+    }
+  }
+  return relaxed
+}
+
+/**
  * Applies the swirl to every spatial element of a colony result, uniformly
  * (P7: picking and rendering both read this one already-swirled model, so
  * they can never disagree). A hair's direction/length are recomputed from
@@ -682,7 +820,26 @@ export function applySwirl(result: ColonyLayoutResult, swirl: number, power: num
   const nodes = result.nodes.map((node) => ({ ...node, position: at(node.position) }))
   const tips = result.tips.map((tip) => ({ ...tip, position: at(tip.position) }))
   const mushrooms = result.mushrooms.map((mushroom) => ({ ...mushroom, position: at(mushroom.position) }))
-  const fusions = result.fusions.map((fusion) => ({ ...fusion, position: at(fusion.position), bridgeTo: at(fusion.bridgeTo) }))
+  // Rim-artifact fix (T9): unlike a hair (tiny, its two ends' independent
+  // swirl amounts differ negligibly), a fusion "anastomosis bridge" is
+  // capped at a real `FUSION_SEARCH_RADIUS` (0.25) but its two ends
+  // (`position`, the hypha's real tip, and `bridgeTo`, a nearby hypha/ring/
+  // spore point) can sit at MEANINGFULLY different disc radii, especially
+  // near the rim where a bridge often reaches inward to an already-placed
+  // neighbor. Independently re-deriving each end's own radius-based swirl
+  // (the old `at(fusion.bridgeTo)`) rotates the two ends by different
+  // amounts, stretching a bridge that was bounded at 0.25 pre-swirl into a
+  // visibly longer, oddly-angled chord post-swirl (confirmed up to ~0.37 on
+  // the express fixture, `diagnose-rim.ts`). Rotating `bridgeTo` by the
+  // SAME angle as its own tip (a rigid attach, not an independent swirl)
+  // preserves the pre-swirl bridge length/angle exactly, matching the
+  // "short bridge" invariant `findFusionAnchor` already enforces.
+  const fusions = result.fusions.map((fusion) => {
+    const position = at(fusion.position)
+    const tipRadius = discRadius(fusion.position)
+    const rigidAngle = tipRadius < 1e-9 ? 0 : swirlAngleForRadius(tipRadius, swirl, power)
+    return { ...fusion, position, bridgeTo: rotateAroundY(fusion.bridgeTo, rigidAngle) }
+  })
   const hairs = result.hairs.map((hair) => {
     const base = at(hair.position)
     const tip = at(addVec3(hair.position, scaleVec3(hair.direction, hair.length)))
@@ -926,5 +1083,10 @@ export function layoutNetworkColony(
   // The galaxy swirl is the very last step (see its own doc above) -- every
   // invariant above this line (gap-filling, fork continuity, work-based
   // length, real data links) is established on the pre-swirl geometry.
-  return applySwirl(built, resolved.swirl, resolved.swirlPower)
+  const swirled = applySwirl(built, resolved.swirl, resolved.swirlPower)
+  // Rim-artifact fix (T9): `relaxSharpTurns` runs AFTER swirl, unconditionally
+  // (not just when `swirl !== 0`) -- the fork+swirl interaction is the most
+  // common cause, but this is a general "no polyline turn > 60deg" invariant
+  // (see `MAX_HYPHA_TURN_RAD`'s doc comment), not a swirl-specific patch.
+  return { ...swirled, hyphae: swirled.hyphae.map((hypha) => ({ ...hypha, points: relaxSharpTurns(hypha.points) })) }
 }

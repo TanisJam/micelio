@@ -265,7 +265,12 @@ describe('layoutNetworkColony', () => {
       // Build the SAME snapshot with swirl off and swirl on, then verify
       // every corresponding spatial value keeps its disc radius exactly and
       // shifts by exactly `swirlAngleForRadius(radius)` -- proof that the
-      // transform is applied uniformly, not per-kind.
+      // transform is applied uniformly, not per-kind. A fusion bridge's
+      // `bridgeTo` is the one deliberate exception (see the dedicated
+      // "rotates a fusion bridge rigidly" test below): it follows its own
+      // TIP's swirl angle, not one re-derived from its own (possibly very
+      // different) radius, so a short anastomosis bridge never stretches
+      // into an odd-angled chord post-swirl (the T9 rim-artifact fix).
       const snapshot = makeSnapshot()
       const bounds = computeTimeBounds(snapshot)
       const topology = buildHyphaTopology(snapshot, bounds)
@@ -290,10 +295,7 @@ describe('layoutNetworkColony', () => {
       for (let i = 0; i < plain.nodes.length; i++) assertConsistentSwirl(plain.nodes[i]!.position, swirled.nodes[i]!.position)
       for (let i = 0; i < plain.tips.length; i++) assertConsistentSwirl(plain.tips[i]!.position, swirled.tips[i]!.position)
       for (let i = 0; i < plain.mushrooms.length; i++) assertConsistentSwirl(plain.mushrooms[i]!.position, swirled.mushrooms[i]!.position)
-      for (let i = 0; i < plain.fusions.length; i++) {
-        assertConsistentSwirl(plain.fusions[i]!.position, swirled.fusions[i]!.position)
-        assertConsistentSwirl(plain.fusions[i]!.bridgeTo, swirled.fusions[i]!.bridgeTo)
-      }
+      for (let i = 0; i < plain.fusions.length; i++) assertConsistentSwirl(plain.fusions[i]!.position, swirled.fusions[i]!.position)
       // A hair's base follows the same rule; its recomputed tip (base + direction*length) does too.
       for (let i = 0; i < plain.hairs.length; i++) {
         assertConsistentSwirl(plain.hairs[i]!.position, swirled.hairs[i]!.position)
@@ -302,6 +304,45 @@ describe('layoutNetworkColony', () => {
         assertConsistentSwirl(plainTip, swirledTip)
       }
       expect(plain.hyphae.length).toBeGreaterThan(0)
+    })
+
+    it('rotates a fusion bridge rigidly (T9 rim-artifact fix): bridgeTo follows the tip\'s own swirl angle, not one re-derived from its own radius', () => {
+      // A bridge's two ends (`position`, the real tip, and `bridgeTo`, a
+      // nearby hypha/ring/spore point) can sit at meaningfully different
+      // disc radii. Independently re-deriving each end's own radius-based
+      // swirl would rotate them by different amounts, stretching a bridge
+      // `findFusionAnchor` bounded at `FUSION_SEARCH_RADIUS` (0.25)
+      // pre-swirl into a longer, oddly-angled chord post-swirl. Rotating
+      // `bridgeTo` RIGIDLY by the tip's own angle keeps the pre-swirl
+      // bridge length and relative angle exactly intact.
+      const snapshot = makeSnapshot()
+      const bounds = computeTimeBounds(snapshot)
+      const topology = buildHyphaTopology(snapshot, bounds)
+      const seed = `${snapshot.meta.owner}/${snapshot.meta.name}`.toLowerCase()
+      const plain = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, { swirl: 0 })
+      const swirled = applySwirl(plain, SWIRL, POWER)
+      expect(plain.fusions.length).toBeGreaterThan(0)
+
+      for (let i = 0; i < plain.fusions.length; i++) {
+        const before = plain.fusions[i]!
+        const after = swirled.fusions[i]!
+        const bridgeVecBefore = subVec3(before.bridgeTo, before.position)
+        const bridgeVecAfter = subVec3(after.bridgeTo, after.position)
+        // Pre-swirl bridge length is preserved EXACTLY (a rigid rotation of
+        // the whole bridge segment, not two independently-rotated ends).
+        expect(vec3Length(bridgeVecAfter)).toBeCloseTo(vec3Length(bridgeVecBefore), 7)
+        // bridgeTo's own disc radius is still preserved (any rotation around
+        // Y leaves distance-from-origin unchanged), but its ANGLE follows
+        // the TIP's swirl, not one re-derived from its own radius.
+        const tipRadius = discRadius(before.position)
+        const rigidAngle = tipRadius < 1e-6 ? 0 : swirlAngleForRadius(tipRadius, SWIRL, POWER)
+        const bridgeRadius = discRadius(before.bridgeTo)
+        if (bridgeRadius >= 1e-6) {
+          const expectedAngle = Math.atan2(before.bridgeTo.z, before.bridgeTo.x) + rigidAngle
+          const actualAngle = Math.atan2(after.bridgeTo.z, after.bridgeTo.x)
+          expect(Math.abs(shortestAngleDelta(expectedAngle, actualAngle))).toBeLessThan(1e-6)
+        }
+      }
     })
 
     it('leaves the layout unchanged when swirl is 0 (opt-out)', () => {
@@ -465,6 +506,61 @@ describe('layoutNetworkColony', () => {
       if (model.mushrooms.length === 0) return
       const anyLinked = model.mushrooms.some((m) => m.nearPr !== null)
       expect(anyLinked).toBe(true)
+    })
+
+    // T9: rim "hook"/blocky-fragment fix regression coverage -- see
+    // `relaxSharpTurns`/`MAX_HYPHA_TURN_RAD`/`POST_FORK_LATERAL_LENGTH_CAP_
+    // FRACTION`/`buildForkBiasedSampleTimes` in `colonyLayout.ts` for the
+    // root cause and fix. Exercised against the real bundled fixtures (not a
+    // synthetic snapshot) since the artifact only showed up at real-repo
+    // scale, concentrated at the disc rim.
+    it('has no hypha polyline segment turning more than 60 degrees from its predecessor', () => {
+      const model = buildNetwork(snapshot)
+      let checked = 0
+      for (const hypha of model.hyphae) {
+        if (hypha.kind === 'main') continue
+        const points = hypha.points
+        for (let i = 1; i < points.length - 1; i++) {
+          const a = points[i - 1]!.position
+          const b = points[i]!.position
+          const c = points[i + 1]!.position
+          const v1x = b.x - a.x
+          const v1z = b.z - a.z
+          const v2x = c.x - b.x
+          const v2z = c.z - b.z
+          const len1 = Math.hypot(v1x, v1z)
+          const len2 = Math.hypot(v2x, v2z)
+          if (len1 < 1e-9 || len2 < 1e-9) continue // degenerate segment: covered by the pile-up test below
+          const cosTurn = Math.max(-1, Math.min(1, (v1x * v2x + v1z * v2z) / (len1 * len2)))
+          const turnDeg = (Math.acos(cosTurn) * 180) / Math.PI
+          checked += 1
+          expect(turnDeg).toBeLessThanOrEqual(60 + 1e-6)
+        }
+      }
+      // Sanity on the test's own coverage: this fixture should actually
+      // exercise a meaningful number of interior turns.
+      expect(checked).toBeGreaterThan(100)
+    })
+
+    it('never repeats a near-zero-length segment (no point pile-up) along a hypha polyline', () => {
+      const model = buildNetwork(snapshot)
+      const EPSILON = 1e-4
+      for (const hypha of model.hyphae) {
+        if (hypha.kind === 'main') continue
+        const points = hypha.points
+        let consecutiveTinySegments = 0
+        for (let i = 1; i < points.length; i++) {
+          const a = points[i - 1]!.position
+          const b = points[i]!.position
+          const segmentLength = Math.hypot(b.x - a.x, b.z - a.z)
+          consecutiveTinySegments = segmentLength < EPSILON ? consecutiveTinySegments + 1 : 0
+          // A single near-zero segment can legitimately happen (e.g. right
+          // at the spore); TWO in a row means several points collapsed onto
+          // (almost) the same spot -- the actual pile-up shape this guards
+          // against.
+          expect(consecutiveTinySegments).toBeLessThan(2)
+        }
+      }
     })
   })
 })
