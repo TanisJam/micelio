@@ -7,13 +7,24 @@
 export const mycelium = {
   // Unit 3 ("let the substrate emerge from the mycelium"): the geometric
   // soil disc is gone -- these two tokens now color the density-based haze
-  // (`substrateMaterial.ts`) instead, kept dark and low-contrast for the
-  // same reason the disc was (M3c item 5): summed across a wide area, even
-  // a subtly lighter tone reads as a visible plate/ellipse against the
-  // near-black background, so the far tone stays very close to the near one
-  // -- only a faint haze near real structure, fading to background beyond it.
-  substrateNear: '#05070a',
-  substrateFar: '#06080b',
+  // (`substrateMaterial.ts`) instead. `substrateFar` ("far from any real
+  // structure") is an EXACT match for the scene's own background (`ui.bg`)
+  // -- a zero-density texel must be indistinguishable from the flat
+  // backdrop. `substrateNear` ("near real, dense structure") is a real,
+  // perceptible cool glow, not a near-invisible near-black variant.
+  //
+  // Production feedback (post-final-pass): these two were previously
+  // swapped -- `substrateNear` equaled the background exactly and
+  // `substrateFar` was the barely-different tone -- so genuinely dense
+  // structure faded TOWARD the background (the haze was "barely visible")
+  // while the wide, faint halo any splat's own soft falloff leaves across
+  // nearly the whole colony's convex extent (not just close to real
+  // structure) leaned on the slightly-lighter tone, reading as a visible
+  // disc/ellipse against the near-black background everywhere, not just
+  // near real structure. Corrected, together with `substrateMaterial.ts`'s
+  // new density threshold that keeps that faint halo at exactly zero.
+  substrateNear: '#123544',
+  substrateFar: '#05070a',
   hyphaActiveBase: '#4fa8c9',
   hyphaActiveTip: '#6ee7ff',
   hyphaDeadBase: '#5a4a3a',

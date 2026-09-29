@@ -10,7 +10,18 @@
 import { summarizeElementDetail, type PullRequestDetail } from '../elementDetail'
 import type { RepoSnapshot } from '../repo'
 import { resolveNetworkElementDetail } from './elementDetail'
-import type { NetworkModel } from './types'
+import type { HyphaKind, NetworkModel } from './types'
+
+/**
+ * Post-final-pass (misleading counters): the kinds of hypha that are a REAL
+ * pull request -- excludes `direct` (a burst of commits pushed straight to
+ * the default branch, no PR involved) and `liveBranch` (a branch with no PR
+ * at all). Production feedback: `TanisJam/lime`'s counter read "12 pull
+ * requests" for a repo with exactly 1 real PR, because every non-main
+ * hypha's own split time (direct bursts and live branches included) was
+ * being counted toward "pull requests".
+ */
+const REAL_PULL_REQUEST_KINDS: ReadonlySet<HyphaKind> = new Set<HyphaKind>(['merged', 'closed', 'open'])
 
 export interface TickerEvent {
   time: number
@@ -68,9 +79,9 @@ export interface TickerData {
   events: TickerEvent[]
   /** `events.map(e => e.time)`, precomputed once -- avoids a per-frame allocation in `currentTickerEvent`. */
   eventTimes: number[]
-  /** Ascending. Every non-main hypha's own split time -- "a PR/burst started". */
+  /** Ascending. Every REAL pull-request hypha's own split time -- `merged`/`closed`/`open` only, never a `direct` burst or a PR-less `liveBranch` (see `REAL_PULL_REQUEST_KINDS`). */
   pullRequestTimes: number[]
-  /** Ascending. Every rendered commit node's own time. */
+  /** Ascending. Every rendered commit node's own time -- PR commits and direct-push commits alike (both are real commits). */
   commitTimes: number[]
   /** Ascending. Every mushroom's own time. */
   releaseTimes: number[]
@@ -78,7 +89,7 @@ export interface TickerData {
 
 export function buildTickerData(model: NetworkModel, snapshot: RepoSnapshot): TickerData {
   const pullRequestTimes = model.hyphae
-    .filter((h) => h.kind !== 'main')
+    .filter((h) => REAL_PULL_REQUEST_KINDS.has(h.kind))
     .map((h) => h.splitTime)
     .sort((a, b) => a - b)
   const commitTimes = model.nodes.map((n) => n.time).sort((a, b) => a - b)

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import valtioFixture from '../../../server/fixtures/pmndrs-valtio.json' with { type: 'json' }
+import { buildNetwork } from '../../../domain/network'
+import type { RepoSnapshot } from '../../../domain/repo'
+import { makeSnapshot } from '../../../domain/shared/testHelpers'
 import {
   chooseCameraFraming,
   computeFramingDistance,
+  computeGrownRadius,
   LANDSCAPE_FRAME_MARGIN,
   LANDSCAPE_PITCH_RADIANS,
   PORTRAIT_FRAME_MARGIN,
@@ -55,5 +60,49 @@ describe('computeFramingDistance', () => {
     const distance = computeFramingDistance(RADIUS, VERTICAL_FOV, 390 / 844, 1.1)
     expect(Number.isFinite(distance)).toBe(true)
     expect(distance).toBeGreaterThan(0)
+  })
+})
+
+describe('computeGrownRadius', () => {
+  const valtioModel = buildNetwork(valtioFixture as unknown as RepoSnapshot)
+
+  it('post-final-pass (framing): matches the model\'s own final bounding radius at the last event time', () => {
+    const grown = computeGrownRadius(valtioModel, valtioModel.bounds.time.lastEventTime)
+    // `bounds.radius` (buildNetwork.ts) also considers growth-ring markers,
+    // which computeGrownRadius deliberately does not (they're an internal
+    // layout aid, never rendered) -- so this is a close, not exact, match.
+    expect(grown).toBeGreaterThan(valtioModel.bounds.radius * 0.9)
+    expect(grown).toBeLessThanOrEqual(valtioModel.bounds.radius + 1e-6)
+  })
+
+  it('grows strictly from the first event time to the last -- the colony grows outward over its replay', () => {
+    const start = computeGrownRadius(valtioModel, valtioModel.bounds.time.firstEventTime)
+    const end = computeGrownRadius(valtioModel, valtioModel.bounds.time.lastEventTime)
+    expect(start).toBeLessThan(end)
+  })
+
+  it('is monotonically non-decreasing as time advances (the colony only ever grows outward)', () => {
+    const { firstEventTime, lastEventTime } = valtioModel.bounds.time
+    const span = lastEventTime - firstEventTime
+    let previous = 0
+    for (let step = 0; step <= 10; step++) {
+      const time = firstEventTime + (span * step) / 10
+      const radius = computeGrownRadius(valtioModel, time)
+      expect(radius).toBeGreaterThanOrEqual(previous - 1e-9)
+      previous = radius
+    }
+  })
+
+  it('returns 0 for a model with no grown structure at all (well before anything starts)', () => {
+    const snapshot = makeSnapshot({
+      mergedPullRequests: [],
+      openPullRequests: [],
+      closedPullRequests: [],
+      liveBranches: [],
+      releases: [],
+      directCommits: [],
+    })
+    const model = buildNetwork(snapshot)
+    expect(computeGrownRadius(model, model.bounds.time.firstEventTime - 1_000_000)).toBe(0)
   })
 })

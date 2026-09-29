@@ -62,15 +62,16 @@ export default function Scene({
 }: NetworkSceneProps) {
   // A FLAT background (not the tree scene's vertical sky gradient, see
   // `skyTexture.ts` -- deliberately not reused here) matching the substrate
-  // haze shader's own edge target (`substrateMaterial.ts`'s `uEdgeColor`)
-  // exactly. A round-2 M3b visual finding (still true for the Unit 3 haze,
-  // which kept this same discipline): even a subtle two-stop gradient
-  // produced a visible edge-contrast "rim" around the disc's circular
-  // silhouette wherever the background happened to be locally lighter than
-  // the disc's own darkest edge tone -- an identical flat color behind AND
-  // at the haze's own rim removes that mismatch everywhere around the
-  // circle, not just approximately.
-  const background = useMemo(() => new THREE.Color(mycelium.substrateNear), [])
+  // haze shader's own edge target (`substrateMaterial.ts`'s `uEdgeColor`,
+  // `mycelium.substrateFar` -- "far from any real structure") exactly. A
+  // round-2 M3b visual finding (still true for the Unit 3 haze, which kept
+  // this same discipline): even a subtle two-stop gradient produced a
+  // visible edge-contrast "rim" around the disc's circular silhouette
+  // wherever the background happened to be locally lighter than the disc's
+  // own darkest edge tone -- an identical flat color behind AND at the
+  // haze's own rim removes that mismatch everywhere around the circle, not
+  // just approximately.
+  const background = useMemo(() => new THREE.Color(mycelium.substrateFar), [])
 
   return (
     <Canvas

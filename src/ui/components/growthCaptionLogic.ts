@@ -5,7 +5,11 @@
  */
 
 export const CAPTIONS: { until: number; text: string }[] = [
-  { until: 0.5, text: 'Each filament is a pull request · distance from the center is time' },
+  // Post-final-pass (misleading counters/caption): a filament isn't only a
+  // pull request -- a solo/small repo's direct-commit bursts (grouped by
+  // `groupDirectCommitBursts`) render as real filaments too, and the old
+  // wording never mentioned them.
+  { until: 0.5, text: 'Each filament is a pull request or a burst of commits · distance from the center is time' },
   { until: 1, text: 'Mushrooms are releases · click anything' },
 ]
 

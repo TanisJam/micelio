@@ -15,7 +15,7 @@ import { MushroomsMesh } from './MushroomsMesh'
 import { PointGlowInstances } from './PointGlowInstances'
 import { SubstrateHaze } from './SubstrateHaze'
 import { SporeMesh } from './SporeMesh'
-import { discRadius, substrateRadiusFor, type NetworkModel } from '../../../domain/network'
+import { discRadius, type NetworkModel } from '../../../domain/network'
 import { mycelium } from '../../theme/tokens'
 
 export interface NetworkSceneContentProps {
@@ -209,7 +209,7 @@ export function NetworkSceneContent({
 
   return (
     <>
-      <CameraRig radius={substrateRadiusFor(model)} isReplayPlaying={isReplayPlaying} reducedMotion={reducedMotion} />
+      <CameraRig model={model} getCurrentTime={getCurrentTime} isReplayPlaying={isReplayPlaying} reducedMotion={reducedMotion} />
       <CameraFocus model={model} selectedId={selectedId} reducedMotion={reducedMotion} />
 
       <SubstrateHaze model={model} getCurrentTime={getCurrentTime} ringRadius={selectedMushroomRingRadius} />
@@ -230,7 +230,11 @@ export function NetworkSceneContent({
           the dark substrate below. */}
       <directionalLight position={[1.6, 3.2, 2.4]} intensity={3.2} color={mycelium.mushroomCap} />
       <directionalLight position={[-2, 0.6, -1.4]} intensity={0.6} color={mycelium.mushroomRim} />
-      <hemisphereLight args={[mycelium.mushroomRim, mycelium.substrateNear, 0.16]} />
+      {/* Post-final-pass: `substrateFar`, not `substrateNear` -- this ground
+          tint should stay matched to the dark substrate/background (what
+          `substrateFar` now means), not pick up the corrected `substrateNear`
+          glow color meant for the haze shader's own dense-structure highlight. */}
+      <hemisphereLight args={[mycelium.mushroomRim, mycelium.substrateFar, 0.16]} />
 
       <MushroomsMesh
         matrices={mushroomInstances.matrices}

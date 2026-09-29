@@ -5,18 +5,27 @@ import { mycelium } from '../../../theme/tokens'
  * Unlike `hexToVec3` (raw sRGB-encoded bytes / 255, used by the additively-
  * blended hypha/glow materials, where the mismatch is imperceptible), this
  * material does an EXACT color match against `Scene.tsx`'s
- * `scene.background` (a `THREE.Color`, which three.js's `ColorManagement`
- * decodes from sRGB into its LINEAR working space) to make a zero-density
- * texel invisible. Feeding a raw sRGB-encoded value into a plain, unlit
- * `ShaderMaterial`'s `gl_FragColor` skips that same decode, so it read as
- * visibly LIGHTER than the true background everywhere -- the entire disc,
- * regardless of the real density field underneath (confirmed by forcing
- * `density = 0.0` unconditionally in the fragment shader during
- * development: the mismatch persisted identically). `convertSRGBToLinear`
- * matches what `scene.background` already does internally.
+ * `scene.background` (a `THREE.Color`) to make a zero-density texel
+ * invisible against it.
+ *
+ * Post-final-pass (disc remnant): `new THREE.Color(hex)` ALREADY decodes
+ * sRGB into three.js's linear working space automatically (`ColorManagement`,
+ * on by default since three r152) -- an EARLIER version of this function
+ * additionally called `.convertSRGBToLinear()` on top of that, double-
+ * applying the sRGB EOTF and landing roughly 13x too dark in linear terms
+ * (confirmed numerically: `new THREE.Color('#05070a').r` is `~0.00152`,
+ * while the old double-converted value was `~0.00012`). Forcing every pixel
+ * of this material to output the resulting `uEdgeColor` unconditionally
+ * (bypassing density/growth entirely) still showed a visible disc against
+ * the true background -- proving the mismatch was in this color math, not
+ * the density field, the growth reveal, tone mapping, or bloom (each ruled
+ * out individually beforehand). Removing the redundant second conversion
+ * here was the actual, complete fix; the disc is gone with density-driven
+ * haze re-enabled (see `DENSITY_GLOW_LOW`/`DENSITY_GLOW_HIGH` below for the
+ * separate, second half of that finding).
  */
 function hexToLinearVec3(hex: string): THREE.Vector3 {
-  const color = new THREE.Color(hex).convertSRGBToLinear()
+  const color = new THREE.Color(hex)
   return new THREE.Vector3(color.r, color.g, color.b)
 }
 
@@ -104,6 +113,19 @@ const FRAGMENT_SHADER = /* glsl */ `
     return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
   }
 
+  // Post-final-pass (disc remnant): a splat's own soft Gaussian falloff
+  // (densityField.ts) leaves a faint but nonzero raw density across nearly
+  // the colony's WHOLE convex extent, not just close to real structure --
+  // with a repo dense enough to have points spread across most of that
+  // extent (e.g. a several-hundred-PR repo), that faint halo used to read
+  // as a uniformly-tinted disc/ellipse against the near-black background,
+  // everywhere rawDensity was merely nonzero rather than genuinely high.
+  // This threshold/ramp keeps sparse coverage at exactly zero
+  // (indistinguishable from uEdgeColor) and only lets a texel near REAL
+  // clustered structure glow.
+  const float DENSITY_GLOW_LOW = 0.35;
+  const float DENSITY_GLOW_HIGH = 0.8;
+
   void main() {
     vec2 uv = vXZ / (2.0 * max(uRadius, 0.001)) + 0.5;
     float density = 0.0;
@@ -112,7 +134,8 @@ const FRAGMENT_SHADER = /* glsl */ `
       float rawDensity = texSample.r;
       float birthTimeNorm = texSample.g;
       float grown = clamp((uCurrentTimeNorm - birthTimeNorm) / max(uRevealWindowNorm, 0.0001), 0.0, 1.0);
-      density = rawDensity * smoothstep(0.0, 1.0, grown);
+      float revealed = rawDensity * smoothstep(0.0, 1.0, grown);
+      density = smoothstep(DENSITY_GLOW_LOW, DENSITY_GLOW_HIGH, revealed);
     }
 
     // Gentle low-frequency + fine noise (P4's "subtle grain"), only visible
@@ -187,7 +210,11 @@ export function createSubstrateMaterial(params: {
     uDensityTex: { value: params.texture },
     uColorNear: { value: hexToLinearVec3(mycelium.substrateNear) },
     uColorFar: { value: hexToLinearVec3(mycelium.substrateFar) },
-    uEdgeColor: { value: hexToLinearVec3(mycelium.substrateNear) },
+    // Post-final-pass: matches `mycelium.substrateFar` (the corrected
+    // background-matching token, also what `Scene.tsx`'s own
+    // `scene.background` now uses), not `substrateNear` -- see that
+    // token's own doc comment for the near/far correction.
+    uEdgeColor: { value: hexToLinearVec3(mycelium.substrateFar) },
     uRingColor: { value: hexToLinearVec3(mycelium.ring) },
     uRadius: { value: params.radius },
     uCurrentTimeNorm: { value: 0 },

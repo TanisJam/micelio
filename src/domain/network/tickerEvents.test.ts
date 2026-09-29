@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeClosedPr, makeDirectCommit, makeMergedPr, makeOpenPr, makeRelease, makeSnapshot } from '../shared/testHelpers'
+import { makeBranch, makeClosedPr, makeDirectCommit, makeMergedPr, makeOpenPr, makeRelease, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { buildTickerData, buildTickerEvents, currentTickerEvent, tickerCountsAt } from './tickerEvents'
 
@@ -66,6 +66,30 @@ describe('tickerCountsAt', () => {
     expect(counts.pullRequests).toBeGreaterThan(0)
     expect(counts.commits).toBeGreaterThan(0)
     expect(counts.releases).toBe(1)
+  })
+
+  /**
+   * Post-final-pass (misleading counters): production feedback on
+   * `TanisJam/lime` -- "12 pull requests" for a repo with exactly 1 real
+   * PR, because a direct-commit burst's and a live branch's own split time
+   * were both counted toward "pull requests" too. `buildFixtureModel` has
+   * exactly 3 REAL pull requests (1 merged, 1 closed, 1 open) plus 1
+   * direct-commit burst; this adds a live branch with no PR at all on top
+   * -- the truthful count must stay exactly 3 regardless.
+   */
+  it('counts only REAL pull requests (merged/closed/open) -- never a direct-commit burst or a PR-less live branch', () => {
+    const snapshot = makeSnapshot({
+      mergedPullRequests: [makeMergedPr({ number: 1, baseRefName: 'main', headRefName: 'a', createdAt: '2021-01-01T00:00:00Z', mergedAt: '2021-02-01T00:00:00Z' })],
+      closedPullRequests: [makeClosedPr({ number: 2, baseRefName: 'main', headRefName: 'b', createdAt: '2021-03-01T00:00:00Z', closedAt: '2021-04-01T00:00:00Z' })],
+      openPullRequests: [makeOpenPr({ number: 3, baseRefName: 'main', headRefName: 'c', createdAt: '2021-05-01T00:00:00Z' })],
+      liveBranches: [makeBranch({ name: 'feature/loose', lastCommitDate: '2021-08-01T00:00:00Z' })],
+      releases: [],
+      directCommits: [makeDirectCommit({ oid: 'd1', authoredDate: '2021-07-01T00:00:00Z' })],
+    })
+    const model = buildNetwork(snapshot)
+    const data = buildTickerData(model, snapshot)
+    const counts = tickerCountsAt(data, model.bounds.time.lastEventTime)
+    expect(counts.pullRequests).toBe(3)
   })
 
   it('is monotonically non-decreasing as currentTime advances', () => {

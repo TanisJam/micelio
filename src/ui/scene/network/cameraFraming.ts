@@ -2,6 +2,8 @@
  * Pure (no React/three.js) camera-framing math for `CameraRig.tsx`, split
  * out for direct unit testing.
  */
+import { discRadius, pointOnHyphaAtTime, type NetworkModel } from '../../../domain/network'
+import { addVec3, scaleVec3 } from '../../../domain/shared/vector'
 
 // Breathing room beyond a tight bounding-circle fit for a landscape/desktop
 // viewport, and framing at a 3/4 top-down angle. Lowered from 55deg (M3's
@@ -9,7 +11,16 @@
 // visual review: mushroom caps need enough angle-to-horizontal for their own
 // silhouette/underside-rim shading to actually be visible against the soil,
 // which a near-overhead camera hides almost entirely.
-export const LANDSCAPE_FRAME_MARGIN = 1.28
+// Post-final-pass (framing): lowered from 1.28. The colony used to be framed
+// against `substrateRadiusFor(model)` (the substrate haze's own PADDED
+// radius, `model.bounds.radius * DENSITY_FIELD_MARGIN` = 1.6x too big) --
+// the colony's real, rendered extent only ever filled roughly its own
+// radius's share of that inflated frame (~40% of the viewport's limiting
+// dimension on a real `pmndrs/valtio` screenshot). Framing against the
+// model's own TRUE bounding radius instead (see `CameraRig.tsx`) already
+// closes most of that gap; this margin is retuned on top of that fix to
+// land close to the target ~85% fill.
+export const LANDSCAPE_FRAME_MARGIN = 0.92
 export const LANDSCAPE_PITCH_RADIANS = (45 * Math.PI) / 180
 
 /**
@@ -28,7 +39,10 @@ export const LANDSCAPE_PITCH_RADIANS = (45 * Math.PI) / 180
  * that moved the desktop pitch down from 55deg to 45deg in the first
  * place).
  */
-export const PORTRAIT_FRAME_MARGIN = 1.1
+// Post-final-pass (framing): retuned from 1.1 alongside the landscape
+// margin above, for the same ~85%-fill target now that framing uses the
+// model's true bounding radius rather than the padded substrate radius.
+export const PORTRAIT_FRAME_MARGIN = 0.85
 export const PORTRAIT_PITCH_RADIANS = (60 * Math.PI) / 180
 
 export interface CameraFraming {
@@ -56,4 +70,46 @@ export function computeFramingDistance(radius: number, verticalFovRadians: numbe
   const horizontalFov = 2 * Math.atan(Math.tan(verticalFovRadians / 2) * aspect)
   const limitingFov = Math.min(verticalFovRadians, horizontalFov)
   return (radius / Math.sin(limitingFov / 2)) * frameMargin
+}
+
+/**
+ * Post-final-pass (framing): the colony's own tightest bounding radius AT
+ * `time` -- not the model's FINAL (fully-grown) `bounds.radius`, which is
+ * what `CameraRig` used to frame against for the WHOLE replay, including
+ * its very first frames when only a couple of hyphae exist near the spore.
+ * That meant the camera sat at its final, zoomed-out distance from the
+ * start, making early growth read as a tiny, distant cluster rather than
+ * something the camera eases out FROM. `CameraRig` uses this every frame
+ * (while replay is actively playing and the viewer hasn't taken over) to
+ * smoothly ease the framing distance outward as the colony actually grows.
+ *
+ * Mirrors `buildNetwork.ts`'s own final-`bounds.radius` computation (same
+ * contributing sources: hypha points, hair tips, mushrooms) but each
+ * evaluated AT `time` instead of at its own final state:
+ * `pointOnHyphaAtTime` already clamps to a hypha's own `[first, last]` time
+ * range, so an unsplit hypha simply contributes its still-unmoved split
+ * point; a hair/mushroom not yet born (`time` before its own `time` field)
+ * is excluded entirely rather than counted early.
+ */
+export function computeGrownRadius(model: NetworkModel, time: number): number {
+  let maxRadius = 0
+  for (const hypha of model.hyphae) {
+    if (hypha.kind === 'main') continue
+    const point = pointOnHyphaAtTime(hypha.points, time)
+    if (!point) continue
+    const radius = discRadius(point)
+    if (radius > maxRadius) maxRadius = radius
+  }
+  for (const hair of model.hairs) {
+    if (hair.time > time) continue
+    const tip = addVec3(hair.position, scaleVec3(hair.direction, hair.length))
+    const radius = discRadius(tip)
+    if (radius > maxRadius) maxRadius = radius
+  }
+  for (const mushroom of model.mushrooms) {
+    if (mushroom.time > time) continue
+    const radius = discRadius(mushroom.position)
+    if (radius > maxRadius) maxRadius = radius
+  }
+  return maxRadius
 }

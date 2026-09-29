@@ -7,6 +7,13 @@ describe('captionForProgress', () => {
     expect(captionForProgress(0.49)).toMatch(/Each filament is a pull request/)
   })
 
+  // Post-final-pass (misleading counters/caption): a filament can be a
+  // direct-commit burst too (`groupDirectCommitBursts`), not only a pull
+  // request -- the caption must say so, matching the Legend's own wording.
+  it('mentions bursts of commits, not only pull requests', () => {
+    expect(captionForProgress(0)).toBe('Each filament is a pull request or a burst of commits · distance from the center is time')
+  })
+
   it('switches to the "mushrooms" caption for the rest of the replay', () => {
     expect(captionForProgress(0.5)).toMatch(/Mushrooms are releases/)
     expect(captionForProgress(0.99)).toMatch(/Mushrooms are releases/)
