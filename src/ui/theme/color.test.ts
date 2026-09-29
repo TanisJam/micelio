@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hexToRgb, mixHex, rgbToHex, softenToward, threeStopRamp } from './color'
+import { hexToRgb, mixHex, rgbToHex } from './color'
 
 describe('hexToRgb / rgbToHex', () => {
   it('round-trips a 6-digit hex color', () => {
@@ -33,28 +33,5 @@ describe('mixHex', () => {
   it('clamps t outside [0, 1]', () => {
     expect(mixHex('#000000', '#ffffff', -1)).toBe('#000000')
     expect(mixHex('#000000', '#ffffff', 2)).toBe('#ffffff')
-  })
-})
-
-describe('softenToward', () => {
-  it('is an alias for mixing toward a target color', () => {
-    expect(softenToward('#ff0000', '#000000', 0.5)).toBe(mixHex('#ff0000', '#000000', 0.5))
-  })
-})
-
-describe('threeStopRamp', () => {
-  const a = '#3a8f4a'
-  const b = '#d9a441'
-  const c = '#b5502b'
-
-  it('hits each stop exactly at t=0, 0.5, 1', () => {
-    expect(threeStopRamp(a, b, c, 0)).toBe(a)
-    expect(threeStopRamp(a, b, c, 0.5)).toBe(b)
-    expect(threeStopRamp(a, b, c, 1)).toBe(c)
-  })
-
-  it('clamps outside [0, 1]', () => {
-    expect(threeStopRamp(a, b, c, -1)).toBe(a)
-    expect(threeStopRamp(a, b, c, 2)).toBe(c)
   })
 })

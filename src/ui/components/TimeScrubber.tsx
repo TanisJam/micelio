@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type KeyboardEvent } from 'react'
-import { mapPlaybackProgressToTime, type TimeBounds } from '../../domain/tree'
+import { mapPlaybackProgressToTime, type TimeBounds } from '../../domain/shared'
 import type { GrowthClock } from '../hooks/useGrowthClock'
 import { ui } from '../theme/tokens'
 

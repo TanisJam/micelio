@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeBranch, makeClosedPr, makeMergedPr, makeOpenPr, makeRelease, makeSnapshot } from '../tree/testHelpers'
+import { makeBranch, makeClosedPr, makeMergedPr, makeOpenPr, makeRelease, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { resolveNetworkElementDetail } from './elementDetail'
 
@@ -76,11 +76,18 @@ describe('resolveNetworkElementDetail', () => {
     }
   })
 
-  it('resolves a merge-point node (on main) to its merged PR detail', () => {
-    const { snapshot, model } = buildFixtureModel()
-    const mergePoint = model.nodes.find((n) => n.isMergePoint)!
-    const detail = resolveNetworkElementDetail(model, snapshot, mergePoint.id)
-    expect(detail).toMatchObject({ kind: 'pull_request', status: 'merged', number: 1 })
+  // The colony layout represents a merge as a `Fusion` knot on the PR's OWN
+  // hypha (see `types.ts`'s `Fusion` doc), never as a separate node on
+  // `main` -- `isMergePoint` commits are deliberately excluded from the
+  // rendered main-hypha nodes (`colonyLayout.ts`'s `isGenuineDirectCommit`),
+  // so `model.nodes.find((n) => n.isMergePoint)` is always empty for colony
+  // and a fusion itself isn't independently selectable
+  // (`LookupableNetworkElement` excludes `Fusion`). The merged PR is still
+  // fully resolvable through its own hypha id, covered above.
+  it('never renders a merge-point node on main (represented by a fusion knot on the PR`s own hypha instead)', () => {
+    const { model } = buildFixtureModel()
+    expect(model.nodes.some((n) => n.isMergePoint)).toBe(false)
+    expect(model.fusions.length).toBeGreaterThan(0)
   })
 
   it('resolves a mushroom to a release detail', () => {

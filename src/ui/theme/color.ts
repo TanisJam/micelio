@@ -50,14 +50,3 @@ export function mixHex(a: string, b: string, t: number): string {
     b: rgbA.b + (rgbB.b - rgbA.b) * clamped,
   })
 }
-
-/** Mixes a source color toward a target "palette" color by `amount` (0..1). Used to soften real GitHub language colors so they stay cohesive with the rest of the scene. */
-export function softenToward(source: string, target: string, amount: number): string {
-  return mixHex(source, target, amount)
-}
-
-/** Three-stop ramp: mixes smoothly between `a`, `b` and `c` as `t` goes 0 -> 0.5 -> 1. */
-export function threeStopRamp(a: string, b: string, c: string, t: number): string {
-  const clamped = Math.min(1, Math.max(0, t))
-  return clamped < 0.5 ? mixHex(a, b, clamped * 2) : mixHex(b, c, (clamped - 0.5) * 2)
-}

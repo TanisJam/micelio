@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { Mushroom } from '../../../../domain/network'
-import { createPrng, randRange } from '../../../../domain/tree'
+import { createPrng, randRange } from '../../../../domain/shared'
 import type { PickTarget } from '../picking/pickingGrid'
 
 /**

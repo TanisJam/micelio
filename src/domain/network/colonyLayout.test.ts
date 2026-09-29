@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import valtioFixture from '../../server/fixtures/pmndrs-valtio.json' with { type: 'json' }
 import expressFixture from '../../server/fixtures/expressjs-express.json' with { type: 'json' }
 import type { CommitAuthor, MergedPullRequest, RepoSnapshot } from '../repo'
-import { computeTimeBounds } from '../tree/timeBounds'
-import { subVec3, vec3Length } from '../tree/vector'
-import { makeSnapshot } from '../tree/testHelpers'
+import { computeTimeBounds } from '../shared/timeBounds'
+import { subVec3, vec3Length } from '../shared/vector'
+import { makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import {
   applySwirl,
@@ -17,7 +17,7 @@ import {
   swirlAngleForRadius,
   unswirlPosition,
 } from './colonyLayout'
-import { DEFAULT_LAYOUT_OPTIONS, discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius } from './layout'
+import { DEFAULT_LAYOUT_OPTIONS, discRadius, DISC_MAX_RADIUS, pointOnHyphaAtRadius } from './ringGeometry'
 import { buildHyphaTopology } from './topology'
 
 const FIXTURES: [string, RepoSnapshot][] = [
@@ -445,7 +445,7 @@ describe('layoutNetworkColony', () => {
 
   describe.each(FIXTURES)('%s (real fixture smoke test)', (_name, snapshot) => {
     it('builds a sane colony model via buildNetwork', () => {
-      const model = buildNetwork(snapshot, { layout: 'colony' })
+      const model = buildNetwork(snapshot)
       expect(model.layout).toBe('colony')
       expect(model.hyphae.length).toBeGreaterThan(1)
       expect(model.rings.length).toBeGreaterThan(0)
@@ -461,7 +461,7 @@ describe('layoutNetworkColony', () => {
     })
 
     it('records a real nearPr data link for at least one mushroom, when releases and merged PRs coexist', () => {
-      const model = buildNetwork(snapshot, { layout: 'colony' })
+      const model = buildNetwork(snapshot)
       if (model.mushrooms.length === 0) return
       const anyLinked = model.mushrooms.some((m) => m.nearPr !== null)
       expect(anyLinked).toBe(true)

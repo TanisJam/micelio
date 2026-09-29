@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeMergedPr, makeSnapshot } from '../tree/testHelpers'
+import { makeMergedPr, makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
 import { buildNetworkExploreGroups } from './exploreGroups'
 

@@ -8,8 +8,8 @@ function toEpochMs(iso: string): number {
 
 /**
  * Computes the first and last event time across every dated element in the
- * snapshot. Used to place the trunk/limb/leaf timeline and to drive the
- * growth replay (T5).
+ * snapshot. Used to place the colony's radial growth and to drive the
+ * growth-replay scrubber.
  */
 export function computeTimeBounds(snapshot: RepoSnapshot): TimeBounds {
   const times: number[] = [toEpochMs(snapshot.meta.createdAt), toEpochMs(snapshot.meta.pushedAt)]

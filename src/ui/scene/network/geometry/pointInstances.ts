@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { Vec3 } from '../../../../domain/tree'
+import type { Vec3 } from '../../../../domain/shared'
 import type { PickTarget } from '../picking/pickingGrid'
 
 /**

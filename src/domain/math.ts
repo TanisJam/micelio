@@ -1,5 +1,5 @@
 /**
- * Small pure math helpers shared by the domain layer (e.g. the tree model).
+ * Small pure math helpers shared by the domain layer (e.g. the mycelium network model).
  * No React, no three.js, no fetch — this module must stay side-effect free.
  */
 

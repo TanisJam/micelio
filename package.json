@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "fixture": "tsx scripts/fixture.ts",
     "shot": "tsx scripts/shot.ts",
-    "network-svg": "tsx scripts/network-svg.ts"
+    "network-svg": "tsx scripts/network-svg.ts",
+    "hero-images": "node scripts/generate-hero-images.mjs"
   },
   "dependencies": {
     "@fontsource/fraunces": "^5.3.0",

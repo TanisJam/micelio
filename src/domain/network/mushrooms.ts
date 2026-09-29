@@ -1,26 +1,24 @@
 import type { ReleaseInfo } from '../repo'
-import { addVec3, polarToVec3, vec3, type Vec3 } from '../tree/vector'
-import { createPrng, randJitter, randRange } from '../tree/prng'
-import { discRadius, pointOnHyphaAtTime } from './layout'
-import type { Hypha, HyphaPoint, Mushroom, NetworkRef } from './types'
+import { polarToVec3, type Vec3 } from '../shared/vector'
+import { createPrng, randJitter, randRange } from '../shared/prng'
+import { discRadius } from './ringGeometry'
+import type { Hypha, Mushroom, NetworkRef } from './types'
 
 /**
- * One mushroom per release, fruiting on the soil surface above its point on
- * the main hypha (spiral layout) or on its release growth ring (colony
- * layout, `buildMushroomsOnRings`). Releases close in time cluster into a
- * small group (individual mushrooms, shared `clusterId`) instead of
- * overlapping exactly. `computeReleaseSequence` holds the layout-agnostic
- * ordering/clustering/scale logic shared by both placement strategies.
+ * One mushroom per release, fruiting on its release's own growth ring
+ * (`buildMushroomsOnRings`, the colony layout -- M4 removed the earlier
+ * spiral layout's own placement function, `buildMushrooms`). Releases close
+ * in time cluster into a small group (individual mushrooms, shared
+ * `clusterId`) instead of overlapping exactly. `computeReleaseSequence`
+ * holds the ordering/clustering/scale logic.
  */
 
 const MUSHROOM_LIFT = 0.16
 const MUSHROOM_CLUSTER_GAP_MS = 1000 * 60 * 60 * 24 * 3 // releases within 3 days cluster together
-/** Exported for tests: a clustered mushroom's XZ position is real-data-anchored -- offset from its anchor point by at most this much. */
-export const MUSHROOM_CLUSTER_SCATTER = 0.05
-/** Colony layout only: angular scatter (radians) for a clustered mushroom around its ring anchor angle. */
+/** Angular scatter (radians) for a clustered mushroom around its ring anchor angle. */
 export const MUSHROOM_CLUSTER_ANGLE_SCATTER = 0.24
 /**
- * Colony layout only (M3c): the golden angle (~137.5deg), the same constant
+ * The golden angle (~137.5deg), the same constant
  * phyllotaxis uses to spread leaves/seeds around a stem with minimal
  * overlap at any radius. Each non-clustered release's angle is
  * `ownOrderIndex * GOLDEN_ANGLE_RADIANS` (see `buildMushroomsOnRings`) --
@@ -157,42 +155,6 @@ export function computeReleaseSequence(releases: ReleaseInfo[]): ReleaseSequence
     entries.push({ release, time, scale: scaleForRelease(release, isFirstOfMajor), isClustered, clusterIndex })
   }
   return entries
-}
-
-export function buildMushrooms(releases: ReleaseInfo[], mainPoints: HyphaPoint[], seed: string): Mushroom[] {
-  if (releases.length === 0) return []
-  const prng = createPrng(`${seed}:mushrooms`)
-  const sequence = computeReleaseSequence(releases)
-
-  const mushrooms: Mushroom[] = []
-  let clusterId: string | null = null
-  let clusterAnchor: Vec3 | null = null
-
-  for (const entry of sequence) {
-    if (!entry.isClustered) {
-      clusterId = null
-      clusterAnchor = null
-    }
-
-    const surfacePoint = pointOnHyphaAtTime(mainPoints, entry.time)
-    const anchor: Vec3 = clusterAnchor ?? addVec3(surfacePoint.position, vec3(0, MUSHROOM_LIFT, 0))
-    const scatter = clusterAnchor
-      ? vec3(randRange(prng, -MUSHROOM_CLUSTER_SCATTER, MUSHROOM_CLUSTER_SCATTER), 0, randRange(prng, -MUSHROOM_CLUSTER_SCATTER, MUSHROOM_CLUSTER_SCATTER))
-      : vec3(0, 0, 0)
-
-    if (entry.isClustered && clusterId === null) {
-      clusterId = `mushroom-cluster-${entry.clusterIndex}`
-      const prev = mushrooms[mushrooms.length - 1]
-      if (prev) prev.clusterId = clusterId
-      clusterAnchor = anchor
-    } else if (!entry.isClustered) {
-      clusterAnchor = anchor
-    }
-
-    mushrooms.push(makeMushroom(entry, addVec3(anchor, scatter), clusterId, null))
-  }
-
-  return mushrooms
 }
 
 /**

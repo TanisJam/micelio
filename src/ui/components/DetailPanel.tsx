@@ -70,30 +70,6 @@ function DetailBody({ detail, onFocusElement }: { detail: ElementDetail; onFocus
         </>
       )
 
-    case 'era':
-      return (
-        <>
-          <h2 style={{ margin: 0, fontFamily: ui.fontDisplay, fontSize: '1.15rem' }}>
-            {detail.openingRelease ? `Era: ${detail.openingRelease.name}` : 'Era'}
-          </h2>
-          <Field label="Date range">
-            {formatDate(detail.startTime)} – {formatDate(detail.endTime)}
-          </Field>
-          <Field label="Merged pull requests">
-            {formatNumber(detail.mergedPrCount)}
-            {detail.overflowPrCount > 0 && (
-              <span style={{ color: ui.textMuted }}> ({formatNumber(detail.twigCount)} shown, {formatNumber(detail.overflowPrCount)} folded into leaf density)</span>
-            )}
-          </Field>
-          <Field label="Commits (shown pull requests)">{formatNumber(detail.commitCount)}</Field>
-          {detail.openingRelease && (
-            <Field label="Opened by release">
-              {detail.openingRelease.name} <GitHubLink href={detail.openingRelease.url} />
-            </Field>
-          )}
-        </>
-      )
-
     case 'pull_request': {
       const branchOrigin = detail.origin?.kind === 'branch' ? detail.origin : null
       return (

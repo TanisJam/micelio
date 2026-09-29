@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { easePlaybackProgress, mapPlaybackProgressToTime, type TimeBounds } from '../../domain/tree'
+import { easePlaybackProgress, mapPlaybackProgressToTime, type TimeBounds } from '../../domain/shared'
 
 const AUTOPLAY_DURATION_MS = 10_000
 

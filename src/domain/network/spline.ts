@@ -1,4 +1,4 @@
-import { addVec3, scaleVec3, subVec3, vec3Length, type Vec3 } from '../tree/vector'
+import { addVec3, scaleVec3, subVec3, vec3Length, type Vec3 } from '../shared/vector'
 import { lerp } from '../math'
 
 /**

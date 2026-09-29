@@ -22,11 +22,9 @@ function isRepoErrorResponseBody(value: unknown): value is RepoErrorResponseBody
 }
 
 /**
- * The network-model counterpart of `useRepoTree` (fetch logic identical --
- * see that hook's doc): fetches a `RepoSnapshot` and derives the mycelium
- * `NetworkModel` via `buildNetwork(snapshot, { layout: 'colony' })`, the
- * layout adopted for M3 per M2c/M2d's visual iteration (see
- * `odd/tasks/huerto-mvp.md`).
+ * Fetches a `RepoSnapshot` and derives the mycelium `NetworkModel` via
+ * `buildNetwork(snapshot)` (colony layout -- the product's only mycelium
+ * visualization since M4 removed the earlier spiral layout).
  */
 export function useRepoNetwork(owner: string, repo: string): RepoNetworkState {
   const [snapshot, setSnapshot] = useState<RepoSnapshot | null>(null)
@@ -76,7 +74,7 @@ export function useRepoNetwork(owner: string, repo: string): RepoNetworkState {
     }
   }, [owner, repo])
 
-  const model = useMemo(() => (snapshot ? buildNetwork(snapshot, { layout: 'colony' }) : null), [snapshot])
+  const model = useMemo(() => (snapshot ? buildNetwork(snapshot) : null), [snapshot])
 
   if (errorInfo) return { status: 'error', model: null, snapshot: null, errorInfo }
   if (!model) return { status: 'loading', model: null, snapshot: null, errorInfo: null }

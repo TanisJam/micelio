@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { conduitSplitRadius, discRadius, type Hypha, type NetworkModel } from '../../../../domain/network'
-import type { TimeBounds } from '../../../../domain/tree'
+import type { TimeBounds } from '../../../../domain/shared'
 import { hexToRgb } from '../../../theme/color'
 import { mycelium } from '../../../theme/tokens'
 import type { PickTarget } from '../picking/pickingGrid'

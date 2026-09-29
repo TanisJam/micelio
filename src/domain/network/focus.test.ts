@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildNetwork } from './buildNetwork'
 import { getNetworkElementFocusPosition } from './focus'
-import { makeSnapshot } from '../tree/testHelpers'
+import { makeSnapshot } from '../shared/testHelpers'
 
 describe('getNetworkElementFocusPosition', () => {
   const model = buildNetwork(makeSnapshot())

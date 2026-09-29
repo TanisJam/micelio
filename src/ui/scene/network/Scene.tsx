@@ -20,9 +20,8 @@ export interface NetworkSceneProps {
 }
 
 /**
- * The lazy-loaded 3D chunk for the mycelium network (M3), replacing the
- * tree's `scene/Scene.tsx` as what `ViewerPage` renders -- the tree scene is
- * left in place, unrouted, until M4 removes it.
+ * The lazy-loaded 3D chunk for the mycelium network -- what `ViewerPage`
+ * renders. M4 removed the earlier tree-metaphor scene this replaced.
  *
  * Glow (P2) is SELECTIVE via a luminance-threshold `Bloom`: hyphae/hairs
  * render at ordinary brightness (below the threshold, so they stay crisp,

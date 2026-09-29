@@ -1,6 +1,6 @@
-import { discRadius, radiusForFrac, timeToFrac } from './layout'
+import { discRadius, radiusForFrac, timeToFrac } from './ringGeometry'
 import type { Hypha } from './types'
-import type { TimeBounds } from '../tree/types'
+import type { TimeBounds } from '../shared/types'
 
 /**
  * M3 (rendering) pure honesty/growth helpers. No React, no three.js.

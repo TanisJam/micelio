@@ -64,9 +64,9 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    /* Compact by default -- the tree (and its camera focus) stays visible
-       above the sheet; the expand toggle in the panel header grows it for
-       reading a longer detail. */
+    /* Compact by default -- the colony scene (and its camera focus) stays
+       visible above the sheet; the expand toggle in the panel header grows
+       it for reading a longer detail. */
     max-height: 45vh;
     border-top-left-radius: 16px;
     border-top-right-radius: 16px;

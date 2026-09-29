@@ -39,58 +39,35 @@ function ExampleChip({ owner, repo }: { owner: string; repo: string }) {
 }
 
 /**
- * A small abstract animated mark standing in for a live 3D preview. The
- * scene's visual metaphor is being redesigned, so this is deliberately a
- * placeholder rather than a real render of the (soon to change) scene --
- * see the hand-off note in the project's task log.
+ * A real render of the mycelium colony (M4: `pnpm hero-images`, generated
+ * from the `expressjs/express` fixture, fully grown, no UI chrome) --
+ * replaces the earlier abstract animated SVG placeholder now that the
+ * network scene's visual metaphor is finished, not still being redesigned.
  */
-function HeroPlaceholder() {
+function Hero() {
   return (
-    <div
-      aria-hidden
+    <img
+      src="/hero.png"
+      alt="A bioluminescent mycelium galaxy grown from a real repository's history -- glowing cyan and white filaments spiral outward from a central spore, with small cream mushrooms marking releases."
       style={{
         width: '100%',
         maxWidth: 420,
         aspectRatio: '4 / 3',
+        objectFit: 'cover',
         borderRadius: ui.space(4),
         border: `1px solid ${ui.panelBorder}`,
-        background: `linear-gradient(160deg, ${ui.panelBg}, rgba(0,0,0,0.15))`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        display: 'block',
       }}
-    >
-      <svg width="120" height="120" viewBox="0 0 120 120">
-        <g fill="none" stroke={ui.accent} strokeWidth="2" strokeOpacity="0.55">
-          <line x1="60" y1="60" x2="20" y2="30" />
-          <line x1="60" y1="60" x2="100" y2="30" />
-          <line x1="60" y1="60" x2="30" y2="95" />
-          <line x1="60" y1="60" x2="90" y2="95" />
-          <line x1="60" y1="60" x2="60" y2="15" />
-        </g>
-        {[
-          [60, 60],
-          [20, 30],
-          [100, 30],
-          [30, 95],
-          [90, 95],
-          [60, 15],
-        ].map(([cx, cy], i) => (
-          <circle key={i} cx={cx} cy={cy} r={i === 0 ? 8 : 5} fill={ui.accent}>
-            <animate attributeName="opacity" values="0.55;1;0.55" dur="2.6s" begin={`${i * 0.2}s`} repeatCount="indefinite" />
-          </circle>
-        ))}
-      </svg>
-    </div>
+    />
   )
 }
 
 /**
  * The landing page: brand, pitch, the repo input (owner/repo or a full
- * GitHub URL), example chips, a placeholder hero, and credit links (P10).
+ * GitHub URL), example chips, a real hero render, and credit links (P10).
  */
 export function LandingPage() {
-  useDocumentTitle('Huerto — every repository grows a living history')
+  useDocumentTitle('Huerto — every repository grows a mycelium galaxy')
   const [, navigate] = useLocation()
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -130,7 +107,7 @@ export function LandingPage() {
       >
         <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: ui.space(3), maxWidth: 520 }}>
           <h1 style={{ margin: 0, fontFamily: ui.fontDisplay, fontSize: '2.4rem', fontWeight: 600 }}>Huerto</h1>
-          <p style={{ margin: 0, color: ui.textMuted, fontSize: '1.05rem' }}>Every repository grows a living history.</p>
+          <p style={{ margin: 0, color: ui.textMuted, fontSize: '1.05rem' }}>Every repository grows a mycelium galaxy.</p>
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: ui.space(2), marginTop: ui.space(3) }}>
             <div style={{ display: 'flex', gap: ui.space(2) }}>
@@ -184,7 +161,7 @@ export function LandingPage() {
           </div>
         </div>
 
-        <HeroPlaceholder />
+        <Hero />
       </main>
 
       <footer

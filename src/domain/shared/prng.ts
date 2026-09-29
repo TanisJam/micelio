@@ -1,7 +1,7 @@
 /**
  * Deterministic pseudo-random generator, seeded from a string (typically
  * `owner/repo`). Same seed -> same sequence, always -- this is what makes
- * the tree model reproducible for a given repository.
+ * the mycelium network model reproducible for a given repository.
  *
  * No React, no three.js, no fetch, no Math.random.
  */

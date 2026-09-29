@@ -3,7 +3,7 @@ import { summarizeElementDetail, type ElementDetail } from '../../domain/element
 import { Tooltip } from './Tooltip'
 
 export interface TooltipLayerProps {
-  /** id -> detail view-model, metaphor-agnostic (tree: `resolveElementDetail`, network: `resolveNetworkElementDetail`, both bound to their own model/snapshot by the caller). */
+  /** id -> detail view-model, bound to the network model/snapshot by the caller (`resolveNetworkElementDetail`). */
   resolveDetail: (id: string) => ElementDetail | null
   hoveredId: string | null
 }

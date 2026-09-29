@@ -1,30 +1,26 @@
 import type { RepoSnapshot } from '../repo'
-import { computeTimeBounds } from '../tree/timeBounds'
-import { addVec3, scaleVec3, vec3Length } from '../tree/vector'
+import { computeTimeBounds } from '../shared/timeBounds'
+import { addVec3, scaleVec3, vec3Length } from '../shared/vector'
 import { layoutNetworkColony } from './colonyLayout'
-import { DEFAULT_LAYOUT_OPTIONS, layoutNetwork, type LayoutOptions } from './layout'
-import { buildMushrooms } from './mushrooms'
+import { DEFAULT_LAYOUT_OPTIONS, type LayoutOptions } from './ringGeometry'
 import { buildHyphaTopology, DEFAULT_TOPOLOGY_OPTIONS, type TopologyOptions } from './topology'
-import type { Fusion, GrowthRing, HyphaKind, NetworkLayoutMode, NetworkModel, NetworkOverflow, NetworkSummary } from './types'
+import type { Fusion, GrowthRing, HyphaKind, NetworkModel, NetworkOverflow, NetworkSummary } from './types'
 
 /**
- * Builds the full deterministic `NetworkModel` (mycelium topology + layout +
- * mushrooms) from a `RepoSnapshot`. Pure -- no React, no three.js. This is
- * the network-metaphor counterpart of `../tree/buildTree`.
+ * Builds the full deterministic `NetworkModel` (mycelium topology + colony
+ * layout + mushrooms) from a `RepoSnapshot`. Pure -- no React, no three.js.
  *
- * Two layout strategies share the same `topology.ts` DAG: the original
- * `'spiral'` (default, M2/M2b) and the `'colony'` prototype (M2c, see
- * `colonyLayout.ts`) -- pass `{ layout: 'colony' }` to compare them.
+ * M4 removed the earlier `'spiral'` layout (M2/M2b) once the `'colony'`
+ * layout (M2c/M2d, see `colonyLayout.ts`) fully superseded it as the
+ * product's only mycelium visualization -- both shared the same
+ * `topology.ts` DAG.
  */
 
-export interface NetworkBuildOptions extends TopologyOptions, LayoutOptions {
-  layout: NetworkLayoutMode
-}
+export interface NetworkBuildOptions extends TopologyOptions, LayoutOptions {}
 
 export const DEFAULT_NETWORK_BUILD_OPTIONS: NetworkBuildOptions = {
   ...DEFAULT_TOPOLOGY_OPTIONS,
   ...DEFAULT_LAYOUT_OPTIONS,
-  layout: 'spiral',
 }
 
 const HYPHA_KINDS: HyphaKind[] = ['main', 'merged', 'closed', 'open', 'liveBranch']
@@ -36,32 +32,16 @@ export function buildNetwork(snapshot: RepoSnapshot, options: Partial<NetworkBui
 
   const topology = buildHyphaTopology(snapshot, bounds, resolved)
 
-  const rings: GrowthRing[] = []
-  const fusions: Fusion[] = []
-  let layoutHyphae, layoutNodes, layoutTips, layoutHairs, layoutSpore, mushrooms, nodesOmittedByHypha
-
-  if (resolved.layout === 'colony') {
-    const colony = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, resolved)
-    layoutHyphae = colony.hyphae
-    layoutNodes = colony.nodes
-    layoutTips = colony.tips
-    layoutHairs = colony.hairs
-    layoutSpore = colony.spore
-    mushrooms = colony.mushrooms
-    nodesOmittedByHypha = colony.nodesOmittedByHypha
-    rings.push(...colony.rings)
-    fusions.push(...colony.fusions)
-  } else {
-    const layout = layoutNetwork(topology.main, topology.hyphae, bounds, seed, resolved)
-    const mainHypha = layout.hyphae.find((hypha) => hypha.id === topology.main.id)
-    layoutHyphae = layout.hyphae
-    layoutNodes = layout.nodes
-    layoutTips = layout.tips
-    layoutHairs = layout.hairs
-    layoutSpore = layout.spore
-    mushrooms = buildMushrooms(snapshot.releases, mainHypha?.points ?? [], seed)
-    nodesOmittedByHypha = layout.nodesOmittedByHypha
-  }
+  const colony = layoutNetworkColony(topology.main, topology.hyphae, bounds, seed, snapshot.releases, resolved)
+  const layoutHyphae = colony.hyphae
+  const layoutNodes = colony.nodes
+  const layoutTips = colony.tips
+  const layoutHairs = colony.hairs
+  const layoutSpore = colony.spore
+  const mushrooms = colony.mushrooms
+  const nodesOmittedByHypha = colony.nodesOmittedByHypha
+  const rings: GrowthRing[] = [...colony.rings]
+  const fusions: Fusion[] = [...colony.fusions]
 
   let maxRadius = 0
   for (const hypha of layoutHyphae) {
@@ -105,7 +85,7 @@ export function buildNetwork(snapshot: RepoSnapshot, options: Partial<NetworkBui
 
   return {
     seed,
-    layout: resolved.layout,
+    layout: 'colony',
     bounds: { time: bounds, radius: maxRadius },
     spore: layoutSpore,
     hyphae: layoutHyphae,

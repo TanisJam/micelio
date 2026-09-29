@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { computeTimeBounds } from '../tree/timeBounds'
-import { makeBranch, makeClosedPr, makeMergedPr, makeOpenPr, makeSnapshot } from '../tree/testHelpers'
+import { computeTimeBounds } from '../shared/timeBounds'
+import { makeBranch, makeClosedPr, makeMergedPr, makeOpenPr, makeSnapshot } from '../shared/testHelpers'
 import { buildHyphaTopology } from './topology'
 
 describe('buildHyphaTopology', () => {

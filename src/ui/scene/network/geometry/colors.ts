@@ -6,8 +6,8 @@ import { mycelium } from '../../../theme/tokens'
 /**
  * Pure color helpers for the mycelium scene (P1's tokenized palette).
  * `hexToVec3` is the only three.js touchpoint (a plain 3-number container),
- * kept here rather than in `theme/color.ts` so that module can stay entirely
- * three-free for the tree code that still uses it.
+ * kept here rather than in `theme/color.ts` so that module can stay
+ * three-free.
  */
 
 export function hexToVec3(hex: string): THREE.Vector3 {

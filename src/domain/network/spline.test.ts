@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { vec3Length, subVec3 } from '../tree/vector'
+import { vec3Length, subVec3 } from '../shared/vector'
 import { sampleCatmullRomCentripetal, type SplineControlPoint } from './spline'
 
 function cp(x: number, y: number, z: number, radius: number, time: number): SplineControlPoint {

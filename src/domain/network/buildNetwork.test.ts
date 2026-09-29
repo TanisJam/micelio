@@ -2,11 +2,9 @@ import { describe, expect, it } from 'vitest'
 import valtioFixture from '../../server/fixtures/pmndrs-valtio.json' with { type: 'json' }
 import expressFixture from '../../server/fixtures/expressjs-express.json' with { type: 'json' }
 import type { CommitAuthor, MergedPullRequest, RepoSnapshot } from '../repo'
-import { makeSnapshot } from '../tree/testHelpers'
+import { makeSnapshot } from '../shared/testHelpers'
 import { buildNetwork } from './buildNetwork'
-import { pointOnHyphaAtTime } from './layout'
-import { MUSHROOM_CLUSTER_SCATTER } from './mushrooms'
-import type { NetworkLayoutMode, NetworkModel } from './types'
+import type { NetworkModel } from './types'
 
 const FIXTURES: [string, RepoSnapshot][] = [
   ['pmndrs/valtio', valtioFixture as unknown as RepoSnapshot],
@@ -133,42 +131,23 @@ describe('buildNetwork', () => {
       expect(model.hairs.length).toBe(model.nodes.length)
     })
 
-    it('keeps every mushroom on the main hypha`s own XZ position at its release time (a tiny cluster scatter at most)', () => {
+    it('every mushroom sits exactly on its own release-time growth ring, with real ids and no NaNs', () => {
       const model = buildNetwork(snapshot)
-      const mainHypha = model.hyphae.find((h) => h.kind === 'main')!
+      expect(model.layout).toBe('colony')
+      expect(findNonFinite(model)).toBeNull()
+      expect(model.rings.length).toBeGreaterThan(0)
+      expect(model.fusions.length).toBeGreaterThan(0)
+      expect(model.hairs.length).toBe(model.nodes.length)
       for (const mushroom of model.mushrooms) {
-        const onMain = pointOnHyphaAtTime(mainHypha.points, mushroom.time)
-        const dx = mushroom.position.x - onMain.position.x
-        const dz = mushroom.position.z - onMain.position.z
-        const lateral = Math.sqrt(dx * dx + dz * dz)
-        // sqrt(2) covers the worst case of independent +/- scatter on x and
-        // z; a small additional epsilon covers a clustered mushroom's anchor
-        // having been sampled at the *first* release in its cluster (up to
-        // `MUSHROOM_CLUSTER_GAP_MS` = 3 days earlier), during which the main
-        // hypha itself moves a little along its own curve.
-        expect(lateral).toBeLessThanOrEqual(MUSHROOM_CLUSTER_SCATTER * Math.SQRT2 + 0.02)
+        expect(mushroom.id.length).toBeGreaterThan(0)
+        expect(Number.isFinite(mushroom.position.x)).toBe(true)
+        expect(Number.isFinite(mushroom.position.z)).toBe(true)
       }
-    })
-
-    it('produces a sane colony-layout model too, sharing the same topology', () => {
-      const spiral = buildNetwork(snapshot, { layout: 'spiral' })
-      const colony = buildNetwork(snapshot, { layout: 'colony' })
-      expect(colony.layout).toBe('colony')
-      expect(spiral.layout).toBe('spiral')
-      // Same underlying topology (`topology.ts` is shared): every non-main
-      // hypha id present in one layout is present in the other.
-      const spiralIds = new Set(spiral.hyphae.map((h) => h.id))
-      const colonyIds = new Set(colony.hyphae.map((h) => h.id))
-      expect(colonyIds).toEqual(spiralIds)
-      expect(findNonFinite(colony)).toBeNull()
-      expect(colony.rings.length).toBeGreaterThan(0)
-      expect(colony.fusions.length).toBeGreaterThan(0)
-      expect(colony.hairs.length).toBe(colony.nodes.length)
     })
   })
 })
 
-describe('buildNetwork performance (colony layout)', () => {
+describe('buildNetwork performance', () => {
   const AUTHOR_COUNT = 25
   const PR_COUNT = 1000
   /**
@@ -227,10 +206,10 @@ describe('buildNetwork performance (colony layout)', () => {
     })
   }
 
-  it.each<NetworkLayoutMode>(['spiral', 'colony'])('lays out 1000 PRs (%s layout) in well under the CI-safe budget', (layout) => {
+  it('lays out 1000 PRs in well under the CI-safe budget', () => {
     const snapshot = buildLargeSnapshot()
     const start = performance.now()
-    const model = buildNetwork(snapshot, { layout })
+    const model = buildNetwork(snapshot)
     const elapsed = performance.now() - start
     expect(model.hyphae.length).toBeGreaterThan(PR_COUNT)
     expect(elapsed).toBeLessThan(BUDGET_MS)

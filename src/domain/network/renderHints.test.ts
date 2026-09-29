@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { conduitSplitRadius, formatOverflowNote, isGrown } from './renderHints'
-import { radiusForFrac, timeToFrac } from './layout'
+import { radiusForFrac, timeToFrac } from './ringGeometry'
 import type { Hypha } from './types'
 
 const bounds = { firstEventTime: 0, lastEventTime: 1_000_000 }

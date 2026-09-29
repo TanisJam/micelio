@@ -1,8 +1,8 @@
 import type { ReleaseInfo } from '../repo'
 import { clamp, easeInOutCubic, lerp, logScale } from '../math'
-import { createPrng, randJitter, randRange, type Prng } from '../tree/prng'
-import type { TimeBounds } from '../tree/types'
-import { addVec3, normalizeVec3, polarToVec3, scaleVec3, subVec3, vec3, vec3Length, type Vec3 } from '../tree/vector'
+import { createPrng, randJitter, randRange, type Prng } from '../shared/prng'
+import type { TimeBounds } from '../shared/types'
+import { addVec3, normalizeVec3, polarToVec3, scaleVec3, subVec3, vec3, vec3Length, type Vec3 } from '../shared/vector'
 import {
   capEvenly,
   DEFAULT_LAYOUT_OPTIONS,
@@ -13,7 +13,7 @@ import {
   radiusForFrac,
   timeToFrac,
   type LayoutOptions,
-} from './layout'
+} from './ringGeometry'
 import { buildMushroomsOnRings } from './mushrooms'
 import type { HyphaCommitDraft, HyphaDraft } from './topology'
 import type { Fusion, GrowthRing, Hair, Hypha, HyphaPoint, Mushroom, NetworkNode, Spore, Tip } from './types'

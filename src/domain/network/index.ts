@@ -3,27 +3,18 @@ export { layoutNetworkColony, type ColonyLayoutResult } from './colonyLayout'
 export { resolveNetworkElementDetail } from './elementDetail'
 export { buildNetworkExploreGroups, type NetworkExploreCommitEntry, type NetworkExplorePrEntry, type NetworkExploreYearGroup } from './exploreGroups'
 export { getNetworkElementFocusPosition } from './focus'
-export {
-  assignLanes,
-  buildActivityCdf,
-  discRadius,
-  DISC_MAX_RADIUS,
-  localSpiralPitch,
-  NESTED_MAX_LANE_DEPTH,
-  pointOnHyphaAtRadius,
-  pointOnHyphaAtTime,
-  radiusForCommitCount,
-  radiusForFrac,
-  SIDE_JITTER_MAX,
-  SPIRAL_PITCH_SAFETY,
-  SPIRAL_TURNS,
-  timeToFrac,
-  type ActivityCdf,
-  type LaneAssignment,
-} from './layout'
 export { findNetworkElement } from './lookup'
-export { buildMushrooms, buildMushroomsOnRings, computeReleaseSequence, MUSHROOM_CLUSTER_ANGLE_SCATTER, MUSHROOM_CLUSTER_SCATTER } from './mushrooms'
+export {
+  buildMushroomsOnRings,
+  computeReleaseSequence,
+  enforceMinAngularSeparation,
+  MUSHROOM_CLUSTER_ANGLE_SCATTER,
+  MUSHROOM_GOLDEN_ANGLE_RADIANS,
+  MUSHROOM_MIN_ANGULAR_SEPARATION,
+  MUSHROOM_RADIUS_SEPARATION_WINDOW,
+} from './mushrooms'
 export { conduitSplitRadius, formatOverflowNote, isGrown } from './renderHints'
+export { discRadius, DISC_MAX_RADIUS, type LayoutOptions } from './ringGeometry'
 export { authorKeyOf, buildAuthorHueIndex, MAX_AUTHOR_HUES, resolveAuthorHueKey } from './sectors'
 export { buildHyphaTopology, DEFAULT_TOPOLOGY_OPTIONS, type HyphaDraft, type TopologyOptions, type TopologyResult } from './topology'
 export * from './types'

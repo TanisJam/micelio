@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildNetwork } from './buildNetwork'
 import { findNetworkElement } from './lookup'
-import { makeSnapshot } from '../tree/testHelpers'
+import { makeSnapshot } from '../shared/testHelpers'
 
 describe('findNetworkElement', () => {
   const model = buildNetwork(makeSnapshot())

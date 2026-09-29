@@ -1,7 +1,7 @@
 /**
  * Domain model for a single point-in-time snapshot of a GitHub repository's
  * history. Pure data — no React, no three.js, no fetch. This is the shape
- * the GitHub adapter produces and the tree model consumes.
+ * the GitHub adapter produces and the mycelium network model consumes.
  */
 
 export interface RepoMeta {

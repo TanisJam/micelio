@@ -1,6 +1,6 @@
 import { findNetworkElement } from './lookup'
 import type { NetworkModel } from './types'
-import type { Vec3 } from '../tree/vector'
+import type { Vec3 } from '../shared/vector'
 
 /**
  * Resolves the 3D point the camera should fly to when `id` is selected

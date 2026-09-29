@@ -1,5 +1,5 @@
 import type { ClosedPullRequest, CommitAuthor, MergedPullRequest, OpenPullRequest, RepoSnapshot } from '../repo'
-import type { TimeBounds } from '../tree/types'
+import type { TimeBounds } from '../shared/types'
 import type { HyphaKind, NetworkRef } from './types'
 
 /**
