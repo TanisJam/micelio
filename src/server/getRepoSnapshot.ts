@@ -17,8 +17,11 @@ const cache = new SnapshotCache(ONE_HOUR_MS, diskCacheDir)
  * Resolves a full `RepoSnapshot` for `ownerRaw/repoRaw`:
  * 1. Validates input.
  * 2. Returns a cached snapshot if still fresh (TTL ~1h).
- * 3. Fetches live from GitHub when GITHUB_TOKEN is configured.
- * 4. Otherwise falls back to a bundled fixture for known repos.
+ * 3. Serves a bundled fixture immediately when one exists for this repo --
+ *    regardless of whether GITHUB_TOKEN is configured. Bundled fixtures
+ *    exist specifically so these sample repos demo instantly (no live
+ *    GraphQL round-trip); a configured token must never slow that down.
+ * 4. Otherwise fetches live from GitHub when GITHUB_TOKEN is configured.
  * 5. Otherwise throws a typed `RepoError('token_required')`.
  */
 export async function getRepoSnapshot(ownerRaw: unknown, repoRaw: unknown): Promise<RepoSnapshot> {
@@ -27,15 +30,15 @@ export async function getRepoSnapshot(ownerRaw: unknown, repoRaw: unknown): Prom
   const cached = await cache.get(owner, repo)
   if (cached) return cached
 
+  const fixture = getFixtureSnapshot(owner, repo)
+  if (fixture) return fixture
+
   const token = process.env.GITHUB_TOKEN
   if (token) {
     const snapshot = await fetchRepoSnapshotFromGitHub(owner, repo, token)
     await cache.set(owner, repo, snapshot)
     return snapshot
   }
-
-  const fixture = getFixtureSnapshot(owner, repo)
-  if (fixture) return fixture
 
   throw new RepoError(
     'token_required',
