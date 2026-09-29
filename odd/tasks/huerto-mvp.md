@@ -2717,6 +2717,139 @@ before this fix) · `pnpm shot`: 26/26, 0 console errors.
 fragments; the pre-existing dense-bundle-fringe residual (see weakness
 above) is unchanged and still out of scope.
 
+### T10 Rim "hook" fix, second pass -- done
+Commit: `fix: keep short rim hyphae thin and gently forked`.
+
+T9 fixed per-segment turns (>60deg between consecutive polyline segments)
+but the orchestrator's re-review of `.shots/desktop-express-end.png` still
+found a ring of short, thick, bright white-cyan "L"/"⌐"-shaped hooks along
+the whole rim -- a stub that runs tangentially then turns radially within a
+few pixels, spanning 2-4 segments (a compound bend the T9 per-segment cap
+couldn't see).
+
+**Instrumentation** (`scripts/diagnose-rim.ts`, not committed): built the
+real `NetworkModel` for the express fixture and, for every hypha, measured
+its rendered length, base (thickness) radius, and both a raw per-segment
+cumulative-turn sum and (after that measure proved noisy -- see below) the
+actual perpendicular deviation from its own base->tip straight chord.
+
+**H1 (width independent of length) -- confirmed, dominant cause.**
+`radiusForCommitCount(commitCount)` sets a hypha's base thickness from
+COMMIT COUNT alone, never from its own rendered length. A rim hypha whose
+nominal reach gets truncated by `COLONY_RADIUS_CAP` keeps its full
+commit-driven width regardless -- measured up to 0.089 raw width/radial-span
+(a rendered full width, `ratio * RIBBON_WIDTH_SCALE`, of ~44% of the
+hypha's own radial span) against a colony-wide natural median of ~0.031 (a
+first tuning attempt measured against rendered ARC length instead of the
+actual RADIAL SPAN the code caps against, and would have clipped roughly
+half the colony -- caught before committing by re-measuring against the
+right denominator). **Fix**: `growHyphaPoints` now caps `thicknessStart` at
+`WIDTH_TO_LENGTH_CAP_FRACTION` (0.06) times the hypha's own radial span.
+Affects exactly 99 hyphae on the express fixture, 100% of them at the rim,
+zero effect on the colony median.
+
+**H2 (fork transition turn, refined) -- confirmed, second cause.** The
+literal hypothesis ("fork turn ~90deg compressed into few segments") wasn't
+quite the mechanism: the fork's own ASSIGNED turn was already tiny
+(`maxTurnRadians`, radius/length-based). The real driver was that
+`FORK_LATERAL_BUDGET_FRACTION` (0.5) let the fork's lateral swing reach up
+to HALF a short hypha's own length whenever its raw gap-filling target sat
+far from its real attach point -- e.g. one traced hypha (length 0.53) turned
+barely ~2.4deg in absolute angle, but at its own real radius (~5) that still
+swept ~0.17-0.2 world units sideways, a third of its own length. **Fix**:
+split the fork-turn budget into two constants -- `FORK_LATERAL_BUDGET_
+FRACTION` (unchanged, 0.5) still governs the TOPOLOGY "natural fit"
+decision (which hyphae attach to a real neighbor vs. fall back to the
+spore), while a new, separate `FORK_RENDER_LATERAL_BUDGET_FRACTION` (0.15)
+governs only the RENDERED turn once a hypha is already placed. (A first
+attempt tightened the single shared constant directly -- it also tightened
+the topology check, reclassifying hundreds of hyphae as spore-started, a
+much bigger unintended shape change; caught by watching the rim-hypha COUNT
+shift from 499 to inconsistent values across reruns, then splitting the two
+uses.) Also tightened `POST_FORK_LATERAL_LENGTH_CAP_FRACTION` (0.15 -> 0.06,
+the post-fork organic-wiggle budget).
+
+**Swirl per-point independence (new finding beyond the task's own
+hypotheses) -- confirmed, third cause.** Even with H1+H2 fixed, a short
+hypha near the rim still showed real curvature: the cosmetic galaxy swirl
+(`applySwirlToPosition`) rotates every point independently by ITS OWN
+radius, and `swirlAngleForRadius`'s rate of change with radius is LARGEST
+right at the rim (`swirlPower` 1.4 > 1 makes the curve convex, steepest at
+`DISC_MAX_RADIUS`) -- exactly where these short hyphae's real attach points
+concentrate. A near-straight pre-swirl strand picks up extra bend from the
+swirl field's own gradient across its tiny span. Confirmed directly: with
+swirl disabled entirely, the SAME short hyphae showed the identical wiggle
+fraction as with swirl enabled post-fix -- proving the rigidification below
+fully neutralizes swirl's contribution. **Fix**: `applySwirl` now rotates
+every point of a NORMAL hypha (radial span <= `COLONY_LENGTH_MAX` -- the
+exact, pre-existing boundary that already distinguishes a real-attach-point
+hypha from a spore-started long arm) by ONE FIXED angle -- the swirl angle
+at its own real attach-point radius, so it still lands exactly on its
+parent's independently-swirled position -- instead of each point's own
+radius-based angle. A genuinely long, spore-started arm (span >
+`COLONY_LENGTH_MAX`) keeps the per-point independent swirl that produces
+the intended "spiral galaxy arm" meander; nodes/hairs/tips/fusions
+belonging to a rigid hypha follow the same fixed angle for continuity. The
+degenerate `main` stub is excluded (its id is shared by the direct-commit
+spurs, which must keep independent per-point swirl).
+
+**H3 (additive blending near the clamp) -- not needed.** Many short rim
+hyphae do converge to nearly-identical tip locations (observed up to 8
+distinct hypha ids ending within ~0.01 units of each other), but this is
+the pre-existing, already-accepted "dense rim bundle reads as a thicker
+fringe" residual (P3, flagged in M3b, re-confirmed out of scope in T9) --
+an aggregate-density effect, not the per-strand hook shape H1+H2+swirl
+rigidification already close. No alpha/brightness change was made.
+
+**Tests** (`colonyLayout.test.ts`, real bundled fixtures via the existing
+`describe.each(FIXTURES)` block): (1) every hypha's base radius stays
+`<= WIDTH_TO_LENGTH_CAP_FRACTION * radialSpan`; (2) every NORMAL (radial
+span `<= COLONY_LENGTH_MAX`) hypha's max lateral deviation from its own
+base->tip chord stays `<= 20%` of its own rendered length (a direct,
+length-scaled proxy for "no base-hugging hook" -- pre-fix this reached
+~40% on real hyphae); (3) a dedicated rigid-swirl test (the generic
+`makeSnapshot()`-based swirl test never produces a short hypha, so a new
+test against the real fixtures confirms every point of a short hypha
+rotates by exactly one fixed angle). The pre-existing generic determinism
+test (`layoutNetworkColony` called twice, `toEqual`) already covers all
+three new mechanisms since they're plain, seed-independent functions of
+the same inputs -- no new determinism test was needed. 366 tests total
+(+6 net from T9's 360).
+
+**Acceptance crops** (1440x900 desktop express "end" state, cropped at 2x
+device-pixel-ratio, not a post-hoc pixel-double): `.shots/rim-before-
+{bottom,left,right}.png` (captured from HEAD via `git stash`, before this
+fix) clearly show the bright "L"/"⌐" hook shapes described in the task,
+several with a visible bright blob at the bend. `.shots/rim-after-
+{bottom,left,right}.png` (same regions, same camera, after the fix) show
+smoothly tapering fine threads with no hook/wedge silhouettes anywhere in
+the three crops; a few small mushroom/hair dot markers with thin support
+lines remain (unaffected -- not hyphae).
+
+Checks: `pnpm typecheck`: pass · `pnpm lint`: pass · `pnpm test`: pass (366
+tests) · `pnpm build`: pass (`Scene` chunk 1038.60 kB, unchanged) ·
+`pnpm shot`: 26/26, 0 console errors (run twice: once mid-fix for the
+"after" crops, once more in the final restored state as the official
+verification run).
+
+**Remaining weaknesses, honestly reported**:
+- No automated test asserts the RENDERED (post-taper, post-ribbon) pixel
+  output directly; coverage is at the domain-polyline level (width/length,
+  lateral-deviation, rigid-swirl-angle) plus the manual crop comparison
+  above, same limitation T9 already flagged.
+- The H3 dense-bundle-fringe residual remains unaddressed and out of scope,
+  as it was in T9 -- a deliberate, not accidental, omission.
+- `WIDTH_TO_LENGTH_CAP_FRACTION` and `FORK_RENDER_LATERAL_BUDGET_FRACTION`
+  are both empirically tuned constants (against the express fixture's own
+  distribution), not derived from a closed-form visual-perception model;
+  a much larger or more sparsely-populated repo could in principle still
+  show a milder version of the same artifact at a different scale.
+
+**P3 Organic form** -- improved further: the rim's individual strands now
+read as fine tapered threads matching the interior, not thick hooked
+wedges; the pre-existing dense-bundle-fringe residual (H3, unchanged) is
+still out of scope.
+
 ## Next step
 Final orchestrator review; delivery (push/PR/deploy) is the owner's
 decision.
