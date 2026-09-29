@@ -131,15 +131,18 @@ export function ViewerHeader({ snapshot, onCopyLink, onSaveImage }: ViewerHeader
           rel="noopener noreferrer"
           title={meta.description ?? undefined}
           style={{
-            // M3c item 4b: guarantees roughly 20+ characters of the repo
-            // name stay visible before ellipsis ever kicks in (never
-            // truncating a short name just because the share buttons/badge
-            // happen to be present) -- `<wbr />` after the slash also gives
-            // the browser a real wrap point, so a name that DOES need more
-            // room wraps onto a second line (owner / repo) rather than only
-            // ever being cut off mid-word.
-            minWidth: '20ch',
-            maxWidth: '38ch',
+            // M3c item 4b, fixed round-4 (real regression: an earlier pass
+            // applied `minWidth: '20ch'` unconditionally -- on a SHORT name
+            // like "expressjs/express" that reserved empty box width the
+            // text never filled, pushing the source badge away from the
+            // name with a visible gap on desktop, where there was never a
+            // crowding problem to begin with). The guaranteed-visible-width
+            // + 2-line-wrap treatment only applies on a narrow viewport,
+            // where the icon buttons/badge can actually crowd the name;
+            // desktop keeps the original natural shrink-to-fit single line
+            // (`minWidth: 0`), so the badge sits right after the name.
+            minWidth: narrow ? '20ch' : 0,
+            maxWidth: narrow ? '38ch' : undefined,
             fontFamily: ui.fontDisplay,
             fontSize: '1rem',
             fontWeight: 600,
@@ -147,10 +150,11 @@ export function ViewerHeader({ snapshot, onCopyLink, onSaveImage }: ViewerHeader
             textDecoration: 'none',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            lineHeight: 1.15,
+            display: narrow ? '-webkit-box' : undefined,
+            WebkitLineClamp: narrow ? 2 : undefined,
+            WebkitBoxOrient: narrow ? 'vertical' : undefined,
+            whiteSpace: narrow ? undefined : 'nowrap',
+            lineHeight: narrow ? 1.15 : undefined,
           }}
         >
           {meta.owner}/<wbr />
