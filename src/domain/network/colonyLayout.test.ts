@@ -14,6 +14,7 @@ import {
   COLONY_LENGTH_MIN,
   computeWorkLength,
   layoutNetworkColony,
+  softenRimOvershoot,
   swirlAngleForRadius,
   unswirlPosition,
   WIDTH_TO_LENGTH_CAP_FRACTION,
@@ -688,5 +689,66 @@ describe('layoutNetworkColony', () => {
       }
       expect(checked).toBeGreaterThan(50)
     })
+  })
+})
+
+describe('softenRimOvershoot (Unit 1b: no radial clamp compression)', () => {
+  const CAP = DISC_MAX_RADIUS * 1.05
+
+  it('is a no-op at or under the cap -- every non-rim hypha is byte-for-byte unaffected', () => {
+    expect(softenRimOvershoot(3, CAP)).toBe(3)
+    expect(softenRimOvershoot(CAP, CAP)).toBe(CAP)
+    expect(softenRimOvershoot(0, CAP)).toBe(0)
+  })
+
+  it('never collapses two different overshoot amounts onto the same value (the "comb" this fixes)', () => {
+    const small = softenRimOvershoot(CAP + 0.05, CAP)
+    const medium = softenRimOvershoot(CAP + 0.5, CAP)
+    const large = softenRimOvershoot(CAP + 2, CAP)
+    expect(small).toBeGreaterThan(CAP)
+    expect(medium).toBeGreaterThan(small)
+    expect(large).toBeGreaterThanOrEqual(medium)
+    expect(small).not.toBe(medium)
+    expect(medium).not.toBe(large)
+  })
+
+  it('retains only a fraction of the excess reach -- always shorter than the uncapped nominal value', () => {
+    const nominal = CAP + 1
+    const result = softenRimOvershoot(nominal, CAP)
+    expect(result).toBeLessThan(nominal)
+    expect(result).toBeGreaterThan(CAP)
+  })
+
+  it('is bounded by an outer hard ceiling even for an enormous overshoot -- the disc still stays round', () => {
+    const huge = softenRimOvershoot(CAP + 1000, CAP)
+    expect(huge).toBeLessThan(CAP * 1.15)
+  })
+
+  it('is monotonically non-decreasing in the nominal input across the cap boundary', () => {
+    let previous = -Infinity
+    for (let nominal = CAP - 1; nominal <= CAP + 3; nominal += 0.05) {
+      const value = softenRimOvershoot(nominal, CAP)
+      expect(value).toBeGreaterThanOrEqual(previous)
+      previous = value
+    }
+  })
+
+  it('never produces NaN/Infinity for a degenerate (already-past-cap) start', () => {
+    expect(Number.isFinite(softenRimOvershoot(CAP * 100, CAP))).toBe(true)
+    expect(Number.isFinite(softenRimOvershoot(-5, CAP))).toBe(true)
+  })
+
+  it('regression: real fixtures now render at least one hypha past the nominal cap (a genuinely SOFT clamp, not the old hard one)', () => {
+    // Before this fix `endRadius` was `Math.min(nominalEndRadius, COLONY_RADIUS_CAP)`
+    // -- it was mathematically impossible for ANY hypha's rendered end
+    // radius to exceed the cap. If real fixtures still never exceed it, the
+    // soft clamp isn't actually doing anything on real data.
+    for (const [, snapshot] of FIXTURES) {
+      const { colony } = buildColonyModel(snapshot)
+      const overCap = colony.hyphae
+        .filter((h) => h.kind !== 'main' && h.points.length >= 2)
+        .some((h) => discRadius(h.points[h.points.length - 1]!.position) > CAP + 1e-6)
+      expect(overCap).toBe(true)
+    }
   })
 })

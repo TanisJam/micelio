@@ -15,6 +15,7 @@ import {
   type LayoutOptions,
 } from './ringGeometry'
 import { buildMushroomsOnRings } from './mushrooms'
+import { recentGrowthFactor } from './renderHints'
 import type { HyphaCommitDraft, HyphaDraft } from './topology'
 import type { Fusion, GrowthRing, Hair, Hypha, HyphaPoint, Mushroom, NetworkNode, Spore, Tip } from './types'
 
@@ -150,6 +151,39 @@ const FORK_RENDER_LATERAL_BUDGET_FRACTION = 0.15
 const FORK_ABSOLUTE_MAX_RAD = (70 * Math.PI) / 180
 /** How much of the curve after the fork ramps the organic drift in from 0, so the fork's own end (angle == target, no drift) and the post-fork wiggle meet without a kink. */
 const FORK_DRIFT_RAMP = 0.15
+/**
+ * Final polish pass, Unit 1c: how much of a recent-slice (rim, still-young)
+ * hypha's own rendered length its curvature-continuity bias is allowed to
+ * consume as LATERAL (sideways) distance, at full recency -- mirrors
+ * `POST_FORK_LATERAL_LENGTH_CAP_FRACTION`'s own pattern (a fraction of the
+ * hypha's own length, converted to an angle via its own radius, never a
+ * fixed absolute angle) for exactly the reason documented there: a fixed
+ * angle sweeps a large absolute lateral distance at a large rim radius,
+ * which is what produced the T9/T10 "hook" artifact this same file already
+ * fixed once. Kept modest (well under `POST_FORK_LATERAL_LENGTH_CAP_
+ * FRACTION`'s own 0.06 ceiling would be too subtle to read as "continuing
+ * the arm" at all; this is deliberately a bit more generous since, unlike
+ * the wiggle, it's a single smooth bend in one direction, not an
+ * oscillation) so it reads as a soft, confident curve rather than another
+ * wobble.
+ */
+const RIM_CURL_CONTINUITY_LENGTH_FRACTION = 0.1
+/**
+ * Rotational sense (`+1`) the curvature-continuity bias always leans, so a
+ * young rim filament visibly continues an arm's curve rather than bending at
+ * random. Deliberately a FIXED constant, matching `DEFAULT_LAYOUT_OPTIONS.
+ * swirl`'s own sign (positive), rather than reading the actual `swirl`
+ * option passed to `layoutNetworkColony` -- growth (this function) must stay
+ * swirl-config-independent, an invariant this same module already documents
+ * ("the galaxy swirl is the very last step ... every invariant above this
+ * line is established on the pre-swirl geometry", see `layoutNetworkColony`'s
+ * own closing comment) and that the test suite relies on directly (several
+ * tests build a `swirl: 0` "plain" reference layout and a normal-swirl one
+ * from the SAME topology, then assert the two only ever differ by a uniform
+ * post-hoc rotation -- reading `resolved.swirl` here broke exactly that
+ * invariant for recent-slice hyphae during this fix's own first attempt).
+ */
+const RIM_CURL_DIRECTION = 1
 /** Well under one full cycle across the whole post-fork span -- a gentle bow, not a visible zigzag (round 2 finding: a higher frequency read as a jagged sawtooth even at a small amplitude, since an SVG polyline draws straight segments between samples). */
 const CURL_FREQ_MIN = 0.5
 const CURL_FREQ_MAX = 0.9
@@ -284,6 +318,38 @@ const SAMPLES_MAX = 40
  * flat edge.
  */
 const COLONY_RADIUS_CAP = DISC_MAX_RADIUS * 1.05
+/**
+ * Final polish pass, Unit 1b ("no radial clamp compression"): before this
+ * fix, EVERY hypha whose `nominalEndRadius` overshot `COLONY_RADIUS_CAP` was
+ * hard-clamped to that exact same radius (`Math.min(nominalEndRadius,
+ * COLONY_RADIUS_CAP)`) -- a real hypha with a much larger nominal reach and
+ * one barely past the cap both landed on the identical rendered `endRadius`.
+ * Visually this is a literal ring of identically-long stubs right at the
+ * rim: the "comb" the orchestrator's screenshot review flagged (a ring of
+ * short, bright, perfectly uniform radial strokes), not an organic edge.
+ *
+ * `softenRimOvershoot` replaces the hard clamp with a soft, monotonic one:
+ * a hypha at or under the cap is completely unaffected (`nominal <= cap`
+ * returns `nominal` exactly, so every non-rim hypha's length is byte-for-
+ * byte unchanged -- verified by test). Past the cap, only a FRACTION
+ * (`RIM_OVERSHOOT_RETENTION`) of the excess reach is kept, so a hypha that
+ * wanted to reach much farther still ends up visibly (if modestly) longer
+ * than one that barely overshot -- real variation instead of one flat ring
+ * -- while an outer hard ceiling (`RIM_OUTER_HARD_CAP`, a further 8% past
+ * `COLONY_RADIUS_CAP`) still keeps the disc from growing unboundedly round
+ * (the original "keep the disc round" requirement this cap exists for at
+ * all).
+ */
+const RIM_OVERSHOOT_RETENTION = 0.4
+const RIM_OUTER_HARD_CAP = COLONY_RADIUS_CAP * 1.08
+
+/** See `RIM_OVERSHOOT_RETENTION`'s doc comment. Pure, exported for testing (the "no-clamp-compression rule"). */
+export function softenRimOvershoot(nominal: number, cap: number): number {
+  if (nominal <= cap) return nominal
+  const excess = nominal - cap
+  const retained = excess * RIM_OVERSHOOT_RETENTION
+  return Math.min(cap + retained, RIM_OUTER_HARD_CAP)
+}
 
 // --- Fusion (anastomosis) search -------------------------------------------
 /** "connect with a short bridge to the nearest OTHER hypha point within a small radius (<= 0.25)" (item 4). */
@@ -482,6 +548,8 @@ interface GrowParams {
   commitCount: number
   status: HyphaDraft['status']
   prng: Prng
+  /** Unit 1c of the final polish pass: `recentGrowthFactor` for this hypha's own split time -- `0` (not recent, no bias applied) .. `1` (the most recent event in the whole span). */
+  rimCurl: number
 }
 
 /**
@@ -510,7 +578,7 @@ interface GrowParams {
  * as `t -> 0`, so continuity holds by construction.
  */
 function growHyphaPoints(params: GrowParams): HyphaPoint[] {
-  const { startPosition, startRadius, targetAngleRaw, endRadius, splitTime, endTime, commitCount, status, prng } = params
+  const { startPosition, startRadius, targetAngleRaw, endRadius, splitTime, endTime, commitCount, status, prng, rimCurl } = params
 
   // T10: rendered length is needed BEFORE thickness now -- see
   // `WIDTH_TO_LENGTH_CAP_FRACTION`'s doc comment for why base width must be
@@ -566,7 +634,15 @@ function growHyphaPoints(params: GrowParams): HyphaPoint[] {
       const envelope = easeInOutCubic(envelopeT)
       const driftCap = Math.min(POST_FORK_DRIFT_MAX_RAD * lengthScale, lateralBudget / Math.max(radius, MIN_RADIUS_FOR_ANGLE_CAP))
       const drift = driftCap * envelope * Math.sin(curlFreq * t * Math.PI * 2 + curlPhase)
-      angle = targetAngle + drift
+      // Unit 1c: a one-directional bend (not an oscillation like `drift`
+      // above), ramped in by the same `envelope` so it starts at exactly 0
+      // right where the fork's own turn ends (no kink) and grows smoothly
+      // toward the tip -- see `RIM_CURL_CONTINUITY_LENGTH_FRACTION`'s doc
+      // comment for why it's a length-proportional lateral budget rather
+      // than a fixed angle.
+      const rimCurlBudget = totalLength * RIM_CURL_CONTINUITY_LENGTH_FRACTION
+      const rimCurlBias = rimCurl * RIM_CURL_DIRECTION * envelope * (rimCurlBudget / Math.max(radius, MIN_RADIUS_FOR_ANGLE_CAP))
+      angle = targetAngle + drift + rimCurlBias
     }
 
     const y = randJitter(prng, Y_JITTER) * Math.sin(Math.PI * t)
@@ -1170,10 +1246,24 @@ export function layoutNetworkColony(
     // radius, so it can anchor further real growth in that region.
     const nominalEndRadius = startedAtSpore ? r0 + length : startRadius + length
     // `COLONY_RADIUS_CAP` (round 2 orchestrator feedback: keep the disc
-    // round) is the only clamp -- `Math.max(startRadius, ...)` keeps it
-    // monotonic even for a hypha whose own `startRadius` is already past
-    // the cap (a rare compounding-chain edge case).
-    const endRadius = Math.max(startRadius, Math.min(nominalEndRadius, COLONY_RADIUS_CAP))
+    // round) is the soft target -- `softenRimOvershoot` (Unit 1b of the
+    // final polish pass) lets a hypha that wants to reach much farther than
+    // the cap keep a fraction of that extra reach instead of every
+    // overshooting hypha collapsing onto the exact same radius (see its own
+    // doc comment). `Math.max(startRadius, ...)` keeps it monotonic even for
+    // a hypha whose own `startRadius` is already past the cap (a rare
+    // compounding-chain edge case).
+    const endRadius = Math.max(startRadius, softenRimOvershoot(nominalEndRadius, COLONY_RADIUS_CAP))
+
+    // Unit 1c of the final polish pass ("rim growth front"): a hypha whose
+    // split time falls in the trailing `RECENT_GROWTH_FRACTION` of history
+    // (see `renderHints.ts`) gets a small seeded lateral curvature bias so
+    // it visually continues the arm it grows from instead of pointing
+    // straight out radially -- see `growHyphaPoints`'s own `rimCurl` use and
+    // `RIM_CURL_DIRECTION`'s doc comment for why this does NOT read the
+    // actual `resolved.swirl` value (growth must stay swirl-config-
+    // independent).
+    const rimCurl = recentGrowthFactor(draft.splitTime, bounds)
 
     const points = growHyphaPoints({
       startPosition,
@@ -1185,6 +1275,7 @@ export function layoutNetworkColony(
       commitCount: draft.commitCount,
       status: draft.status,
       prng,
+      rimCurl,
     })
 
     const hypha: Hypha = {

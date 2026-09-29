@@ -1,7 +1,8 @@
 import * as THREE from 'three'
-import { conduitSplitRadius, discRadius, type Hypha, type NetworkModel } from '../../../../domain/network'
+import { conduitSplitRadius, discRadius, rimAgeStyle, type Hypha, type NetworkModel } from '../../../../domain/network'
 import type { TimeBounds } from '../../../../domain/shared'
-import { hexToRgb } from '../../../theme/color'
+import { hexToRgb, mixHex } from '../../../theme/color'
+import { mycelium } from '../../../theme/tokens'
 import type { PickTarget } from '../picking/pickingGrid'
 import { hyphaColorAt } from './colors'
 
@@ -135,6 +136,10 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
     hyphaIndexById.set(hypha.id, hyphaIndex)
     const splitR = conduitSplitRadius(hypha, bounds)
     const pointCount = hypha.points.length
+    // Unit 1a of the final polish pass ("rim growth front"): keyed on the
+    // hypha's own split time (constant for the whole strand), not on
+    // per-point growth-replay time -- see `rimAgeStyle`'s own doc comment.
+    const ageStyle = rimAgeStyle(hypha.splitTime, bounds)
 
     for (let i = 0; i < pointCount; i++) {
       const point = hypha.points[i]!
@@ -145,9 +150,14 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
       const [perpX, perpZ] = perpendicularXZ(tangentX, tangentZ)
 
       const taper = tipTaperFactor(i, pointCount)
-      const halfWidth = (Math.max(MIN_HALF_WIDTH, point.radius * RIBBON_WIDTH_SCALE) * taper) / 2
+      const halfWidth = (Math.max(MIN_HALF_WIDTH, point.radius * RIBBON_WIDTH_SCALE) * taper * ageStyle.widthScale) / 2
       const t = pointCount > 1 ? i / (pointCount - 1) : 0
-      const colorHex = hyphaColorAt(hypha.kind, t)
+      const colorHexBase = hyphaColorAt(hypha.kind, t)
+      // Recent-slice (rim, still-young) hyphae blend cooler toward the
+      // palette's own "active/cool cyan" tone (Unit 1a) -- a partial blend
+      // (`ageStyle.coolBlend` never reaches 1), so a young hypha still
+      // visibly carries its own kind color, just cooled.
+      const colorHex = ageStyle.coolBlend > 0 ? mixHex(colorHexBase, mycelium.hyphaActiveTip, ageStyle.coolBlend) : colorHexBase
       const { r, g, b } = hexToRgb(colorHex)
       const isConduit = splitR !== null && discRadius(point.position) < splitR
       const baseAlpha = isConduit ? CONDUIT_ALPHA : BASE_ALPHA_MIN + (BASE_ALPHA_MAX - BASE_ALPHA_MIN) * t
@@ -155,7 +165,10 @@ export function buildHyphaeGeometry(model: NetworkModel): HyphaeGeometryResult {
       // alone) -- a narrow-but-still-full-alpha near-tip segment still
       // bloomed into a small bright blob (round-2 visual finding), reading
       // as a "cap" even once the geometry itself tapered to a point.
-      const alpha = baseAlpha * taper
+      // Unit 1a additionally dims a recent-slice hypha's own alpha
+      // (`ageStyle.alphaScale`) so its already-tapered tip fades into a soft
+      // halo rather than staying full-bright right up to the taper.
+      const alpha = baseAlpha * taper * ageStyle.alphaScale
       // Flow pulses (P4) only travel along active/open hyphae, never a dry
       // closed-PR dead end or a faint time-honesty conduit segment.
       const flowFactor = !isConduit && hypha.kind !== 'closed' ? 1 : 0
