@@ -5,7 +5,7 @@ its history unfold as a bioluminescent colony of hyphae, spiraling outward
 from a central spore — the same repository always grows the same shape,
 seeded deterministically from its name.
 
-**Live demo:** https://micelio.vercel.app (will be confirmed at deploy)
+**Live demo:** https://micelio-galaxy.vercel.app
 
 ![A bioluminescent mycelium galaxy grown from expressjs/express's real commit history -- cyan and white filaments spiral outward from a central spore, with small cream mushrooms marking releases](docs/screenshot.png)
 
