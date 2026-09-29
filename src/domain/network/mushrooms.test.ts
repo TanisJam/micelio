@@ -4,6 +4,8 @@ import {
   buildMushroomsOnRings,
   computeReleaseSequence,
   enforceMinAngularSeparation,
+  layoutBurstRing,
+  mushroomCapWorldRadius,
   MUSHROOM_GOLDEN_ANGLE_RADIANS,
   MUSHROOM_MIN_ANGULAR_SEPARATION,
   MUSHROOM_RADIUS_SEPARATION_WINDOW,
@@ -272,5 +274,163 @@ describe('enforceMinAngularSeparation', () => {
 describe('MUSHROOM_GOLDEN_ANGLE_RADIANS', () => {
   it('is the golden angle (~137.5deg), not a round fraction of the circle', () => {
     expect(MUSHROOM_GOLDEN_ANGLE_RADIANS).toBeCloseTo(2.399963229728653, 9)
+  })
+})
+
+describe('layoutBurstRing (final polish pass, Unit 2: "fairy rings")', () => {
+  it('returns a single zero offset for one member -- singles stay single', () => {
+    expect(layoutBurstRing([1])).toEqual([{ dx: 0, dz: 0 }])
+  })
+
+  it('returns [] for zero members', () => {
+    expect(layoutBurstRing([])).toEqual([])
+  })
+
+  it('is deterministic: same scales in the same order always produce the same ring', () => {
+    const scales = [0.55, 0.75, 1.05, 0.7, 0.55]
+    expect(layoutBurstRing(scales)).toEqual(layoutBurstRing(scales))
+  })
+
+  it('spaces every member evenly around the ring (equal angular gaps)', () => {
+    const offsets = layoutBurstRing([0.55, 0.75, 1.05, 0.7, 0.6, 0.55])
+    const angles = offsets.map((o) => Math.atan2(o.dz, o.dx))
+    const n = angles.length
+    for (let i = 0; i < n; i++) {
+      const a = angles[i]!
+      const b = angles[(i + 1) % n]!
+      let gap = b - a
+      if (gap <= 0) gap += Math.PI * 2
+      expect(gap).toBeCloseTo((Math.PI * 2) / n, 6)
+    }
+  })
+
+  it('places every member at the same distance from the shared center (a true ring, not an ellipse/spiral)', () => {
+    const offsets = layoutBurstRing([0.55, 1.05, 0.7, 0.55, 0.75])
+    const radii = offsets.map((o) => Math.hypot(o.dx, o.dz))
+    for (const r of radii) expect(r).toBeCloseTo(radii[0]!, 9)
+  })
+
+  it('never overlaps two members\' own rendered caps, for a wide range of burst sizes and cap scales', () => {
+    for (const n of [2, 3, 5, 8, 16, 24]) {
+      // A real repo's own scale set: patch (0.55) most common, a few minor
+      // (0.75) and major (1.05) -- deterministic per test run, not random.
+      const scales = Array.from({ length: n }, (_, i) => [0.55, 0.75, 1.05, 0.7][i % 4]!)
+      const offsets = layoutBurstRing(scales)
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const dx = offsets[i]!.dx - offsets[j]!.dx
+          const dz = offsets[i]!.dz - offsets[j]!.dz
+          const distance = Math.hypot(dx, dz)
+          const minDistance = mushroomCapWorldRadius(scales[i]!) + mushroomCapWorldRadius(scales[j]!)
+          expect(distance).toBeGreaterThanOrEqual(minDistance - 1e-9)
+        }
+      }
+    }
+  })
+
+  it('a burst of identically-sized (all-major) caps still never overlaps -- the worst-case density', () => {
+    const scales = Array.from({ length: 16 }, () => 1.05)
+    const offsets = layoutBurstRing(scales)
+    for (let i = 0; i < offsets.length; i++) {
+      for (let j = i + 1; j < offsets.length; j++) {
+        const distance = Math.hypot(offsets[i]!.dx - offsets[j]!.dx, offsets[i]!.dz - offsets[j]!.dz)
+        expect(distance).toBeGreaterThanOrEqual(2 * mushroomCapWorldRadius(1.05) - 1e-9)
+      }
+    }
+  })
+})
+
+describe('buildMushroomsOnRings burst layout (final polish pass, Unit 2)', () => {
+  const RADIUS_FOR_TIME = (time: number): number => 1 + time / 10000
+  const NO_HYPHAE: Hypha[] = []
+  const DAY_MS = 1000 * 60 * 60 * 24
+
+  it('detects a burst of many releases close in time (item 1: "detect bursts") and gives them all one shared clusterId', () => {
+    // express's own real-world motivating case: ~16 releases within a short window.
+    const releases = Array.from({ length: 16 }, (_, i) => release(`v1.0.${i}`, new Date(i * 60 * 60 * 1000).toISOString())) // 1 hour apart
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    expect(mushrooms).toHaveLength(16)
+    const clusterIds = new Set(mushrooms.map((m) => m.clusterId))
+    expect(clusterIds.size).toBe(1)
+    expect(mushrooms.every((m) => m.clusterId !== null)).toBe(true)
+  })
+
+  it('lays a burst out as an evenly-spaced ring around the group\'s own shared center, not a straight line/pile', () => {
+    const releases = Array.from({ length: 16 }, (_, i) => release(`v1.0.${i}`, new Date(i * 60 * 60 * 1000).toISOString()))
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    const centerTime = releases.reduce((sum, r) => sum + Date.parse(r.date), 0) / releases.length
+    const centerRadius = RADIUS_FOR_TIME(centerTime)
+    // The ring's own radius is exactly whatever `layoutBurstRing` computes
+    // for these 16 members' own cap scales (it grows with member count/cap
+    // size so caps never overlap, see that function's dedicated tests) --
+    // every member's DISTANCE FROM THE GROUP'S SHARED RADIUS must be exactly
+    // that, not scattered across the disc's own much bigger radial span.
+    const scales = computeReleaseSequence(releases).map((entry) => entry.scale)
+    const ringOffsets = layoutBurstRing(scales)
+    const expectedRingRadius = Math.hypot(ringOffsets[0]!.dx, ringOffsets[0]!.dz)
+    const distancesFromGroupRadius = mushrooms.map((m) => Math.abs(Math.hypot(m.position.x, m.position.z) - centerRadius))
+    for (const d of distancesFromGroupRadius) expect(d).toBeLessThanOrEqual(expectedRingRadius + 1e-6)
+    // ...and at least one member should sit meaningfully away from dead
+    // center (i.e. the ring isn't degenerate) -- proves radius is anchored
+    // to the GROUP center plus a real ring offset, not per-member.
+    expect(Math.max(...distancesFromGroupRadius)).toBeGreaterThan(0.01)
+
+    // Not literally collinear either -- a genuine 2D spread of positions, not one line.
+    const xs = mushrooms.map((m) => m.position.x)
+    const zs = mushrooms.map((m) => m.position.z)
+    const uniqueX = new Set(xs.map((x) => x.toFixed(5))).size
+    const uniqueZ = new Set(zs.map((z) => z.toFixed(5))).size
+    expect(uniqueX).toBeGreaterThan(1)
+    expect(uniqueZ).toBeGreaterThan(1)
+  })
+
+  it('no two mushroom caps in a burst overlap (min distance, item "no overlap between mushroom caps")', () => {
+    const releases = Array.from({ length: 16 }, (_, i) => {
+      // A believable real mix: mostly patches, one minor, one major.
+      const tag = i === 0 ? `v${i + 1}.0.0` : i === 8 ? `v${i}.1.0` : `v1.0.${i}`
+      return release(tag, new Date(i * 60 * 60 * 1000).toISOString())
+    })
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    for (let i = 0; i < mushrooms.length; i++) {
+      for (let j = i + 1; j < mushrooms.length; j++) {
+        const a = mushrooms[i]!
+        const b = mushrooms[j]!
+        if (a.clusterId === null || a.clusterId !== b.clusterId) continue
+        const distance = Math.hypot(a.position.x - b.position.x, a.position.z - b.position.z)
+        const minDistance = mushroomCapWorldRadius(a.scale) + mushroomCapWorldRadius(b.scale)
+        expect(distance).toBeGreaterThanOrEqual(minDistance - 1e-9)
+      }
+    }
+  })
+
+  it('is deterministic for the same seed, including burst ring layout', () => {
+    const releases = Array.from({ length: 16 }, (_, i) => release(`v1.0.${i}`, new Date(i * 60 * 60 * 1000).toISOString()))
+    const a = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    const b = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    expect(a).toEqual(b)
+  })
+
+  it('a single, far-apart release never gets a clusterId ("singles stay single")', () => {
+    const releases = [release('v1.0.0', new Date(0).toISOString()), release('v2.0.0', new Date(400 * DAY_MS).toISOString())]
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    expect(mushrooms.every((m) => m.clusterId === null)).toBe(true)
+  })
+
+  it('each burst member still carries its own real release data (individually pickable)', () => {
+    const releases = Array.from({ length: 5 }, (_, i) => release(`v1.0.${i}`, new Date(i * 60 * 60 * 1000).toISOString()))
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    const tags = new Set(mushrooms.map((m) => m.ref.id))
+    expect(tags.size).toBe(5)
+    for (const r of releases) expect(tags.has(r.tag)).toBe(true)
+  })
+
+  it('never produces NaN/Infinity for a large burst', () => {
+    const releases = Array.from({ length: 20 }, (_, i) => release(`v1.0.${i}`, new Date(i * 60 * 60 * 1000).toISOString()))
+    const mushrooms = buildMushroomsOnRings(releases, RADIUS_FOR_TIME, NO_HYPHAE, 'o/r')
+    for (const m of mushrooms) {
+      expect(Number.isFinite(m.position.x)).toBe(true)
+      expect(Number.isFinite(m.position.y)).toBe(true)
+      expect(Number.isFinite(m.position.z)).toBe(true)
+    }
   })
 })

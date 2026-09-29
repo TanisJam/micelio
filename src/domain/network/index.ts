@@ -8,10 +8,13 @@ export {
   buildMushroomsOnRings,
   computeReleaseSequence,
   enforceMinAngularSeparation,
-  MUSHROOM_CLUSTER_ANGLE_SCATTER,
+  layoutBurstRing,
+  MUSHROOM_CAP_WORLD_RADIUS_AT_SCALE_1,
+  mushroomCapWorldRadius,
   MUSHROOM_GOLDEN_ANGLE_RADIANS,
   MUSHROOM_MIN_ANGULAR_SEPARATION,
   MUSHROOM_RADIUS_SEPARATION_WINDOW,
+  type BurstRingOffset,
 } from './mushrooms'
 export {
   conduitSplitRadius,

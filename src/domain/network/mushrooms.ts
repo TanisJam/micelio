@@ -1,6 +1,6 @@
 import type { ReleaseInfo } from '../repo'
 import { polarToVec3, type Vec3 } from '../shared/vector'
-import { createPrng, randJitter, randRange } from '../shared/prng'
+import { createPrng, randRange } from '../shared/prng'
 import { discRadius } from './ringGeometry'
 import type { Hypha, Mushroom, NetworkRef } from './types'
 
@@ -14,9 +14,8 @@ import type { Hypha, Mushroom, NetworkRef } from './types'
  */
 
 const MUSHROOM_LIFT = 0.16
+/** "Small time window" (item 1 of the final polish pass' Unit 2, "detect bursts"): releases within this gap of their immediate time-neighbor burst together into one fairy ring (`buildMushroomsOnRings`, `layoutBurstRing`). */
 const MUSHROOM_CLUSTER_GAP_MS = 1000 * 60 * 60 * 24 * 3 // releases within 3 days cluster together
-/** Angular scatter (radians) for a clustered mushroom around its ring anchor angle. */
-export const MUSHROOM_CLUSTER_ANGLE_SCATTER = 0.24
 /**
  * The golden angle (~137.5deg), the same constant
  * phyllotaxis uses to spread leaves/seeds around a stem with minimal
@@ -40,6 +39,60 @@ const MUSHROOM_SCALE_PATCH = 0.55
 const MUSHROOM_SCALE_MINOR = 0.75
 const MUSHROOM_SCALE_MAJOR = 1.05
 const MUSHROOM_SCALE_UNKNOWN = 0.7
+
+// --- Final polish pass, Unit 2: burst layout ("fairy rings") --------------
+/**
+ * Nominal world-unit mushroom cap RADIUS at `scale === 1`, mirroring the
+ * render-time constants that actually draw a mushroom (`mushroomInstances.
+ * ts`'s `BASE_SCALE`, 0.12, times `mushroomGeometry.ts`'s cap profile's own
+ * max local radius, ~0.56 -- `0.12 * 0.56 = 0.0672`). Duplicated here (not
+ * imported) because this module must stay three.js-free; if either render-
+ * time constant changes, update this too. Used only to size a burst's ring
+ * radius (`layoutBurstRing`) so real rendered caps don't overlap -- never
+ * used for actual rendering.
+ */
+export const MUSHROOM_CAP_WORLD_RADIUS_AT_SCALE_1 = 0.0672
+export function mushroomCapWorldRadius(scale: number): number {
+  return MUSHROOM_CAP_WORLD_RADIUS_AT_SCALE_1 * scale
+}
+/** Extra world-unit margin added on top of two adjacent caps' own radii, so a burst ring's neighbors read as visibly separate mushrooms rather than edge-touching. */
+const BURST_RING_CAP_MARGIN = 0.012
+
+export interface BurstRingOffset {
+  /** Local XZ offset (world units) from the burst's shared center point. */
+  dx: number
+  dz: number
+}
+
+/**
+ * Lays a burst's members evenly around a small ring -- a literal "fairy
+ * ring" (real fungi fruit in circles around a shared point) instead of the
+ * lumpy pile a naive per-member random scatter produces for a large burst
+ * (item 2 of the final polish pass: express's own ~16-release burst was the
+ * motivating case). Ring radius is chosen so NO two adjacent members' own
+ * rendered caps overlap (`mushroomCapWorldRadius` + `BURST_RING_CAP_MARGIN`)
+ * -- the worst-case (largest) pair sets one shared ring radius, since an
+ * evenly-spaced ring only has one spacing to solve for. A single-member
+ * "burst" (`n <= 1`) returns one zero offset -- singles stay single, exactly
+ * at the shared center. Pure and deterministic: no PRNG here at all (the
+ * caller's own small per-member angular jitter, if any, is applied
+ * separately) -- same `capScales` in the same order always produces the
+ * same ring.
+ */
+export function layoutBurstRing(capScales: number[]): BurstRingOffset[] {
+  const n = capScales.length
+  if (n <= 1) return capScales.map(() => ({ dx: 0, dz: 0 }))
+
+  const maxCapRadius = Math.max(...capScales.map(mushroomCapWorldRadius))
+  const minChord = 2 * maxCapRadius + BURST_RING_CAP_MARGIN
+  const halfAngleStep = Math.PI / n
+  const ringRadius = minChord / (2 * Math.sin(halfAngleStep))
+
+  return capScales.map((_, i) => {
+    const angle = (i / n) * Math.PI * 2
+    return { dx: Math.cos(angle) * ringRadius, dz: Math.sin(angle) * ringRadius }
+  })
+}
 
 function normalizeAngle(angle: number): number {
   const twoPi = Math.PI * 2
@@ -158,132 +211,94 @@ export function computeReleaseSequence(releases: ReleaseInfo[]): ReleaseSequence
 }
 
 /**
- * Colony layout (M2c/M2d, angle placement redone M3c): places each mushroom
- * exactly on its release's own growth ring -- `radiusForTime(entry.time)` is
- * the exact same time -> radius mapping the colony's hyphae use, so
- * "mushrooms sit on their release ring" holds exactly (`polarToVec3` always
- * sets XZ magnitude to the given radius; radius is still 100% time-honest).
+ * Colony layout (M2c/M2d, angle placement redone M3c, burst layout redone
+ * Unit 2 of the final polish pass): places each mushroom on its release's
+ * own growth ring -- for a STANDALONE release (no other release within
+ * `MUSHROOM_CLUSTER_GAP_MS`), `radiusForTime(entry.time)` is the exact same
+ * time -> radius mapping the colony's hyphae use, so "mushrooms sit on their
+ * release ring" holds exactly for it (`polarToVec3` always sets XZ magnitude
+ * to the given radius). A BURST (several releases close in time -- item 1 of
+ * Unit 2, "detect bursts") shares one ring radius/angle instead, at the
+ * burst's own mean ("group center") time, and lays its members out as a
+ * small fairy ring around that shared point (`layoutBurstRing`) rather than
+ * each member computing its own, nearly-identical individual radius/angle --
+ * see that function's own doc comment for why a naive per-member approach
+ * reads as a lumpy pile for a real bursty release train (item 5 of the M3c
+ * brief this replaces cited "a pile of overlapping mushrooms" as the
+ * original finding; Unit 2's own motivating case was express's own ~16-
+ * release burst).
  *
- * The ring's ANGLE (M3c) is the golden-angle sequence
- * (`MUSHROOM_GOLDEN_ANGLE_RADIANS`) ordered by each non-clustered release's
- * own position in time, with a deterministic minimum-separation pass
- * (`enforceMinAngularSeparation`) -- so releases are dotted evenly across the
+ * The ring's ANGLE (M3c, now per-BURST rather than per-release) is the
+ * golden-angle sequence (`MUSHROOM_GOLDEN_ANGLE_RADIANS`) ordered by each
+ * burst's own position in time, with a deterministic minimum-separation pass
+ * (`enforceMinAngularSeparation`) -- so bursts are dotted evenly across the
  * whole disc instead of piling into one arc wherever `nearPr` happens to
  * anchor (M2d/M3b's angle-from-anchor approach for a bursty release cadence
  * or a long-lived branch). `Mushroom.nearPr` remains the real
- * closest-preceding-merge data link the detail panel shows (`findRingAnchor`)
- * -- honesty is unaffected, only PLACEMENT no longer reads it. Clustered
- * releases share one base angle (scattered around it) but each still gets
- * its own honestly-computed `nearPr`.
+ * closest-preceding-merge data link the detail panel shows (`findRingAnchor`,
+ * computed per-member at the burst's own shared ring radius) -- honesty is
+ * unaffected, only PLACEMENT no longer reads it.
  */
 export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (time: number) => number, hyphae: Hypha[], seed: string): Mushroom[] {
   if (releases.length === 0) return []
   const prng = createPrng(`${seed}:mushrooms-colony`)
   const sequence = computeReleaseSequence(releases)
 
-  // A busy release train can chain many entries into one cluster (item 5:
-  // "cluster close releases") -- independently-random per-member scatter
-  // (the original approach) can by chance pile several members into nearly
-  // the same spot ("a pile of overlapping mushrooms", round 2 orchestrator
-  // feedback), especially for a large cluster. Fanning members evenly
-  // across the scatter window by their own position in the cluster (plus a
-  // little jitter) keeps every member visually distinct while the cluster
-  // as a whole still reads as one small, tightly-grouped patch.
-  const clusterSizes = new Map<number, number>()
-  for (const entry of sequence) clusterSizes.set(entry.clusterIndex, (clusterSizes.get(entry.clusterIndex) ?? 0) + 1)
-  const clusterMemberSeen = new Map<number, number>()
+  // Item 1 ("detect bursts"): `computeReleaseSequence` already assigns a
+  // shared `clusterIndex` to every run of releases within
+  // `MUSHROOM_CLUSTER_GAP_MS` of their immediate time-neighbor -- grouping
+  // by that index recovers each burst (and every standalone release as its
+  // own one-member "burst") in time order, since `sequence` is already
+  // sorted by time (a `Map`'s insertion order is preserved on iteration).
+  const groups = new Map<number, ReleaseSequenceEntry[]>()
+  for (const entry of sequence) {
+    const members = groups.get(entry.clusterIndex)
+    if (members) members.push(entry)
+    else groups.set(entry.clusterIndex, [entry])
+  }
 
-  // Item 1 of the M3c visual brief: releases were spreading only as far as
-  // their real `nearPr` anchor's own crossing angle (fanned a little for a
-  // repeated anchor), which for a bursty release cadence or a long-lived
-  // branch means most of a repo's ~80 releases resolve to the same handful
-  // of anchors and visually pile into one arc along a single arm of the
-  // colony -- not "dotted across the galaxy". `nearPr` stays exactly as
-  // honest as before (still the real closest-preceding-merge link the
-  // detail panel shows); only the ANGLE used for placement is decoupled
-  // from it, via the golden-angle sequence (`MUSHROOM_GOLDEN_ANGLE_RADIANS`)
-  // ordered by each non-clustered release's own position in time -- and
-  // `enforceMinAngularSeparation` below is a deterministic safety net for
-  // the rare case two release indices still alias to a similar angle at a
-  // similar radius.
-  interface PrimaryAngle {
-    index: number
-    nearPr: NetworkRef | null
+  interface PlacedGroup {
+    members: ReleaseSequenceEntry[]
     angle: number
     radius: number
   }
-  const primaries: PrimaryAngle[] = []
-  let primaryOrder = 0
-  sequence.forEach((entry, index) => {
-    if (entry.isClustered) return
-    const radius = radiusForTime(entry.time)
-    const anchor = findRingAnchor(hyphae, entry.time, radius)
+  const placedGroups: PlacedGroup[] = []
+  let groupOrder = 0
+  for (const members of groups.values()) {
+    const centerTime = members.reduce((sum, m) => sum + m.time, 0) / members.length
+    const radius = radiusForTime(centerTime)
     const jitter = randRange(prng, -MUSHROOM_ANGLE_JITTER, MUSHROOM_ANGLE_JITTER)
-    const angle = normalizeAngle(primaryOrder * MUSHROOM_GOLDEN_ANGLE_RADIANS + jitter)
-    primaries.push({ index, nearPr: anchor.nearPr, angle, radius })
-    primaryOrder += 1
-  })
+    const angle = normalizeAngle(groupOrder * MUSHROOM_GOLDEN_ANGLE_RADIANS + jitter)
+    placedGroups.push({ members, angle, radius })
+    groupOrder += 1
+  }
 
-  const separatedAngles = enforceMinAngularSeparation(primaries, MUSHROOM_MIN_ANGULAR_SEPARATION, MUSHROOM_RADIUS_SEPARATION_WINDOW)
-  primaries.forEach((primary, i) => {
-    primary.angle = separatedAngles[i]!
+  // Deterministic safety net (unchanged from M3c) for the rare case two
+  // BURSTS' own golden-angle indices still alias to a similar angle at a
+  // similar radius -- operates on burst centers now, not individual releases.
+  const separatedAngles = enforceMinAngularSeparation(placedGroups, MUSHROOM_MIN_ANGULAR_SEPARATION, MUSHROOM_RADIUS_SEPARATION_WINDOW)
+  placedGroups.forEach((group, i) => {
+    group.angle = separatedAngles[i]!
   })
-
-  const angleByIndex = new Map(primaries.map((p) => [p.index, p.angle]))
-  const nearPrByIndex = new Map(primaries.map((p) => [p.index, p.nearPr]))
 
   const mushrooms: Mushroom[] = []
-  let clusterId: string | null = null
-  let clusterAngle: number | null = null
-  let clusterNearPr: NetworkRef | null = null
+  for (const { members, angle, radius } of placedGroups) {
+    // "Singles stay single" (item "singles stay single"): a one-member group
+    // gets `clusterId: null`, exactly as a standalone release always has.
+    const clusterId = members.length > 1 ? `mushroom-cluster-${members[0]!.clusterIndex}` : null
+    const ringOffsets = layoutBurstRing(members.map((member) => member.scale))
+    const center = polarToVec3(angle, radius, MUSHROOM_LIFT)
 
-  sequence.forEach((entry, index) => {
-    // Real bug found while building this (M3c): only `clusterId` was reset
-    // here for a standalone entry -- `clusterAngle`/`clusterNearPr` stayed
-    // set from whichever earlier entry last assigned them, so EVERY
-    // standalone entry after the first silently inherited the previous
-    // entry's angle instead of its own (`angle: number = clusterAngle ??
-    // primaryAngle ?? ...` always short-circuited on the stale
-    // `clusterAngle`) -- the only reason releases still ended up at visually
-    // distinct angles at all was the small `randJitter` scatter added below,
-    // which was never gated on `entry.isClustered` either. This is the root
-    // cause of the "80 releases form one big arc" finding: the M2d/M3b
-    // per-run fan logic this replaced was never actually being applied to
-    // more than the first entry of the whole sequence.
-    if (!entry.isClustered) {
-      clusterId = null
-      clusterAngle = null
-      clusterNearPr = null
-    }
-
-    const radius = radiusForTime(entry.time)
-    const primaryAngle = angleByIndex.get(index)
-    const angle: number = clusterAngle ?? primaryAngle ?? normalizeAngle(index * MUSHROOM_GOLDEN_ANGLE_RADIANS)
-    const nearPr = nearPrByIndex.has(index) ? (nearPrByIndex.get(index) ?? null) : clusterNearPr
-
-    let scatterAngle = 0
-    if (clusterAngle !== null) {
-      const clusterSize = clusterSizes.get(entry.clusterIndex) ?? 1
-      const memberIndex = clusterMemberSeen.get(entry.clusterIndex) ?? 0
-      clusterMemberSeen.set(entry.clusterIndex, memberIndex + 1)
-      const fanFraction = clusterSize > 1 ? memberIndex / (clusterSize - 1) - 0.5 : 0
-      scatterAngle = fanFraction * 2 * MUSHROOM_CLUSTER_ANGLE_SCATTER + randJitter(prng, MUSHROOM_CLUSTER_ANGLE_SCATTER * 0.15)
-    }
-    const position = polarToVec3(angle + scatterAngle, radius, MUSHROOM_LIFT)
-
-    if (entry.isClustered && clusterId === null) {
-      clusterId = `mushroom-cluster-${entry.clusterIndex}`
-      const prev = mushrooms[mushrooms.length - 1]
-      if (prev) prev.clusterId = clusterId
-      clusterAngle = angle
-      clusterNearPr = nearPr
-    } else if (!entry.isClustered) {
-      clusterAngle = angle
-      clusterNearPr = nearPr
-    }
-
-    mushrooms.push(makeMushroom(entry, position, clusterId, nearPr))
-  })
+    members.forEach((entry, i) => {
+      const offset = ringOffsets[i]!
+      const position: Vec3 = { x: center.x + offset.dx, y: center.y, z: center.z + offset.dz }
+      // Each member keeps its own, individually-honest `nearPr` (computed at
+      // the burst's own shared ring radius, since that's where it actually
+      // renders) -- still real data, never inherited/faked from a sibling.
+      const anchor = findRingAnchor(hyphae, entry.time, radius)
+      mushrooms.push(makeMushroom(entry, position, clusterId, anchor.nearPr))
+    })
+  }
 
   return mushrooms
 }
