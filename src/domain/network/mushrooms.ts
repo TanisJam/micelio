@@ -1,7 +1,7 @@
 import type { ReleaseInfo } from '../repo'
 import { addVec3, polarToVec3, vec3, type Vec3 } from '../tree/vector'
 import { createPrng, randJitter, randRange } from '../tree/prng'
-import { discRadius, pointOnHyphaAtRadius, pointOnHyphaAtTime } from './layout'
+import { discRadius, pointOnHyphaAtTime } from './layout'
 import type { Hypha, HyphaPoint, Mushroom, NetworkRef } from './types'
 
 /**
@@ -19,16 +19,91 @@ const MUSHROOM_CLUSTER_GAP_MS = 1000 * 60 * 60 * 24 * 3 // releases within 3 day
 export const MUSHROOM_CLUSTER_SCATTER = 0.05
 /** Colony layout only: angular scatter (radians) for a clustered mushroom around its ring anchor angle. */
 export const MUSHROOM_CLUSTER_ANGLE_SCATTER = 0.24
-/** Colony layout only: target angular gap (radians) between adjacent members of a same-direction run (see `ANGLE_PROXIMITY_RADIANS`) -- scales the run's total spread with its size instead of always using one fixed arc, so a small run of 2-3 doesn't get spread as wide as a real 79-long early-growth chain would. */
-export const REPEATED_ANCHOR_GAP = 0.08
-/** Colony layout only: hard ceiling (radians) on a run's total spread, regardless of size -- real early-colony growth can chain many dozens of releases into one run (an honest property of the real data, not fabricated), so this still caps out at a wide-but-bounded arc (~130deg) rather than spanning the whole circle. */
-export const REPEATED_ANCHOR_MAX_SPREAD = 2.3
-/** Colony layout only: how close (radians) two consecutive releases' own real anchor angles have to be before they're treated as "the same direction" and folded into a spread-out run. */
-export const ANGLE_PROXIMITY_RADIANS = 0.3
+/**
+ * Colony layout only (M3c): the golden angle (~137.5deg), the same constant
+ * phyllotaxis uses to spread leaves/seeds around a stem with minimal
+ * overlap at any radius. Each non-clustered release's angle is
+ * `ownOrderIndex * GOLDEN_ANGLE_RADIANS` (see `buildMushroomsOnRings`) --
+ * deterministic, index-only, and independent of which hypha it happens to
+ * be near, so releases are dotted evenly across the whole disc instead of
+ * bunching wherever early colony growth (or a long-lived branch) happens to
+ * put their `nearPr` anchor. `nearPr` itself is untouched -- it's still the
+ * real closest-preceding-merge data link the detail panel shows, just no
+ * longer read for placement.
+ */
+export const MUSHROOM_GOLDEN_ANGLE_RADIANS = Math.PI * (3 - Math.sqrt(5))
+/** Colony layout only: small deterministic per-mushroom angular jitter (radians) so the golden-angle sequence doesn't read as a perfectly mechanical spiral. */
+export const MUSHROOM_ANGLE_JITTER = 0.08
+/** Colony layout only: the minimum angular gap (radians) enforced between two mushrooms whose ring radii fall within `MUSHROOM_RADIUS_SEPARATION_WINDOW` of each other (`enforceMinAngularSeparation`) -- a deterministic safety net on top of the golden angle's own good spacing, for the rare case several release indices alias to nearly the same angle. */
+export const MUSHROOM_MIN_ANGULAR_SEPARATION = 0.3
+/** Colony layout only: how close (world units, disc radius 0..`DISC_MAX_RADIUS`) two mushrooms' rings have to be before the minimum-separation rule applies to them at all -- mushrooms whose radii are already far apart never fight over angle. */
+export const MUSHROOM_RADIUS_SEPARATION_WINDOW = 0.2
 const MUSHROOM_SCALE_PATCH = 0.55
 const MUSHROOM_SCALE_MINOR = 0.75
 const MUSHROOM_SCALE_MAJOR = 1.05
 const MUSHROOM_SCALE_UNKNOWN = 0.7
+
+function normalizeAngle(angle: number): number {
+  const twoPi = Math.PI * 2
+  return ((angle % twoPi) + twoPi) % twoPi
+}
+
+/** Shortest signed angular distance from `a` to `b`, in `(-PI, PI]`. */
+function angularDelta(a: number, b: number): number {
+  let delta = (b - a) % (Math.PI * 2)
+  if (delta > Math.PI) delta -= Math.PI * 2
+  if (delta < -Math.PI) delta += Math.PI * 2
+  return delta
+}
+
+export interface AngledRingEntry {
+  angle: number
+  radius: number
+}
+
+/**
+ * Deterministically nudges angles so no two entries whose ring radius is
+ * within `radiusWindow` of each other end up closer than `minSeparation`
+ * radians apart. Processes entries in ascending-radius order and only ever
+ * pushes an entry forward (in the golden-angle direction) away from an
+ * already-finalized, closer-in-radius neighbor, so the result depends only
+ * on the input values, never on call order or iteration timing -- pure and
+ * exported for testing.
+ */
+export function enforceMinAngularSeparation(entries: AngledRingEntry[], minSeparation: number, radiusWindow: number): number[] {
+  const order = entries.map((_, i) => i).sort((a, b) => entries[a]!.radius - entries[b]!.radius)
+  const angles: number[] = new Array(entries.length)
+  const finalized: number[] = []
+
+  // Processes strictly in ascending-radius order: each entry is checked
+  // against every ALREADY-FINALIZED peer within `radiusWindow` (never a
+  // later one) and nudged until none conflict, before moving on -- earlier
+  // entries are never revisited. A first attempt that only checked the
+  // single nearest-radius neighbor (and pushed exactly onto `neighbor.angle
+  // + minSeparation`) could resolve that one neighbor and then, while fixing
+  // a farther one, land two DIFFERENT entries on the exact same pushed
+  // angle -- a real bug found via a genuine 40-release test failure, not a
+  // hypothetical (see `mushrooms.test.ts`).
+  for (const i of order) {
+    const peers = finalized.filter((p) => entries[i]!.radius - entries[p]!.radius <= radiusWindow)
+    let angle = entries[i]!.angle
+    // Bounded by the peer count (never data-sized/unbounded growth, and
+    // never a `while(true)`) -- each iteration only ever needs to escape one
+    // more conflicting peer, so `peers.length` attempts always suffices.
+    for (let iteration = 0; iteration < peers.length + 1; iteration++) {
+      const conflict = peers.find((p) => Math.abs(angularDelta(angles[p]!, angle)) < minSeparation)
+      // `find` can return the valid peer INDEX `0` -- a falsy number, not
+      // "nothing found" -- so this must check `undefined` explicitly, not
+      // just truthiness (a real bug caught by this file's own first test
+      // case, whose only peer is index 0).
+      if (conflict === undefined) break
+      angle = normalizeAngle(angles[conflict]! + minSeparation)
+    }
+    angles[i] = angle
+    finalized.push(i)
+  }
+  return angles
+}
 
 function toEpochMs(iso: string): number {
   const ms = Date.parse(iso)
@@ -121,18 +196,22 @@ export function buildMushrooms(releases: ReleaseInfo[], mainPoints: HyphaPoint[]
 }
 
 /**
- * Colony layout (M2c/M2d): places each mushroom exactly on its release's own
- * growth ring -- `radiusForTime(entry.time)` is the exact same time -> radius
- * mapping the colony's hyphae use, so "mushrooms sit on their release ring"
- * holds exactly (`polarToVec3` always sets XZ magnitude to the given
- * radius). The ring's ANGLE is a true data link when possible
- * (`findRingAnchor`, M2d): the merged PR that landed closest before the
- * release, at the point where *that PR's own hypha* actually crosses the
- * ring radius -- recorded honestly as `Mushroom.nearPr`. Falls back to
- * whichever hypha (any kind) happens to cross the ring, then to a seeded
- * angle, when no real link is available -- `nearPr` is `null` in both
- * fallback cases, mirroring `Hypha.attachment`'s honesty framing. Clustered
- * releases share one anchor angle (scattered around it) but each still gets
+ * Colony layout (M2c/M2d, angle placement redone M3c): places each mushroom
+ * exactly on its release's own growth ring -- `radiusForTime(entry.time)` is
+ * the exact same time -> radius mapping the colony's hyphae use, so
+ * "mushrooms sit on their release ring" holds exactly (`polarToVec3` always
+ * sets XZ magnitude to the given radius; radius is still 100% time-honest).
+ *
+ * The ring's ANGLE (M3c) is the golden-angle sequence
+ * (`MUSHROOM_GOLDEN_ANGLE_RADIANS`) ordered by each non-clustered release's
+ * own position in time, with a deterministic minimum-separation pass
+ * (`enforceMinAngularSeparation`) -- so releases are dotted evenly across the
+ * whole disc instead of piling into one arc wherever `nearPr` happens to
+ * anchor (M2d/M3b's angle-from-anchor approach for a bursty release cadence
+ * or a long-lived branch). `Mushroom.nearPr` remains the real
+ * closest-preceding-merge data link the detail panel shows (`findRingAnchor`)
+ * -- honesty is unaffected, only PLACEMENT no longer reads it. Clustered
+ * releases share one base angle (scattered around it) but each still gets
  * its own honestly-computed `nearPr`.
  */
 export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (time: number) => number, hyphae: Hypha[], seed: string): Mushroom[] {
@@ -152,62 +231,44 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
   for (const entry of sequence) clusterSizes.set(entry.clusterIndex, (clusterSizes.get(entry.clusterIndex) ?? 0) + 1)
   const clusterMemberSeen = new Map<number, number>()
 
-  // Real-world release cadence is bursty relative to merge cadence, and
-  // early colony growth hasn't yet spread across the full circle -- both
-  // make `findRingAnchor`'s "nearest preceding merge" resolve to the same
-  // anchor hypha repeatedly, OR to several DIFFERENT early hyphae that still
-  // happen to sit within a narrow angular band. Either way, each individual
-  // link is honest (it *is* the real nearest-preceding merge/crossing), but
-  // sampling many ring radii along nearly the same angle visually reads as
-  // "all these mushrooms sit in a straight line/trail," not as mycelium
-  // fruiting across the colony (a real bug found via 3D visual review, M3).
-  // Fixed the same way clustered members are already fanned: a run of
-  // consecutive *non-clustered* entries whose real anchor angles land within
-  // `ANGLE_PROXIMITY_RADIANS` of each other gets spread evenly across a
-  // small arc centered on the run's own first real angle, instead of every
-  // member landing exactly on (or right next to) that same direction.
+  // Item 1 of the M3c visual brief: releases were spreading only as far as
+  // their real `nearPr` anchor's own crossing angle (fanned a little for a
+  // repeated anchor), which for a bursty release cadence or a long-lived
+  // branch means most of a repo's ~80 releases resolve to the same handful
+  // of anchors and visually pile into one arc along a single arm of the
+  // colony -- not "dotted across the galaxy". `nearPr` stays exactly as
+  // honest as before (still the real closest-preceding-merge link the
+  // detail panel shows); only the ANGLE used for placement is decoupled
+  // from it, via the golden-angle sequence (`MUSHROOM_GOLDEN_ANGLE_RADIANS`)
+  // ordered by each non-clustered release's own position in time -- and
+  // `enforceMinAngularSeparation` below is a deterministic safety net for
+  // the rare case two release indices still alias to a similar angle at a
+  // similar radius.
   interface PrimaryAngle {
     index: number
-    anchor: RingAnchor
+    nearPr: NetworkRef | null
     angle: number
+    radius: number
   }
   const primaries: PrimaryAngle[] = []
+  let primaryOrder = 0
   sequence.forEach((entry, index) => {
     if (entry.isClustered) return
     const radius = radiusForTime(entry.time)
     const anchor = findRingAnchor(hyphae, entry.time, radius)
-    const angle = anchor.angle ?? randRange(prng, 0, Math.PI * 2)
-    primaries.push({ index, anchor, angle })
+    const jitter = randRange(prng, -MUSHROOM_ANGLE_JITTER, MUSHROOM_ANGLE_JITTER)
+    const angle = normalizeAngle(primaryOrder * MUSHROOM_GOLDEN_ANGLE_RADIANS + jitter)
+    primaries.push({ index, nearPr: anchor.nearPr, angle, radius })
+    primaryOrder += 1
   })
 
-  for (let i = 0; i < primaries.length; ) {
-    // A pure-fallback (no real crossing at all, `anchorKey === null`) angle
-    // is already an independent seeded random draw -- never group those.
-    if (primaries[i]!.anchor.anchorKey === null) {
-      i += 1
-      continue
-    }
-    const runStartAngle = primaries[i]!.angle
-    let j = i + 1
-    while (
-      j < primaries.length &&
-      primaries[j]!.anchor.anchorKey !== null &&
-      Math.abs(primaries[j]!.angle - runStartAngle) < ANGLE_PROXIMITY_RADIANS
-    )
-      j++
-    const runSize = j - i
-    if (runSize > 1) {
-      const spread = Math.min(REPEATED_ANCHOR_MAX_SPREAD, (runSize - 1) * REPEATED_ANCHOR_GAP)
-      for (let k = i; k < j; k++) {
-        const fanFraction = (k - i) / (runSize - 1) - 0.5
-        primaries[k]!.angle = runStartAngle + fanFraction * spread
-      }
-    }
-    i = j
-  }
+  const separatedAngles = enforceMinAngularSeparation(primaries, MUSHROOM_MIN_ANGULAR_SEPARATION, MUSHROOM_RADIUS_SEPARATION_WINDOW)
+  primaries.forEach((primary, i) => {
+    primary.angle = separatedAngles[i]!
+  })
 
   const angleByIndex = new Map(primaries.map((p) => [p.index, p.angle]))
-  const anchorByIndex = new Map(primaries.map((p) => [p.index, p.anchor]))
+  const nearPrByIndex = new Map(primaries.map((p) => [p.index, p.nearPr]))
 
   const mushrooms: Mushroom[] = []
   let clusterId: string | null = null
@@ -215,13 +276,28 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
   let clusterNearPr: NetworkRef | null = null
 
   sequence.forEach((entry, index) => {
-    if (!entry.isClustered) clusterId = null
+    // Real bug found while building this (M3c): only `clusterId` was reset
+    // here for a standalone entry -- `clusterAngle`/`clusterNearPr` stayed
+    // set from whichever earlier entry last assigned them, so EVERY
+    // standalone entry after the first silently inherited the previous
+    // entry's angle instead of its own (`angle: number = clusterAngle ??
+    // primaryAngle ?? ...` always short-circuited on the stale
+    // `clusterAngle`) -- the only reason releases still ended up at visually
+    // distinct angles at all was the small `randJitter` scatter added below,
+    // which was never gated on `entry.isClustered` either. This is the root
+    // cause of the "80 releases form one big arc" finding: the M2d/M3b
+    // per-run fan logic this replaced was never actually being applied to
+    // more than the first entry of the whole sequence.
+    if (!entry.isClustered) {
+      clusterId = null
+      clusterAngle = null
+      clusterNearPr = null
+    }
 
     const radius = radiusForTime(entry.time)
     const primaryAngle = angleByIndex.get(index)
-    const primaryAnchor = anchorByIndex.get(index)
-    const angle: number = clusterAngle ?? primaryAngle ?? randRange(prng, 0, Math.PI * 2)
-    const nearPr = primaryAnchor ? primaryAnchor.nearPr : clusterNearPr
+    const angle: number = clusterAngle ?? primaryAngle ?? normalizeAngle(index * MUSHROOM_GOLDEN_ANGLE_RADIANS)
+    const nearPr = nearPrByIndex.has(index) ? (nearPrByIndex.get(index) ?? null) : clusterNearPr
 
     let scatterAngle = 0
     if (clusterAngle !== null) {
@@ -251,10 +327,8 @@ export function buildMushroomsOnRings(releases: ReleaseInfo[], radiusForTime: (t
 }
 
 interface RingAnchor {
-  angle: number | null
+  /** The real closest-preceding-merge data link (`Mushroom.nearPr`, shown in the detail panel) -- unaffected by the M3c golden-angle placement change below. `null` when no real crossing hypha was found (honest visual-only fallback). */
   nearPr: NetworkRef | null
-  /** Internal grouping key (the anchor hypha's own id), used only to detect a run of consecutive releases sharing the same real anchor -- never exposed on `Mushroom` itself. `null` when no real crossing hypha was found at all (a pure seeded-angle fallback, never grouped). */
-  anchorKey: string | null
 }
 
 /** A hypha's own start/end disc radius (ignores tube thickness), from its already-grown points. */
@@ -262,7 +336,7 @@ function hyphaRadiusSpan(hypha: Hypha): { start: number; end: number } {
   return { start: discRadius(hypha.points[0]!.position), end: discRadius(hypha.points[hypha.points.length - 1]!.position) }
 }
 
-/** See `buildMushroomsOnRings`'s doc comment for the two-step (real link, then honest visual fallback) strategy. */
+/** See `buildMushroomsOnRings`'s doc comment: this only resolves the honest `nearPr` data link (M3c decoupled placement ANGLE from it -- see `MUSHROOM_GOLDEN_ANGLE_RADIANS`). */
 function findRingAnchor(hyphae: Hypha[], releaseTime: number, ringRadius: number): RingAnchor {
   let closestMergedBefore: Hypha | null = null
   for (const hypha of hyphae) {
@@ -273,29 +347,14 @@ function findRingAnchor(hyphae: Hypha[], releaseTime: number, ringRadius: number
   if (closestMergedBefore) {
     const span = hyphaRadiusSpan(closestMergedBefore)
     if (ringRadius >= span.start - 1e-6 && ringRadius <= span.end + 1e-6) {
-      const at = pointOnHyphaAtRadius(closestMergedBefore.points, ringRadius)
-      return { angle: Math.atan2(at.position.z, at.position.x), nearPr: closestMergedBefore.ref, anchorKey: closestMergedBefore.id }
+      return { nearPr: closestMergedBefore.ref }
     }
   }
 
-  let nearestCrossing: Hypha | null = null
-  let nearestDelta = Number.POSITIVE_INFINITY
-  for (const hypha of hyphae) {
-    if (hypha.kind === 'main') continue
-    const span = hyphaRadiusSpan(hypha)
-    if (ringRadius < span.start - 1e-6 || ringRadius > span.end + 1e-6) continue
-    const delta = Math.abs(hypha.time - releaseTime)
-    if (delta < nearestDelta) {
-      nearestDelta = delta
-      nearestCrossing = hypha
-    }
-  }
-  if (nearestCrossing) {
-    const at = pointOnHyphaAtRadius(nearestCrossing.points, ringRadius)
-    return { angle: Math.atan2(at.position.z, at.position.x), nearPr: null, anchorKey: nearestCrossing.id }
-  }
-
-  return { angle: null, nearPr: null, anchorKey: null }
+  // No fused merged PR's own span reaches this ring -- honest fallback, no
+  // data link (M3c: the angle this used to also supply is no longer read
+  // here at all, see `MUSHROOM_GOLDEN_ANGLE_RADIANS`).
+  return { nearPr: null }
 }
 
 function makeMushroom(entry: ReleaseSequenceEntry, position: Vec3, clusterId: string | null, nearPr: NetworkRef | null): Mushroom {

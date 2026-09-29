@@ -66,9 +66,21 @@ describe('renderableHyphae', () => {
 })
 
 describe('tipTaperFactor', () => {
-  it('never tapers a polyline shorter than the minimum (too few samples to taper without fully degenerating)', () => {
-    for (let count = 0; count < 6; count++) {
+  it('never tapers a single-segment polyline (too short to taper without fully degenerating)', () => {
+    for (let count = 0; count < 3; count++) {
       for (let i = 0; i < count; i++) expect(tipTaperFactor(i, count)).toBe(1)
+    }
+  })
+
+  // M3c regression: a short hypha (as few as 2 segments / 3 points) used to
+  // render as a constant-width, hard-square-ended ribbon -- a real "blocky
+  // rectangle" visual artifact at the colony's rim, since short/low-work
+  // hyphae are common there. Every polyline with >= 3 points must now taper
+  // its own endpoint(s) toward 0, not just long ones.
+  it('tapers a short polyline (3-5 points) toward its own endpoints instead of staying a constant-width block', () => {
+    for (let count = 3; count < 6; count++) {
+      expect(tipTaperFactor(0, count)).toBeLessThan(1)
+      expect(tipTaperFactor(count - 1, count)).toBeLessThan(1)
     }
   })
 

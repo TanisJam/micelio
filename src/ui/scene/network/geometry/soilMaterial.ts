@@ -105,8 +105,10 @@ const FRAGMENT_SHADER = /* glsl */ `
 
     // Vignette: continues the SAME darkening direction (never reverses it)
     // toward the background's own near-black, starting well before the true
-    // rim so the falloff is soft and gradual -- no visible hard edge.
-    float edge = smoothstep(uRadius * 0.55, uRadius, dist);
+    // rim so the falloff is soft and gradual -- no visible hard edge. M3c
+    // item 5: started even earlier (0.55 -> 0.4) so more of the disc reaches
+    // the background's own tone, leaving only a faint haze near the core.
+    float edge = smoothstep(uRadius * 0.4, uRadius, dist);
     base = mix(base, uEdgeColor, edge);
 
     gl_FragColor = vec4(base, 1.0);

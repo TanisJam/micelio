@@ -82,7 +82,11 @@ export default function Scene({
             wide areas, blooming into an undifferentiated haze instead of
             picking out only genuinely emissive things (tips, fusion knots,
             mushroom rims, the spore, a selected/hovered highlight boost). */}
-        <Bloom luminanceThreshold={0.88} luminanceSmoothing={0.15} intensity={0.5} mipmapBlur />
+        {/* M3c item 2: threshold/intensity nudged (0.88/0.5 -> 0.84/0.62) for
+            a bit more bloom on the densest arms and the spore halo, still
+            comfortably above where a round-1 M3 finding saw a dense colony's
+            overlapping strands bloom into an undifferentiated haze. */}
+        <Bloom luminanceThreshold={0.84} luminanceSmoothing={0.15} intensity={0.62} mipmapBlur />
         <ToneMapping mode={ToneMappingMode.NEUTRAL} />
       </EffectComposer>
     </Canvas>

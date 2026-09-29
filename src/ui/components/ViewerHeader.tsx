@@ -87,6 +87,14 @@ function HeaderButton({ label, icon, onClick }: { label: string; icon: string; o
  */
 export function ViewerHeader({ snapshot, onCopyLink, onSaveImage }: ViewerHeaderProps) {
   const { meta } = snapshot
+  // M3c item 4b: the source badge is informational, not identity -- on a
+  // narrow viewport it's dropped so the repo name (which must never
+  // truncate below ~20-24 characters) and the two icon share actions keep
+  // priority for the header's limited width, instead of a fixed `min-width`
+  // on the name colliding with the badge (a real round-2 visual finding:
+  // reserving the name's floor unconditionally pushed the badge into the
+  // first icon button at 390px).
+  const narrow = useMediaQuery(NARROW_HEADER_QUERY)
   // Captured once at mount (a lazy `useState` initializer, not a plain
   // render-time call) so the header doesn't re-derive "now" -- and doesn't
   // trip the impure-render-function lint -- on every re-render.
@@ -123,7 +131,15 @@ export function ViewerHeader({ snapshot, onCopyLink, onSaveImage }: ViewerHeader
           rel="noopener noreferrer"
           title={meta.description ?? undefined}
           style={{
-            minWidth: 0,
+            // M3c item 4b: guarantees roughly 20+ characters of the repo
+            // name stay visible before ellipsis ever kicks in (never
+            // truncating a short name just because the share buttons/badge
+            // happen to be present) -- `<wbr />` after the slash also gives
+            // the browser a real wrap point, so a name that DOES need more
+            // room wraps onto a second line (owner / repo) rather than only
+            // ever being cut off mid-word.
+            minWidth: '20ch',
+            maxWidth: '38ch',
             fontFamily: ui.fontDisplay,
             fontSize: '1rem',
             fontWeight: 600,
@@ -131,12 +147,16 @@ export function ViewerHeader({ snapshot, onCopyLink, onSaveImage }: ViewerHeader
             textDecoration: 'none',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            lineHeight: 1.15,
           }}
         >
-          {meta.owner}/{meta.name}
+          {meta.owner}/<wbr />
+          {meta.name}
         </a>
-        <SourceBadge source={snapshot.source} />
+        {!narrow && <SourceBadge source={snapshot.source} />}
         <div
           className="viewer-header-stats"
           style={{

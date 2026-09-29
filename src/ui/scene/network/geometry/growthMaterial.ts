@@ -90,7 +90,11 @@ const FRAGMENT_SHADER = /* glsl */ `
     float edgeFade = 1.0 - smoothstep(0.82, 1.0, abs(u));
     float widthProfile = core * edgeFade;
 
-    vec3 outColor = vColor * vBrightness * mix(0.65, 1.35, core);
+    // M3c item 2: raised from mix(0.65, 1.35, core) -- brighter filament
+    // cores (restoring luminosity toward the pre-M3b galaxy), while the
+    // dimmer 0.8 floor (was 0.65) still keeps a thread's own soft edges from
+    // reading as flat-bright all the way across.
+    vec3 outColor = vColor * vBrightness * mix(0.8, 1.55, core);
     float outAlpha = vAlpha * widthProfile * mix(1.0, 0.3, dimOthers);
     // A selected hypha never fades away entirely even near its own ribbon
     // edge -- keeps the "clearly the brightest thing" read solid rather than

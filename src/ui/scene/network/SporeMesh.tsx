@@ -35,7 +35,10 @@ export function SporeMesh({ reducedMotion }: SporeMeshProps) {
       </mesh>
       <mesh ref={haloRef}>
         <sphereGeometry args={[HALO_RADIUS, 16, 16]} />
-        <meshBasicMaterial color={mycelium.sporeHalo} transparent opacity={0.16} depthWrite={false} blending={THREE.AdditiveBlending} />
+        {/* M3c item 2: a touch more bloom on the spore halo (0.16 -> 0.22) to
+            help restore the brighter, more luminous read from before M3b's
+            palette/brightness pass, while staying well short of "blown out". */}
+        <meshBasicMaterial color={mycelium.sporeHalo} transparent opacity={0.22} depthWrite={false} blending={THREE.AdditiveBlending} />
       </mesh>
     </group>
   )

@@ -31,7 +31,13 @@ export const palette = {
  */
 export const mycelium = {
   soilNear: '#05070a',
-  soilFar: '#0a0e12',
+  // M3c item 5: was '#0a0e12' -- close enough to the background/rim tone
+  // that it barely registers on its own, but summed across most of the
+  // disc's interior (the vignette only starts at 0.55*radius, see
+  // `soilMaterial.ts`) it made the whole plate read as a visibly lighter
+  // blue ellipse against the near-black backdrop. Darkened much closer to
+  // `soilNear` so only a faint loam haze remains near the core.
+  soilFar: '#06080b',
   hyphaActiveBase: '#4fa8c9',
   hyphaActiveTip: '#6ee7ff',
   hyphaDeadBase: '#5a4a3a',

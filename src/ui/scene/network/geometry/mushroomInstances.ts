@@ -13,7 +13,15 @@ import type { PickTarget } from '../picking/pickingGrid'
  * touch, not a data claim).
  */
 
-const BASE_SCALE = 0.42
+// M3c item 1: mushrooms were reading as huge cream cotton-ball blobs at
+// full-disc zoom -- scaled down ~3.5x from the M3b value (0.42) so they read
+// as tiny glowing fungi dotted across the galaxy, never bigger than a few px
+// of cap. The old `Math.max(0.75, mushroom.scale)` floor is also gone (see
+// below): it clamped `MUSHROOM_SCALE_PATCH`/`MINOR` (0.55/0.75) up to the
+// same 0.75, so patch releases never actually rendered smaller than minor
+// ones -- the floor made the domain's own major/minor/patch scale mostly
+// moot except for majors.
+const BASE_SCALE = 0.12
 const HEIGHT_JITTER = 0.05
 const MIN_HEIGHT_MULTIPLIER = 0.9
 /** Small seeded per-mushroom vertical offset (P1's mushroom brief: "a subtle vertical stagger") -- purely a render-time read cue so a cluster of same-height caps doesn't read as one flat row/line of dots; never a data claim (the underlying `Mushroom.position.y` -- the real release-anchored lift -- is untouched). */
@@ -34,7 +42,7 @@ export function buildMushroomInstances(mushrooms: Mushroom[]): MushroomInstances
     const prng = createPrng(mushroom.id)
     const rotationY = randRange(prng, 0, Math.PI * 2)
     const heightMultiplier = MIN_HEIGHT_MULTIPLIER + randRange(prng, 0, HEIGHT_JITTER)
-    const scale = BASE_SCALE * Math.max(0.75, mushroom.scale)
+    const scale = BASE_SCALE * mushroom.scale
     const verticalStagger = randRange(prng, 0, VERTICAL_STAGGER)
 
     const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0))

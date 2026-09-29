@@ -40,7 +40,6 @@ const CROSS_Y_TILT = 0.35
  */
 const TAPER_FRACTION = 0.18
 const MIN_TAPER_POINTS = 3
-const MIN_POINTS_TO_TAPER = 6
 /**
  * Base (unselected/unhovered) alpha range, base -> tip. Deliberately modest:
  * hyphae render additively blended (P2: "translucent/additive where they
@@ -50,8 +49,14 @@ const MIN_POINTS_TO_TAPER = 6
  * of reading as individually legible glowing filaments. Selecting an
  * element still boosts it well past this range (see `growthMaterial.ts`).
  */
-const BASE_ALPHA_MIN = 0.16
-const BASE_ALPHA_MAX = 0.4
+// M3c item 2: bumped from 0.16/0.4 -- the M3b brightness pass (this range's
+// prior values) read noticeably dimmer/flatter than the pre-M3b galaxy
+// (commit 1dd7a8f), per the orchestrator's screenshot review. Still modest
+// relative to a selected hypha's own much brighter highlight (see
+// `growthMaterial.ts`), and still additive (a dense colony's overlap keeps
+// doing the rest of the brightening).
+const BASE_ALPHA_MIN = 0.22
+const BASE_ALPHA_MAX = 0.52
 
 export interface HyphaeGeometryResult {
   geometry: THREE.BufferGeometry
@@ -68,15 +73,27 @@ function perpendicularXZ(tangentX: number, tangentZ: number): [number, number] {
 
 /**
  * Smoothstep-eased taper toward zero width at both ends of a hypha's own
- * polyline (`index`/`count`), over the nearest `TAPER_POINTS` samples --
- * `1` (no taper) everywhere else, and `1` everywhere for a polyline too
- * short to taper without fully degenerating (`count < MIN_POINTS_TO_TAPER`).
- * Pure and exported for testing.
+ * polyline (`index`/`count`), over the nearest `span` samples -- `1` (no
+ * taper) everywhere else.
+ *
+ * M3c real bug found and fixed (rim-artifact visual finding, item 3): this
+ * used to skip tapering ENTIRELY (return `1` everywhere) for any hypha with
+ * fewer than `MIN_POINTS_TO_TAPER` (6) points -- a short, low-work hypha
+ * (few commits, common near the disc's outer rim) renders as a
+ * constant-width, constant-alpha ribbon with hard square ends instead of a
+ * fine tapered thread, additively blooming into exactly the "blocky white/
+ * cyan rectangle" fragments the orchestrator's screenshot review flagged.
+ * Every polyline with at least 3 points (2 segments) can taper its own
+ * endpoints without fully degenerating (`span` is capped at
+ * `floor((count-1)/2)`, so the two tapered halves never overlap); only a
+ * single-segment (`count < 3`) stub -- rare, and only a couple of world
+ * units long regardless -- still renders at constant width.
  */
 export function tipTaperFactor(index: number, count: number): number {
-  if (count < MIN_POINTS_TO_TAPER) return 1
+  if (count < 3) return 1
+  const halfSpanCap = Math.max(1, Math.floor((count - 1) / 2))
   const proportional = Math.round((count - 1) * TAPER_FRACTION)
-  const span = Math.min(Math.max(MIN_TAPER_POINTS, proportional), Math.floor((count - 1) / 2))
+  const span = Math.min(Math.max(MIN_TAPER_POINTS, proportional), halfSpanCap)
   if (span <= 0) return 1
   const distanceFromNearestEnd = Math.min(index, count - 1 - index)
   if (distanceFromNearestEnd >= span) return 1
