@@ -15,9 +15,10 @@ export function huertoApiPlugin(): Plugin {
         void handleRepoRequest({
           owner: url.searchParams.get('owner') ?? undefined,
           repo: url.searchParams.get('repo') ?? undefined,
-        }).then(({ status, body }) => {
+        }).then(({ status, body, headers }) => {
           res.statusCode = status
           res.setHeader('Content-Type', 'application/json')
+          for (const [name, value] of Object.entries(headers)) res.setHeader(name, value)
           res.end(JSON.stringify(body))
         })
       })

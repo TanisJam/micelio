@@ -13,38 +13,25 @@ import {
   mapTagsAsReleases,
 } from './mappers.ts'
 import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY, REPO_OVERVIEW_QUERY } from './queries.ts'
-import type { ClosedPrsPageResponse, MergedPrsPageResponse, RepoOverviewResponse } from './rawTypes.ts'
+import type { ClosedPrsPageResponse, MergedPrsPageResponse, RawMergedPullRequest, RawPageInfo, RepoOverviewResponse } from './rawTypes.ts'
 
 /**
- * Fetches a full `RepoSnapshot` from the GitHub GraphQL API for `owner/repo`,
- * paginating merged pull requests up to `CAPS.maxMergedPrs`. Throws a typed
- * `RepoError` for not-found/private/rate-limited/upstream failures.
+ * Continues merged-PR pagination from the overview query's own first page,
+ * up to `CAPS.maxMergedPrs`. Extracted so it can run CONCURRENTLY with
+ * `fetchClosedPullRequests` (C3/T8) -- the two are fully independent
+ * cursor-based paginations (different query, different cursor), so there's
+ * no reason to serialize them and pay both round-trip costs one after the
+ * other.
  */
-export async function fetchRepoSnapshotFromGitHub(
+async function fetchMergedPullRequests(
   owner: string,
   repo: string,
   token: string,
-): Promise<RepoSnapshot> {
-  const overview = await graphqlRequest<RepoOverviewResponse>(
-    REPO_OVERVIEW_QUERY,
-    {
-      owner,
-      name: repo,
-      prPageSize: CAPS.mergedPrsPageSize,
-      commitsPerPr: CAPS.commitsPerPr,
-      secondaryCommitsPerPr: CAPS.secondaryCommitsPerPr,
-      directCommitsScanned: CAPS.directCommitsScanned,
-    },
-    token,
-  )
-
-  const repository = overview.repository
-  if (!repository) {
-    throw new RepoError('not_found', `Repository ${owner}/${repo} was not found.`)
-  }
-
-  const mergedPullRequests: MergedPullRequest[] = repository.mergedPRs.nodes.map(mapMergedPullRequest)
-  let pageInfo = repository.mergedPRs.pageInfo
+  firstPageNodes: RawMergedPullRequest[],
+  firstPageInfo: RawPageInfo,
+): Promise<MergedPullRequest[]> {
+  const mergedPullRequests: MergedPullRequest[] = firstPageNodes.map(mapMergedPullRequest)
+  let pageInfo = firstPageInfo
 
   while (pageInfo.hasNextPage && mergedPullRequests.length < CAPS.maxMergedPrs) {
     const page = await graphqlRequest<MergedPrsPageResponse>(
@@ -65,19 +52,20 @@ export async function fetchRepoSnapshotFromGitHub(
     pageInfo = pullRequests.pageInfo
   }
 
-  const cappedMergedPullRequests = mergedPullRequests.slice(0, CAPS.maxMergedPrs)
+  return mergedPullRequests.slice(0, CAPS.maxMergedPrs)
+}
 
-  // Closed-unmerged PRs are fetched as their own fully independent,
-  // always-paginated-from-scratch query (not bundled into the overview
-  // query above): a supplementary, "most recent, capped" dataset (dead-end
-  // hyphae), not the core timeline, so a failure at any point -- including
-  // the very first page -- stops fetching and keeps whatever pages already
-  // succeeded (possibly none) instead of failing the whole snapshot. The
-  // result is honestly a shorter (never fabricated) list. Splitting this
-  // out of the overview query also keeps that query's own cost lower,
-  // avoiding the intermittent upstream 502/504s a three-way (merged + open
-  // + closed, each with nested commits) overview query triggered on
-  // repositories with substantial PR history.
+// Closed-unmerged PRs are fetched as their own fully independent,
+// always-paginated-from-scratch query (not bundled into the overview query):
+// a supplementary, "most recent, capped" dataset (dead-end hyphae), not the
+// core timeline, so a failure at any point -- including the very first page
+// -- stops fetching and keeps whatever pages already succeeded (possibly
+// none) instead of failing the whole snapshot. The result is honestly a
+// shorter (never fabricated) list. Splitting this out of the overview query
+// also keeps that query's own cost lower, avoiding the intermittent upstream
+// 502/504s a three-way (merged + open + closed, each with nested commits)
+// overview query triggered on repositories with substantial PR history.
+async function fetchClosedPullRequests(owner: string, repo: string, token: string): Promise<ClosedPullRequest[]> {
   const closedPullRequests: ClosedPullRequest[] = []
   let closedCursor: string | null = null
   let closedHasNextPage = true
@@ -107,7 +95,49 @@ export async function fetchRepoSnapshotFromGitHub(
     closedCursor = pullRequests.pageInfo.endCursor
   }
 
-  const cappedClosedPullRequests = closedPullRequests.slice(0, CAPS.maxClosedPrs)
+  return closedPullRequests.slice(0, CAPS.maxClosedPrs)
+}
+
+/**
+ * Fetches a full `RepoSnapshot` from the GitHub GraphQL API for `owner/repo`,
+ * paginating merged pull requests up to `CAPS.maxMergedPrs`. Throws a typed
+ * `RepoError` for not-found/private/rate-limited/upstream failures.
+ */
+export async function fetchRepoSnapshotFromGitHub(
+  owner: string,
+  repo: string,
+  token: string,
+): Promise<RepoSnapshot> {
+  const overview = await graphqlRequest<RepoOverviewResponse>(
+    REPO_OVERVIEW_QUERY,
+    {
+      owner,
+      name: repo,
+      prPageSize: CAPS.mergedPrsPageSize,
+      commitsPerPr: CAPS.commitsPerPr,
+      secondaryCommitsPerPr: CAPS.secondaryCommitsPerPr,
+      directCommitsScanned: CAPS.directCommitsScanned,
+    },
+    token,
+  )
+
+  const repository = overview.repository
+  if (!repository) {
+    throw new RepoError('not_found', `Repository ${owner}/${repo} was not found.`)
+  }
+
+  // C3/T8: merged-PR pagination (up to ~20 requests at the real cap) and
+  // closed-PR pagination (up to ~4 requests) are fully independent --
+  // different query, different cursor, neither reads the other's result --
+  // so run them concurrently instead of one after the other. Order of
+  // pagination WITHIN each loop is unchanged (still strictly sequential
+  // cursor-following, since GraphQL cursors can't be parallelized), and the
+  // closed-PR loop's own "stop on first failure, keep what succeeded"
+  // behavior is preserved exactly (it never throws).
+  const [cappedMergedPullRequests, cappedClosedPullRequests] = await Promise.all([
+    fetchMergedPullRequests(owner, repo, token, repository.mergedPRs.nodes, repository.mergedPRs.pageInfo),
+    fetchClosedPullRequests(owner, repo, token),
+  ])
 
   const releases =
     repository.releases.totalCount > 0

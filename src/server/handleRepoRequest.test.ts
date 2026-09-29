@@ -16,7 +16,11 @@ describe('handleRepoRequest', () => {
     mockedGetRepoSnapshot.mockResolvedValueOnce(snapshot)
 
     const result = await handleRepoRequest({ owner: 'o', repo: 'r' })
-    expect(result).toEqual({ status: 200, body: snapshot })
+    expect(result).toEqual({
+      status: 200,
+      body: snapshot,
+      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' },
+    })
   })
 
   it.each([
@@ -26,12 +30,13 @@ describe('handleRepoRequest', () => {
     ['rate_limited', 429],
     ['token_required', 503],
     ['upstream_error', 502],
-  ] as const)('maps RepoError(%s) to HTTP %i', async (code, status) => {
+  ] as const)('maps RepoError(%s) to HTTP %i with a no-store Cache-Control (C2/T8)', async (code, status) => {
     mockedGetRepoSnapshot.mockRejectedValueOnce(new RepoError(code, `boom: ${code}`))
 
     const result = await handleRepoRequest({ owner: 'o', repo: 'r' })
     expect(result.status).toBe(status)
     expect(result.body).toMatchObject({ error: code, message: `boom: ${code}` })
+    expect(result.headers).toEqual({ 'Cache-Control': 'no-store' })
   })
 
   it('includes retryAfterSeconds when present on the error', async () => {
@@ -47,5 +52,6 @@ describe('handleRepoRequest', () => {
     const result = await handleRepoRequest({ owner: 'o', repo: 'r' })
     expect(result.status).toBe(500)
     expect(result.body).toMatchObject({ error: 'internal_error' })
+    expect(result.headers).toEqual({ 'Cache-Control': 'no-store' })
   })
 })

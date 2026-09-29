@@ -65,6 +65,65 @@ describe('graphqlRequest', () => {
     })
   })
 
+  it('maps a GraphQL-level RATE_LIMITED error (HTTP 200) to RepoError("rate_limited")', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(200, { errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded.' }] })),
+    )
+    await expect(graphqlRequest('query {}', {}, 'token')).rejects.toMatchObject({ code: 'rate_limited' })
+  })
+
+  it('maps a GraphQL secondary rate limit (untyped, message-only, HTTP 200) to RepoError("rate_limited")', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          errors: [{ message: 'You have exceeded a secondary rate limit. Please wait a few minutes before you try again.' }],
+        }),
+      ),
+    )
+    await expect(graphqlRequest('query {}', {}, 'token')).rejects.toMatchObject({ code: 'rate_limited' })
+  })
+
+  it('derives retryAfterSeconds from x-ratelimit-reset on a GraphQL-level rate limit', async () => {
+    const reset = Math.floor(Date.now() / 1000) + 90
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, { errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded.' }] }, { 'x-ratelimit-reset': String(reset) }),
+      ),
+    )
+    const rejection = await graphqlRequest('query {}', {}, 'token').catch((error: unknown) => error)
+    expect(rejection).toMatchObject({ code: 'rate_limited' })
+    const retryAfterSeconds = (rejection as { retryAfterSeconds?: number }).retryAfterSeconds
+    expect(retryAfterSeconds).toBeGreaterThan(80)
+    expect(retryAfterSeconds).toBeLessThanOrEqual(90)
+  })
+
+  it('prefers the retry-after header over x-ratelimit-reset when both are present', async () => {
+    const reset = Math.floor(Date.now() / 1000) + 9999 // deliberately far off, to prove it's NOT what's used
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          200,
+          { errors: [{ type: 'RATE_LIMITED', message: 'secondary rate limit' }] },
+          { 'retry-after': '30', 'x-ratelimit-reset': String(reset) },
+        ),
+      ),
+    )
+    await expect(graphqlRequest('query {}', {}, 'token')).rejects.toMatchObject({ code: 'rate_limited', retryAfterSeconds: 30 })
+  })
+
+  it('has no retryAfterSeconds when neither rate-limit header is present', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(200, { errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded.' }] })),
+    )
+    const rejection = await graphqlRequest('query {}', {}, 'token').catch((error: unknown) => error)
+    expect((rejection as { retryAfterSeconds?: number }).retryAfterSeconds).toBeUndefined()
+  })
+
   it('maps a network failure to RepoError("upstream_error")', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
     await expect(graphqlRequest('query {}', {}, 'token')).rejects.toBeInstanceOf(RepoError)

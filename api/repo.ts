@@ -8,6 +8,7 @@ import { handleRepoRequest } from '../src/server/handleRepoRequest.ts'
  */
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const { owner, repo } = req.query
-  const { status, body } = await handleRepoRequest({ owner, repo })
+  const { status, body, headers } = await handleRepoRequest({ owner, repo })
+  for (const [name, value] of Object.entries(headers)) res.setHeader(name, value)
   res.status(status).json(body)
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchRepoSnapshotFromGitHub } from './fetchRepoSnapshot.ts'
+import { CLOSED_PRS_PAGE_QUERY, MERGED_PRS_PAGE_QUERY } from './queries.ts'
 import type { RawClosedPullRequest, RawMergedPullRequest, RawRepositoryOverview } from './rawTypes.ts'
 
 function jsonResponse(body: unknown): Response {
@@ -202,6 +203,53 @@ describe('fetchRepoSnapshotFromGitHub', () => {
     expect(snapshot.releases).toEqual([
       { name: 'v0', tag: 'v0', date: '2022-01-01T00:00:00Z', url: 'https://x/tag/v0', targetOid: null },
     ])
+  })
+
+  /**
+   * C3/T8: merged-PR and closed-PR pagination now run concurrently
+   * (`Promise.all`). This test deliberately does NOT assume any particular
+   * interleaving of the two independent request streams -- it dispatches on
+   * the posted GraphQL query string itself (whichever stream asks, in
+   * whatever order the two loops actually happen to interleave), each
+   * stream keeping its OWN page counter. That's the actual property C3
+   * needs: concurrency must never corrupt either stream's own cursor-
+   * following sequence or merge results out of order, regardless of exactly
+   * how the two loops happen to interleave in a real event loop.
+   */
+  it('paginates merged and closed PRs correctly when running concurrently, across multiple pages each', async () => {
+    const body = structuredClone(overviewBody)
+    body.data.repository.mergedPRs = { pageInfo: { hasNextPage: true, endCursor: 'merged-cursor-1' }, nodes: [mergedPrNode(1), mergedPrNode(2)] }
+
+    const mergedPages = [
+      { pageInfo: { hasNextPage: true, endCursor: 'merged-cursor-2' }, nodes: [mergedPrNode(3)] },
+      { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [mergedPrNode(4)] },
+    ]
+    const closedPages = [
+      { pageInfo: { hasNextPage: true, endCursor: 'closed-cursor-1' }, nodes: [closedPrNode(101)] },
+      { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [closedPrNode(102)] },
+    ]
+    let mergedCallIndex = 0
+    let closedCallIndex = 0
+
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
+      const { query } = JSON.parse(init.body) as { query: string }
+      if (query === MERGED_PRS_PAGE_QUERY) {
+        const page = mergedPages[mergedCallIndex++]!
+        return jsonResponse({ data: { repository: { pullRequests: page } } })
+      }
+      if (query === CLOSED_PRS_PAGE_QUERY) {
+        const page = closedPages[closedCallIndex++]!
+        return jsonResponse({ data: { repository: { pullRequests: page } } })
+      }
+      return jsonResponse(body) // the overview query
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await fetchRepoSnapshotFromGitHub('o', 'repo', 'token')
+
+    expect(fetchMock).toHaveBeenCalledTimes(5) // overview + 2 merged pages + 2 closed pages
+    expect(snapshot.mergedPullRequests.map((pr) => pr.number)).toEqual([1, 2, 3, 4])
+    expect(snapshot.closedPullRequests.map((pr) => pr.number)).toEqual([101, 102])
   })
 
   it('throws RepoError("not_found") when the repository is null', async () => {
